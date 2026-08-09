@@ -14866,3 +14866,31 @@ complete and that the file's remaining failure is the downstream absent
 - 다른 대안 대신 이 방식을 선택한 이유: prefix는 future siblings를 자동 허용하고 aggregate failure는 intended assertion 도달을 증명하지 못한다. downstream 파일 admission은 total 부재를 with 실패로 오계상한다.
 - 장점, 단점 및 영향: direct exact/forced 22/0/0, metadata drift, future gating, configured-corpus failure가 재현된다. total 구현 시 Duration.from blocker 한 건만 재측정하면 된다.
 ```
+
+## Temporal.Duration.prototype.abs and negated
+
+At pinned Test262 revision
+`9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the complete direct `abs`
+directory contains 9 files and `negated` contains 8. Their exact admissions
+are **9 pass / 0 fail / 0 skip** and **8 pass / 0 fail / 0 skip**; the shared
+forced diagnostic is exact **17/0/0**. No blocker complement remains.
+
+Separate manifests preserve method ownership while one metadata module and
+diagnostic enforce their shared unary contract. Live features, includes,
+flags, and negative metadata are frozen per path. Runner and analyzer accept
+only exact manifest identities and reject malformed, outside-root,
+inaccessible, and future sibling paths. Full-workflow setup fails closed when
+the configured corpus directories are absent or unreadable; the diagnostic
+checks every requested path identity, while workflow count gates require the
+complete 17-file surface. Ordinary and full workflows both reproduce the
+combined `17/0/0` rate from sparse pinned checkouts.
+
+```text
+[Decision Log]
+- 목적과 의도: Duration unary sign-transform 두 directory의 complete direct surface를 method별 소유권과 shared implementation 경계 모두 보존하며 계상한다.
+- 기존 구현 및 제약 조건: broad Temporal feature gate가 17개를 전부 숨겼고 두 directory는 metadata와 실행 semantics가 대칭이지만 파일 수와 abs 전용 new-object case는 다르다.
+- 검토한 주요 대안: Duration core 편입, directory prefix 허용, 하나의 합산 manifest, method별 완전 중복 tooling, 별도 manifest와 shared metadata/diagnostic을 검토했다.
+- 선택한 방식: 9개 abs와 8개 negated manifest를 분리하고 공용 module, runner/analyzer helper, exact identity diagnostic, dedicated CI job으로 17개 합집합을 검증한다.
+- 다른 대안 대신 이 방식을 선택한 이유: core 편입은 hidden-slot 기반선 의미를 흐리고 prefix는 future siblings를 자동 허용한다. 단일 manifest는 method drift를 숨기며 완전 중복 tooling은 대칭 metadata의 유지보수 drift를 만든다.
+- 장점, 단점 및 영향: method별 9/0/0과 8/0/0, combined 17/0/0, live metadata/corpus drift, future gating이 재현된다. Duration direct admitted 합계는 17 증가하고 broad built-ins pass도 17 증가한다.
+```

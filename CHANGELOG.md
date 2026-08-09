@@ -4,6 +4,27 @@
 
 ### Changed
 
+- Added Realm-local, non-constructable, length-0
+  `Temporal.Duration.prototype.abs` and `negated` through one hidden-record
+  sign-transform path. Both methods brand the receiver, ignore every
+  argument, avoid public fields, constructors, and species, and return a fresh
+  intrinsic Duration in the native method Realm. `abs` applies the absolute
+  value to all ten slots; `negated` reverses every nonzero sign while
+  canonicalizing zero slots back to positive zero. At pinned Test262 revision
+  `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the complete direct directories
+  are exact **9/0/0** and **8/0/0**, or combined **17/0/0**. Existing
+  allocations 136 through 139 remain stable, `negated` is allocation 140,
+  `abs` is 141, and the installer reserves 142 maximum live pins across
+  143 allocations.
+
+  [Decision Log]
+  - 목적과 의도: Duration의 immutable hidden record를 관찰 없이 부호 변환하고, 두 대칭 메서드의 brand/Realm/allocation 계약을 한 경로로 고정한다.
+  - 기존 구현 및 제약 조건: ten-field hidden slots와 method-Realm factory는 있었지만 raw f64 negation은 zero를 `-0`으로 만들어 Duration getter의 SameValue 계약을 깨뜨릴 수 있었다.
+  - 검토한 주요 대안: public accessor 재구성, constructor 호출, 메서드별 수동 복제, raw unary negation, operation-parameterized hidden-record transform을 검토했다.
+  - 선택한 방식: receiver slots를 한 번 복사한 뒤 공용 transform이 abs 또는 negate를 적용하고 모든 zero를 `+0`으로 정규화해 existing method-Realm factory에 전달한다.
+  - 다른 대안 대신 이 방식을 선택한 이유: public accessors와 constructor는 user code/newTarget을 잘못 관찰하고, 독립 구현은 열 필드와 Realm/OOM 동작을 drift시킨다. raw negation은 빈 Duration에 observable `-0`을 남긴다.
+  - 장점, 단점 및 영향: fresh identity, subclass ignoring, cross-Realm result/error, hidden getter 비관찰, exact heap/root retry와 installer rollback이 공유된다. balancing, total, rounding, formatting은 별도 단위로 남는다.
+
 - Added Realm-local, non-constructable, length-1
   `Temporal.Duration.prototype.with`. The method brands its receiver before
   observing the required object argument, reads and converts all ten plural

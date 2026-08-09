@@ -130,6 +130,12 @@ try:
         TEMPORAL_DURATION_WITH_FEATURES,
         TEMPORAL_DURATION_WITH_FILES,
     )
+    from test262_temporal_duration_unary_admission import (
+        TEMPORAL_DURATION_ABS_FEATURES,
+        TEMPORAL_DURATION_ABS_FILES,
+        TEMPORAL_DURATION_NEGATED_FEATURES,
+        TEMPORAL_DURATION_NEGATED_FILES,
+    )
     from test262_temporal_plain_time_admission import (
         TEMPORAL_PLAIN_TIME_ADD_FEATURES,
         TEMPORAL_PLAIN_TIME_ADD_FILES,
@@ -548,6 +554,12 @@ except ModuleNotFoundError:
     from tools.test262_temporal_duration_with_admission import (
         TEMPORAL_DURATION_WITH_FEATURES,
         TEMPORAL_DURATION_WITH_FILES,
+    )
+    from tools.test262_temporal_duration_unary_admission import (
+        TEMPORAL_DURATION_ABS_FEATURES,
+        TEMPORAL_DURATION_ABS_FILES,
+        TEMPORAL_DURATION_NEGATED_FEATURES,
+        TEMPORAL_DURATION_NEGATED_FILES,
     )
     from tools.test262_temporal_plain_time_admission import (
         TEMPORAL_PLAIN_TIME_ADD_FEATURES,
@@ -2858,6 +2870,37 @@ def temporal_duration_with_features(path):
     rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
     return TEMPORAL_DURATION_WITH_FEATURES[rel.as_posix()]
 
+def _temporal_duration_unary_path(path, files):
+    if path is None:
+        return False
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except (OSError, TypeError, ValueError):
+        return False
+    return rel.as_posix() in files
+
+def _temporal_duration_unary_features(path, files, features):
+    if not _temporal_duration_unary_path(path, files):
+        return frozenset()
+    rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    return features[rel.as_posix()]
+
+def temporal_duration_abs_path(path):
+    return _temporal_duration_unary_path(path, TEMPORAL_DURATION_ABS_FILES)
+
+def temporal_duration_abs_features(path):
+    return _temporal_duration_unary_features(
+        path, TEMPORAL_DURATION_ABS_FILES, TEMPORAL_DURATION_ABS_FEATURES
+    )
+
+def temporal_duration_negated_path(path):
+    return _temporal_duration_unary_path(path, TEMPORAL_DURATION_NEGATED_FILES)
+
+def temporal_duration_negated_features(path):
+    return _temporal_duration_unary_features(
+        path, TEMPORAL_DURATION_NEGATED_FILES, TEMPORAL_DURATION_NEGATED_FEATURES
+    )
+
 def _temporal_plain_time_path(path, files):
     if path is None:
         return False
@@ -5079,6 +5122,10 @@ def should_skip(meta, path=None):
         feats.difference_update(temporal_duration_from_features(path))
     if path is not None and temporal_duration_with_path(path):
         feats.difference_update(temporal_duration_with_features(path))
+    if path is not None and temporal_duration_abs_path(path):
+        feats.difference_update(temporal_duration_abs_features(path))
+    if path is not None and temporal_duration_negated_path(path):
+        feats.difference_update(temporal_duration_negated_features(path))
     if path is not None and temporal_plain_time_core_path(path):
         feats.difference_update(temporal_plain_time_core_features(path))
     if path is not None and temporal_plain_time_from_path(path):

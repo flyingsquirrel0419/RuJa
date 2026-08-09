@@ -25264,6 +25264,86 @@ fn temporal_duration_with_brands_first_and_uses_method_realm() {
 }
 
 #[test]
+fn temporal_duration_abs_and_negated_transform_hidden_records() {
+    assert_eq!(
+        run(r#"
+            var negative = new Temporal.Duration(-1, 0, -3, 0, -5, 0, -7, 0, -9, 0);
+            var positive = negative.abs();
+            var restored = negative.negated();
+            var blank = new Temporal.Duration().negated();
+            var reads = 0;
+            Object.defineProperty(negative, 'years', {
+              get: function () { reads++; throw new Error('public getter observed'); }
+            });
+            var hidden = negative.abs({
+              get years() { reads += 100; return 99; }
+            });
+            [
+              [positive.years, positive.months, positive.weeks, positive.days,
+               positive.hours, positive.minutes, positive.seconds,
+               positive.milliseconds, positive.microseconds,
+               positive.nanoseconds].join(','),
+              [restored.years, restored.weeks, restored.hours, restored.seconds,
+               restored.microseconds].join(','),
+              positive !== negative, restored !== negative,
+              hidden.weeks, reads,
+              1 / blank.years === Infinity,
+              blank.sign, blank.blank
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "1,0,3,0,5,0,7,0,9,0|1,3,5,7,9|true|true|3|0|true|0|true"
+        ))
+    );
+}
+
+#[test]
+fn temporal_duration_abs_and_negated_brand_and_use_method_realm() {
+    assert_eq!(
+        run(r#"
+            class Derived extends Temporal.Duration {}
+            var derivedAbs = new Derived(-1).abs();
+            var derivedNegated = new Derived(1).negated();
+            var other = $262.createRealm().global;
+            var foreignAbs = other.Temporal.Duration.prototype.abs;
+            var foreignNegated = other.Temporal.Duration.prototype.negated;
+            var foreignResult = foreignAbs.call(new Temporal.Duration(-2));
+            var mainResult = Temporal.Duration.prototype.negated.call(
+              new other.Temporal.Duration(-3)
+            );
+            var foreignType = false;
+            try { foreignNegated.call({}); } catch (error) {
+              foreignType = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            var absConstructable = true;
+            var negatedConstructable = true;
+            try { new Temporal.Duration.prototype.abs(); } catch (error) {
+              absConstructable = !(error instanceof TypeError);
+            }
+            try { new Temporal.Duration.prototype.negated(); } catch (error) {
+              negatedConstructable = !(error instanceof TypeError);
+            }
+            [
+              Temporal.Duration.prototype.abs.name,
+              Temporal.Duration.prototype.abs.length,
+              Temporal.Duration.prototype.negated.name,
+              Temporal.Duration.prototype.negated.length,
+              Object.getPrototypeOf(derivedAbs) === Temporal.Duration.prototype,
+              Object.getPrototypeOf(derivedNegated) === Temporal.Duration.prototype,
+              !(derivedAbs instanceof Derived), !(derivedNegated instanceof Derived),
+              Object.getPrototypeOf(foreignResult) === other.Temporal.Duration.prototype,
+              Object.getPrototypeOf(mainResult) === Temporal.Duration.prototype,
+              foreignResult.years, mainResult.years, foreignType,
+              absConstructable, negatedConstructable
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "abs|0|negated|0|true|true|true|true|true|true|2|3|true|false|false"
+        ))
+    );
+}
+
+#[test]
 fn temporal_duration_rejects_non_integral_mixed_and_out_of_range_fields() {
     for source in [
         "Temporal.Duration()",

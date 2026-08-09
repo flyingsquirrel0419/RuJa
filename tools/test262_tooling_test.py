@@ -166,6 +166,18 @@ from test262_temporal_duration_with_admission import (
     TEMPORAL_DURATION_WITH_INCLUDES,
     TEMPORAL_DURATION_WITH_NEGATIVE,
 )
+from test262_temporal_duration_unary_admission import (
+    TEMPORAL_DURATION_ABS_FEATURES,
+    TEMPORAL_DURATION_ABS_FILES,
+    TEMPORAL_DURATION_ABS_FLAGS,
+    TEMPORAL_DURATION_ABS_INCLUDES,
+    TEMPORAL_DURATION_ABS_NEGATIVE,
+    TEMPORAL_DURATION_NEGATED_FEATURES,
+    TEMPORAL_DURATION_NEGATED_FILES,
+    TEMPORAL_DURATION_NEGATED_FLAGS,
+    TEMPORAL_DURATION_NEGATED_INCLUDES,
+    TEMPORAL_DURATION_NEGATED_NEGATIVE,
+)
 from test262_temporal_plain_time_admission import (
     TEMPORAL_PLAIN_TIME_ADD_FEATURES,
     TEMPORAL_PLAIN_TIME_ADD_FILES,
@@ -4803,6 +4815,153 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                         self.assertTrue(tool.should_skip({"features": ["Temporal"]}, path))
                     with patch("pathlib.Path.resolve", side_effect=PermissionError):
                         self.assertFalse(tool.temporal_duration_with_path(future))
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_temporal_duration_unary_manifests_are_exact_live_disjoint_and_shared(self):
+        cohorts = (
+            (
+                "abs",
+                TEMPORAL_DURATION_ABS_FILES,
+                TEMPORAL_DURATION_ABS_FEATURES,
+                TEMPORAL_DURATION_ABS_INCLUDES,
+                TEMPORAL_DURATION_ABS_FLAGS,
+                TEMPORAL_DURATION_ABS_NEGATIVE,
+                "temporal_duration_abs_path",
+                "temporal_duration_abs_features",
+                9,
+            ),
+            (
+                "negated",
+                TEMPORAL_DURATION_NEGATED_FILES,
+                TEMPORAL_DURATION_NEGATED_FEATURES,
+                TEMPORAL_DURATION_NEGATED_INCLUDES,
+                TEMPORAL_DURATION_NEGATED_FLAGS,
+                TEMPORAL_DURATION_NEGATED_NEGATIVE,
+                "temporal_duration_negated_path",
+                "temporal_duration_negated_features",
+                8,
+            ),
+        )
+        surface = TEMPORAL_DURATION_ABS_FILES | TEMPORAL_DURATION_NEGATED_FILES
+        self.assertTrue(
+            TEMPORAL_DURATION_ABS_FILES.isdisjoint(TEMPORAL_DURATION_NEGATED_FILES)
+        )
+        for _, files, features, includes, flags, negative, _, _, count in cohorts:
+            self.assertEqual(len(files), count)
+            self.assertEqual(set(features), files)
+            self.assertEqual(set(includes), files)
+            self.assertEqual(set(flags), files)
+            self.assertEqual(set(negative), files)
+
+        own_manifests = {
+            "test262_temporal_duration_abs_admission.txt",
+            "test262_temporal_duration_negated_admission.txt",
+        }
+        tools_dir = Path(__file__).resolve().parent
+        for manifest in tools_dir.glob("test262_*_admission.txt"):
+            if manifest.name in own_manifests:
+                continue
+            existing = {
+                line
+                for raw_line in manifest.read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            self.assertTrue(surface.isdisjoint(existing), manifest.name)
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        corpus_required = "TEST262" in os.environ
+
+        def live_files(method):
+            method_dir = (
+                test_root / f"built-ins/Temporal/Duration/prototype/{method}"
+            )
+            try:
+                if not method_dir.is_dir():
+                    if corpus_required:
+                        raise FileNotFoundError(method_dir)
+                    return None
+                return {
+                    path.relative_to(test_root).as_posix()
+                    for path in method_dir.glob("*.js")
+                    if "_FIXTURE" not in path.name
+                }
+            except OSError:
+                if corpus_required:
+                    raise
+                return None
+
+        for method, files, features, includes, flags, negative, path_name, feature_name, _ in cohorts:
+            live = live_files(method)
+            if live is None:
+                continue
+            self.assertEqual(live, files)
+            for relative in files:
+                path = test_root / relative
+                metadata = test262_runner.parse_meta(path.read_text())
+                self.assertEqual(
+                    frozenset(metadata.get("features", [])), features[relative], relative
+                )
+                self.assertEqual(
+                    frozenset(metadata.get("includes", [])), includes[relative], relative
+                )
+                self.assertEqual(
+                    frozenset(metadata.get("flags", [])), flags[relative], relative
+                )
+                self.assertEqual(metadata.get("negative"), negative[relative], relative)
+                for tool in (test262_runner, test262_analyze):
+                    self.assertTrue(getattr(tool, path_name)(path), relative)
+                    self.assertEqual(
+                        getattr(tool, feature_name)(path), features[relative]
+                    )
+                    self.assertFalse(tool.should_skip(metadata, path), relative)
+
+        for method, *_ in cohorts:
+            with patch("pathlib.Path.is_dir", side_effect=PermissionError):
+                if corpus_required:
+                    with self.assertRaises(PermissionError):
+                        live_files(method)
+                else:
+                    self.assertIsNone(live_files(method))
+            with patch("pathlib.Path.is_dir", return_value=False):
+                if corpus_required:
+                    with self.assertRaises(FileNotFoundError):
+                        live_files(method)
+                else:
+                    self.assertIsNone(live_files(method))
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for _, files, features, _, _, _, path_name, feature_name, _ in cohorts:
+                        path_check = getattr(tool, path_name)
+                        feature_check = getattr(tool, feature_name)
+                        for relative in files:
+                            path = root / "test" / relative
+                            self.assertTrue(path_check(path), relative)
+                            self.assertEqual(feature_check(path), features[relative])
+                        method = Path(next(iter(files))).parent.name
+                        future = (
+                            root
+                            / "test/built-ins/Temporal/Duration/prototype"
+                            / method
+                            / "future.js"
+                        )
+                        malformed = future.with_name("basic.js.bak")
+                        outside = root / "test/built-ins/Temporal/Duration" / method / "basic.js"
+                        for path in (future, malformed, outside, None, object()):
+                            self.assertFalse(path_check(path))
+                            self.assertEqual(feature_check(path), frozenset())
+                        for path in (future, malformed, outside):
+                            self.assertTrue(
+                                tool.should_skip({"features": ["Temporal"]}, path)
+                            )
+                        with patch("pathlib.Path.resolve", side_effect=PermissionError):
+                            self.assertFalse(path_check(future))
+                            self.assertEqual(feature_check(future), frozenset())
                 finally:
                     tool.TEST262 = original_root
 

@@ -1,0 +1,10 @@
+# Exact Temporal.Duration.prototype.abs admission at Test262 9e61c12835c5e4a3bdba93850427e6742c4f64c4.
+built-ins/Temporal/Duration/prototype/abs/basic.js
+built-ins/Temporal/Duration/prototype/abs/branding.js
+built-ins/Temporal/Duration/prototype/abs/builtin.js
+built-ins/Temporal/Duration/prototype/abs/length.js
+built-ins/Temporal/Duration/prototype/abs/name.js
+built-ins/Temporal/Duration/prototype/abs/new-object.js
+built-ins/Temporal/Duration/prototype/abs/not-a-constructor.js
+built-ins/Temporal/Duration/prototype/abs/prop-desc.js
+built-ins/Temporal/Duration/prototype/abs/subclassing-ignored.js

@@ -364,7 +364,9 @@
   before allocation. `Temporal.Duration.prototype.with` observes branded and
   ordinary object arguments as partial plural-property bags, preserves
   undefined fields from the receiver, validates after merging, and returns a
-  fresh intrinsic Duration in the method Realm
+  fresh intrinsic Duration in the method Realm. `abs` and `negated` transform
+  copied hidden slots without observing public state, normalize signed zero,
+  and create fresh method-Realm results
 - **RegExp**: literals `/pattern/flags` with `test`, `exec`, `match`, `source`,
   `flags`, `d`-flag match indices, forward lookahead, backward lookbehind,
   legacy quantified lookahead, Unicode named captures/backreferences,

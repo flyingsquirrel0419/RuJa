@@ -20,8 +20,9 @@ The following resource limits are enforced:
   for branded Duration values, ordered duration property bags, and ISO
   Duration strings. `Duration.prototype.with` supports ordered partial object
   updates, complete sign replacement, merged sign/range validation, and
-  method-Realm results. Duration arithmetic, formatting, balancing, rounding,
-  `compare`, `total`, and the remaining methods are not implemented.
+  method-Realm results. `abs` and `negated` provide hidden-record unary sign
+  transforms. Duration arithmetic, formatting, balancing, rounding, `compare`,
+  `total`, and the remaining methods are not implemented.
   Realm-local `%Temporal.PlainDateTime%` supports
   hidden-slot construction, subclassing, 22 ISO/calendar accessors,
   `@@toStringTag`, always-throwing `valueOf`, and static `from` for branded

@@ -1,0 +1,9 @@
+# Exact Temporal.Duration.prototype.negated admission at Test262 9e61c12835c5e4a3bdba93850427e6742c4f64c4.
+built-ins/Temporal/Duration/prototype/negated/basic.js
+built-ins/Temporal/Duration/prototype/negated/branding.js
+built-ins/Temporal/Duration/prototype/negated/builtin.js
+built-ins/Temporal/Duration/prototype/negated/length.js
+built-ins/Temporal/Duration/prototype/negated/name.js
+built-ins/Temporal/Duration/prototype/negated/not-a-constructor.js
+built-ins/Temporal/Duration/prototype/negated/prop-desc.js
+built-ins/Temporal/Duration/prototype/negated/subclassing-ignored.js

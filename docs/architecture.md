@@ -4826,6 +4826,33 @@ maximum live pins across 141 allocations.
 - 장점, 단점 및 영향: from/with가 order와 numeric conversion을 공유하면서 각 API의 completion semantics, abrupt completion, sign replacement, cross-Realm ownership, GC/OOM/fuel 경계를 독립적으로 유지한다. 향후 total/round/add/subtract는 complete record 소비자로 별도 설계해야 한다.
 ```
 
+## Temporal Duration unary sign transforms
+
+`Temporal.Duration.prototype.abs` and `negated` copy the receiver's immutable
+ten-field hidden record before any allocation. They share one
+operation-parameterized transform and never read arguments, public duration
+accessors, `constructor`, or `Symbol.species`. `abs` maps each slot to its
+absolute value; `negated` reverses each nonzero sign. Both normalize every
+numeric zero to `+0` because f64 unary negation would otherwise expose `-0`
+through branded accessors for a blank Duration.
+
+The transformed record crosses the same exact validator and method-Realm
+factory used by other native Duration results. This preserves all existing
+range invariants, always creates a fresh object, and ignores receiver subclass
+prototypes. `Duration.from`, PlainTime add/subtract, and Duration.with remain
+allocations 136 through 139. Negated and abs are 140 and 141; the installer
+reserves 142 maximum live pins across 143 allocations.
+
+```text
+[Decision Log]
+- 목적과 의도: observable input이 없는 두 Duration unary method를 hidden-record 단일 경로로 구현해 identity, zero, Realm, resource semantics를 일치시킨다.
+- 기존 구현 및 제약 조건: Duration slots는 f64이고 getter는 값을 그대로 노출한다. constructor conversion은 zero를 정규화하지만 result factory는 이미-valid record를 그대로 저장하므로 raw `-0.0`을 막지 않는다.
+- 검토한 주요 대안: constructor 재호출, public getters 기반 복사, abs/negated별 함수 복제, 공용 record transform과 intrinsic factory를 검토했다.
+- 선택한 방식: brand helper로 copied record를 얻고 operation enum으로 열 필드를 변환한다. zero branch는 항상 `0.0`을 반환하고 native callee Realm의 intrinsic factory만 호출한다.
+- 다른 대안 대신 이 방식을 선택한 이유: constructor/public 경로는 명세에 없는 user code와 prototype lookup을 관찰한다. duplicated field lists는 누락 위험이 있고 raw negate는 SameValue-visible signed zero를 만든다.
+- 장점, 단점 및 영향: no-getter/no-argument behavior, fresh result, cross-Realm errors/results, subclass ignoring, OOM/root retry, installer atomicity가 한 경로에서 검증된다. 후속 arithmetic이나 balancing 정책은 포함하지 않는다.
+```
+
 ## Temporal PlainTime arithmetic
 
 `Temporal.PlainTime.prototype.add` and `subtract` share one native arithmetic

@@ -6290,7 +6290,7 @@ pub(crate) fn install_temporal_namespace_in_env(
     global: Option<&Value>,
     object_proto: Value,
 ) -> error::Result<Value> {
-    vm.try_reserve_gc_pins(140)?;
+    vm.try_reserve_gc_pins(142)?;
     let mut pin_count = 0;
     let result = (|| {
         let instant_prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
@@ -7066,6 +7066,20 @@ pub(crate) fn install_temporal_namespace_in_env(
             env,
         )?);
         pin_count += vm.pin(&duration_with);
+        let duration_negated = Value::Object(vm.new_native_function_in_env_with_gc_retry(
+            "negated",
+            temporal_duration_negated,
+            0,
+            env,
+        )?);
+        pin_count += vm.pin(&duration_negated);
+        let duration_abs = Value::Object(vm.new_native_function_in_env_with_gc_retry(
+            "abs",
+            temporal_duration_abs,
+            0,
+            env,
+        )?);
+        pin_count += vm.pin(&duration_abs);
 
         let Value::Object(instant_constructor_index) = instant_constructor.clone() else {
             unreachable!()
@@ -7193,6 +7207,8 @@ pub(crate) fn install_temporal_namespace_in_env(
                 accessor_get_prop(duration_blank),
             );
             props.insert(PropertyKey::from("with"), data_prop(duration_with));
+            props.insert(PropertyKey::from("negated"), data_prop(duration_negated));
+            props.insert(PropertyKey::from("abs"), data_prop(duration_abs));
             let mut tag = data_prop(Value::String(Arc::from("Temporal.Duration")));
             tag.writable = false;
             props.insert(
@@ -8002,6 +8018,60 @@ fn temporal_duration_with(
     })?;
     let realm = vm.native_callee_closure().unwrap_or(vm.global);
     create_temporal_duration_in_realm(vm, partial.merge(receiver), realm)
+}
+
+#[derive(Clone, Copy)]
+enum TemporalDurationSignTransform {
+    Abs,
+    Negate,
+}
+
+fn temporal_duration_sign_transform(
+    vm: &mut Vm,
+    this: Option<Value>,
+    operation: TemporalDurationSignTransform,
+) -> error::Result<Value> {
+    let fields = temporal_duration_slots(vm, this)?;
+    let transform = |value: f64| {
+        if value == 0.0 {
+            0.0
+        } else {
+            match operation {
+                TemporalDurationSignTransform::Abs => value.abs(),
+                TemporalDurationSignTransform::Negate => -value,
+            }
+        }
+    };
+    let transformed = TemporalDurationFields {
+        years: transform(fields.years),
+        months: transform(fields.months),
+        weeks: transform(fields.weeks),
+        days: transform(fields.days),
+        hours: transform(fields.hours),
+        minutes: transform(fields.minutes),
+        seconds: transform(fields.seconds),
+        milliseconds: transform(fields.milliseconds),
+        microseconds: transform(fields.microseconds),
+        nanoseconds: transform(fields.nanoseconds),
+    };
+    let realm = vm.native_callee_closure().unwrap_or(vm.global);
+    create_temporal_duration_in_realm(vm, transformed, realm)
+}
+
+fn temporal_duration_abs(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    temporal_duration_sign_transform(vm, this, TemporalDurationSignTransform::Abs)
+}
+
+fn temporal_duration_negated(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    temporal_duration_sign_transform(vm, this, TemporalDurationSignTransform::Negate)
 }
 
 fn temporal_duration_time_nanoseconds(fields: TemporalDurationFields) -> error::Result<i128> {
