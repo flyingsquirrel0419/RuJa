@@ -1376,13 +1376,14 @@ jobs:
             tools/test262_temporal_plain_time_equals_admission.txt \
             tools/test262_temporal_plain_time_compare_admission.txt \
             tools/test262_temporal_plain_time_to_string_admission.txt \
-            tools/test262_temporal_plain_time_to_json_admission.txt | \
+            tools/test262_temporal_plain_time_to_json_admission.txt \
+            tools/test262_temporal_plain_time_round_admission.txt | \
             sed -e '/^#/d' -e '/^$/d')
           TEST262="$GITHUB_WORKSPACE/test262" \
             python3 tools/test262_temporal_plain_time_diagnostic.py \
             "${files[@]}" > temporal_plain_time_result.txt 2>&1
           cat temporal_plain_time_result.txt
-          grep -q '^RATE=100.0 PASS=208 FAIL=0 SKIP=0 TOTAL=208 RAN=208$' \
+          grep -q '^RATE=100.0 PASS=250 FAIL=0 SKIP=0 TOTAL=250 RAN=250$' \
             temporal_plain_time_result.txt
 
   temporal-plain-date-time-equals:

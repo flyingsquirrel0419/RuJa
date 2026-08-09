@@ -333,7 +333,7 @@
   six immutable ISO time fields in hidden slots, honors subclass/newTarget
   prototypes, and exposes branded accessors, `@@toStringTag`, `from`, static
   `compare`, `equals`, option-aware ISO `toString`, hidden-record `toJSON`,
-  and `valueOf`. `from`,
+  exact `round`, and `valueOf`. `from`,
   `compare`, and `equals` share
   ordered property-bag, String,
   PlainDateTime, ZonedDateTime, and cross-Realm PlainTime conversion without
@@ -342,7 +342,10 @@
   heap result. `toString` supports auto or 0-9 fractional digits, minute
   through nanosecond precision, every Temporal rounding mode, and midnight
   rollover without observing public accessors. `toJSON` ignores arguments and
-  serializes automatic precision directly from hidden fields
+  serializes automatic precision directly from hidden fields. `round` accepts
+  String shorthand or ordered options, all six time units, valid divisors, and
+  every Temporal rounding mode; it wraps midnight and creates a fresh result
+  in the method Realm
 - **RegExp**: literals `/pattern/flags` with `test`, `exec`, `match`, `source`,
   `flags`, `d`-flag match indices, forward lookahead, backward lookbehind,
   legacy quantified lookahead, Unicode named captures/backreferences,

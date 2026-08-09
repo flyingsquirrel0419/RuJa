@@ -32,6 +32,9 @@ TEMPORAL_PLAIN_TIME_TO_STRING_FILES = _read_manifest(
 TEMPORAL_PLAIN_TIME_TO_JSON_FILES = _read_manifest(
     "test262_temporal_plain_time_to_json_admission.txt"
 )
+TEMPORAL_PLAIN_TIME_ROUND_FILES = _read_manifest(
+    "test262_temporal_plain_time_round_admission.txt"
+)
 
 _CORE_TEMPORAL_HELPERS = frozenset({
     "argument-convert.js",
@@ -105,6 +108,40 @@ _TO_STRING_COMPARE_ARRAY = frozenset({
     "roundingmode-wrong-type.js",
     "smallestunit-wrong-type.js",
 })
+_ROUND_COMPARE_ARRAY = frozenset({
+    "options-read-before-algorithmic-validation.js",
+    "roundingincrement-wrong-type.js",
+    "roundingmode-wrong-type.js",
+    "smallestunit-wrong-type.js",
+})
+_ROUND_TEMPORAL_HELPERS = frozenset({
+    "options-read-before-algorithmic-validation.js",
+    "rounding-cross-midnight.js",
+    "roundingincrement-hours.js",
+    "roundingincrement-microseconds.js",
+    "roundingincrement-milliseconds.js",
+    "roundingincrement-minutes.js",
+    "roundingincrement-nanoseconds.js",
+    "roundingincrement-non-integer.js",
+    "roundingincrement-seconds.js",
+    "roundingincrement-undefined.js",
+    "roundingincrement-wrong-type.js",
+    "roundingmode-ceil.js",
+    "roundingmode-expand.js",
+    "roundingmode-floor.js",
+    "roundingmode-halfCeil.js",
+    "roundingmode-halfEven.js",
+    "roundingmode-halfExpand.js",
+    "roundingmode-halfFloor.js",
+    "roundingmode-halfTrunc.js",
+    "roundingmode-trunc.js",
+    "roundingmode-undefined.js",
+    "roundingmode-wrong-type.js",
+    "smallestunit-plurals-accepted.js",
+    "smallestunit-string-shorthand.js",
+    "smallestunit-wrong-type.js",
+    "subclassing-ignored.js",
+})
 
 
 def _features(path, cohort):
@@ -150,6 +187,18 @@ def _features(path, cohort):
     elif cohort == "toJSON":
         if name == "branding.js":
             features.add("Symbol")
+        if name == "not-a-constructor.js":
+            features.add("Reflect.construct")
+    elif cohort == "round":
+        if name == "branding.js":
+            features.add("Symbol")
+        elif name == "options-wrong-type.js":
+            features.update(("BigInt", "Symbol"))
+        elif name in {
+            "smallestunit-plurals-accepted.js",
+            "smallestunit-string-shorthand.js",
+        }:
+            features.add("arrow-function")
         if name == "not-a-constructor.js":
             features.add("Reflect.construct")
     return frozenset(features)
@@ -214,6 +263,15 @@ def _includes(path, cohort):
             includes.add("propertyHelper.js")
         if name == "not-a-constructor.js":
             includes.add("isConstructor.js")
+    elif cohort == "round":
+        if name in _ROUND_COMPARE_ARRAY:
+            includes.add("compareArray.js")
+        if name in _ROUND_TEMPORAL_HELPERS:
+            includes.add("temporalHelpers.js")
+        if name in {"length.js", "name.js", "prop-desc.js"}:
+            includes.add("propertyHelper.js")
+        if name == "not-a-constructor.js":
+            includes.add("isConstructor.js")
     return frozenset(includes)
 
 
@@ -268,6 +326,12 @@ def _metadata(files, cohort):
     TEMPORAL_PLAIN_TIME_TO_JSON_FLAGS,
     TEMPORAL_PLAIN_TIME_TO_JSON_NEGATIVE,
 ) = _metadata(TEMPORAL_PLAIN_TIME_TO_JSON_FILES, "toJSON")
+(
+    TEMPORAL_PLAIN_TIME_ROUND_FEATURES,
+    TEMPORAL_PLAIN_TIME_ROUND_INCLUDES,
+    TEMPORAL_PLAIN_TIME_ROUND_FLAGS,
+    TEMPORAL_PLAIN_TIME_ROUND_NEGATIVE,
+) = _metadata(TEMPORAL_PLAIN_TIME_ROUND_FILES, "round")
 
 for files, count, label in (
     (TEMPORAL_PLAIN_TIME_CORE_FILES, 40, "core"),
@@ -277,6 +341,7 @@ for files, count, label in (
     (TEMPORAL_PLAIN_TIME_COMPARE_FILES, 32, "compare"),
     (TEMPORAL_PLAIN_TIME_TO_STRING_FILES, 40, "toString"),
     (TEMPORAL_PLAIN_TIME_TO_JSON_FILES, 7, "toJSON"),
+    (TEMPORAL_PLAIN_TIME_ROUND_FILES, 42, "round"),
 ):
     if len(files) != count:
         raise RuntimeError(f"Temporal.PlainTime {label} admission must contain {count} files")

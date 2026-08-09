@@ -909,6 +909,37 @@ pub(crate) enum InstantRoundingMode {
     Trunc,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TimeUnit {
+    Hour,
+    Minute,
+    Second,
+    Millisecond,
+    Microsecond,
+    Nanosecond,
+}
+
+impl TimeUnit {
+    pub(crate) fn maximum_rounding_increment(self) -> u32 {
+        match self {
+            Self::Hour => 24,
+            Self::Minute | Self::Second => 60,
+            Self::Millisecond | Self::Microsecond | Self::Nanosecond => 1_000,
+        }
+    }
+
+    fn nanoseconds(self) -> i128 {
+        match self {
+            Self::Hour => 3_600 * NS_PER_SECOND,
+            Self::Minute => 60 * NS_PER_SECOND,
+            Self::Second => NS_PER_SECOND,
+            Self::Millisecond => 1_000_000,
+            Self::Microsecond => 1_000,
+            Self::Nanosecond => 1,
+        }
+    }
+}
+
 fn rounding_increment(precision: InstantPrecision) -> Option<i128> {
     match precision {
         InstantPrecision::Auto => Some(1),
@@ -950,6 +981,76 @@ fn round_as_if_positive(value: i128, increment: i128, mode: InstantRoundingMode)
         }
     };
     Some(if choose_upper { upper } else { lower })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn round_plain_time(
+    hour: u8,
+    minute: u8,
+    second: u8,
+    millisecond: u16,
+    microsecond: u16,
+    nanosecond: u16,
+    increment: u32,
+    unit: TimeUnit,
+    rounding_mode: InstantRoundingMode,
+) -> Option<(u8, u8, u8, u16, u16, u16)> {
+    let total = (((((i128::from(hour) * 60 + i128::from(minute)) * 60 + i128::from(second))
+        * 1_000
+        + i128::from(millisecond))
+        * 1_000
+        + i128::from(microsecond))
+        * 1_000)
+        + i128::from(nanosecond);
+    let prefix = match unit {
+        TimeUnit::Hour => 0,
+        TimeUnit::Minute => i128::from(hour) * 3_600 * NS_PER_SECOND,
+        TimeUnit::Second => (i128::from(hour) * 3_600 + i128::from(minute) * 60) * NS_PER_SECOND,
+        TimeUnit::Millisecond => {
+            (i128::from(hour) * 3_600 + i128::from(minute) * 60 + i128::from(second))
+                * NS_PER_SECOND
+        }
+        TimeUnit::Microsecond => {
+            (i128::from(hour) * 3_600 + i128::from(minute) * 60 + i128::from(second))
+                * NS_PER_SECOND
+                + i128::from(millisecond) * 1_000_000
+        }
+        TimeUnit::Nanosecond => {
+            (i128::from(hour) * 3_600 + i128::from(minute) * 60 + i128::from(second))
+                * NS_PER_SECOND
+                + i128::from(millisecond) * 1_000_000
+                + i128::from(microsecond) * 1_000
+        }
+    };
+    let quantity = total.checked_sub(prefix)?;
+    let increment_nanoseconds = i128::from(increment).checked_mul(unit.nanoseconds())?;
+    let rounded = prefix.checked_add(round_as_if_positive(
+        quantity,
+        increment_nanoseconds,
+        rounding_mode,
+    )?)?;
+    let day_nanoseconds = SECONDS_PER_DAY.checked_mul(NS_PER_SECOND)?;
+    let mut remainder = rounded.rem_euclid(day_nanoseconds);
+
+    let rounded_hour = remainder / (3_600 * NS_PER_SECOND);
+    remainder %= 3_600 * NS_PER_SECOND;
+    let rounded_minute = remainder / (60 * NS_PER_SECOND);
+    remainder %= 60 * NS_PER_SECOND;
+    let rounded_second = remainder / NS_PER_SECOND;
+    remainder %= NS_PER_SECOND;
+    let rounded_millisecond = remainder / 1_000_000;
+    remainder %= 1_000_000;
+    let rounded_microsecond = remainder / 1_000;
+    let rounded_nanosecond = remainder % 1_000;
+
+    Some((
+        u8::try_from(rounded_hour).ok()?,
+        u8::try_from(rounded_minute).ok()?,
+        u8::try_from(rounded_second).ok()?,
+        u16::try_from(rounded_millisecond).ok()?,
+        u16::try_from(rounded_microsecond).ok()?,
+        u16::try_from(rounded_nanosecond).ok()?,
+    ))
 }
 
 fn civil_from_days(days: i128) -> Option<(i128, i128, i128)> {

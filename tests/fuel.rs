@@ -341,6 +341,56 @@ fn temporal_plain_time_to_string_precharges_option_strings() {
 }
 
 #[test]
+fn temporal_plain_time_round_precharges_option_strings() {
+    const BUDGET: i64 = 20_000;
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        globalThis.plainTimeRoundFuel = new Temporal.PlainTime(12, 34, 56, 123, 456, 789);
+        globalThis.plainTimeRoundShortNumber = { valueOf() { return '1'; } };
+        globalThis.plainTimeRoundLongNumber = { valueOf() { return '1' + ' '.repeat(512); } };
+        globalThis.plainTimeRoundShortString = { toString() { return 'second'; } };
+        globalThis.plainTimeRoundLongString = { toString() { return 'x'.repeat(512); } };
+        "#,
+    )
+    .expect("PlainTime.round fuel fixtures should initialize");
+
+    for (property, short, long) in [
+        (
+            "roundingIncrement",
+            "plainTimeRoundShortNumber",
+            "plainTimeRoundLongNumber",
+        ),
+        (
+            "roundingMode",
+            "plainTimeRoundShortString",
+            "plainTimeRoundLongString",
+        ),
+        (
+            "smallestUnit",
+            "plainTimeRoundShortString",
+            "plainTimeRoundLongString",
+        ),
+    ] {
+        vm.set_fuel(Some(BUDGET));
+        let _ = vm.run(&format!(
+            "try {{ plainTimeRoundFuel.round({{ smallestUnit: 'second', {property}: {short} }}); }} catch (error) {{}}"
+        ));
+        let short_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+
+        vm.set_fuel(Some(BUDGET));
+        let _ = vm.run(&format!(
+            "try {{ plainTimeRoundFuel.round({{ smallestUnit: 'second', {property}: {long} }}); }} catch (error) {{}}"
+        ));
+        let long_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+        assert!(
+            long_work >= short_work + 500,
+            "{property} conversion must charge the produced string"
+        );
+    }
+}
+
+#[test]
 fn temporal_plain_date_to_string_precharges_calendar_name_bytes() {
     const BUDGET: i64 = 10_000;
     let mut vm = Vm::new().expect("failed to initialize VM");

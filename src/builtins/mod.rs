@@ -6290,7 +6290,7 @@ pub(crate) fn install_temporal_namespace_in_env(
     global: Option<&Value>,
     object_proto: Value,
 ) -> error::Result<Value> {
-    vm.try_reserve_gc_pins(134)?;
+    vm.try_reserve_gc_pins(135)?;
     let mut pin_count = 0;
     let result = (|| {
         let instant_prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
@@ -7024,6 +7024,13 @@ pub(crate) fn install_temporal_namespace_in_env(
             env,
         )?);
         pin_count += vm.pin(&plain_time_to_json);
+        let plain_time_round = Value::Object(vm.new_native_function_in_env_with_gc_retry(
+            "round",
+            temporal_plain_time_round,
+            1,
+            env,
+        )?);
+        pin_count += vm.pin(&plain_time_round);
 
         let Value::Object(instant_constructor_index) = instant_constructor.clone() else {
             unreachable!()
@@ -7339,6 +7346,7 @@ pub(crate) fn install_temporal_namespace_in_env(
                 data_prop(plain_time_to_string),
             );
             props.insert(PropertyKey::from("toJSON"), data_prop(plain_time_to_json));
+            props.insert(PropertyKey::from("round"), data_prop(plain_time_round));
             props.insert(PropertyKey::from("valueOf"), data_prop(plain_time_value_of));
             let mut tag = data_prop(Value::String(Arc::from("Temporal.PlainTime")));
             tag.writable = false;
@@ -9917,6 +9925,118 @@ fn temporal_plain_time_to_json(
         temporal::InstantPrecision::Auto,
         temporal::InstantRoundingMode::Trunc,
     )
+}
+
+fn temporal_plain_time_round(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let fields = temporal_plain_time_slots(vm, this)?;
+    let round_to = args.first().cloned().unwrap_or(Value::Undefined);
+    if round_to.is_undefined() {
+        return Err(Error::type_err(
+            "Temporal.PlainTime.prototype.round requires an argument",
+        ));
+    }
+
+    let (rounding_increment, rounding_mode, smallest_unit) = match round_to {
+        Value::String(unit) => (
+            1,
+            temporal::InstantRoundingMode::HalfExpand,
+            temporal_plain_time_round_unit(&unit)?,
+        ),
+        Value::Object(_) => {
+            vm.try_reserve_value_roots(std::slice::from_ref(&round_to))?;
+            let options_pin = vm.pin(&round_to);
+            let result = (|| {
+                let rounding_increment = match vm.get_property(&round_to, "roundingIncrement")? {
+                    Value::Undefined => 1,
+                    value => {
+                        let increment = temporal_integer_with_truncation(vm, value)?;
+                        if increment < BigInt::from(1_u8)
+                            || increment > BigInt::from(1_000_000_000_u32)
+                        {
+                            return Err(Error::range("Invalid Temporal roundingIncrement option"));
+                        }
+                        increment.to_u32().ok_or_else(|| {
+                            Error::range("Invalid Temporal roundingIncrement option")
+                        })?
+                    }
+                };
+                let rounding_mode = match vm.get_property(&round_to, "roundingMode")? {
+                    Value::Undefined => temporal::InstantRoundingMode::HalfExpand,
+                    value => {
+                        let value = temporal_option_to_string(vm, &value)?;
+                        temporal_instant_rounding_mode(Some(&value))?
+                    }
+                };
+                let smallest_unit = match vm.get_property(&round_to, "smallestUnit")? {
+                    Value::Undefined => {
+                        return Err(Error::range(
+                            "Temporal.PlainTime.prototype.round requires smallestUnit",
+                        ));
+                    }
+                    value => {
+                        let value = temporal_option_to_string(vm, &value)?;
+                        temporal_plain_time_round_unit(&value)?
+                    }
+                };
+                Ok((rounding_increment, rounding_mode, smallest_unit))
+            })();
+            vm.unpin_many(options_pin);
+            result?
+        }
+        _ => {
+            return Err(Error::type_err(
+                "Temporal.PlainTime.prototype.round argument must be a String or object",
+            ));
+        }
+    };
+
+    let maximum = smallest_unit.maximum_rounding_increment();
+    if rounding_increment >= maximum || maximum % rounding_increment != 0 {
+        return Err(Error::range(
+            "Invalid Temporal roundingIncrement for smallestUnit",
+        ));
+    }
+    let (hour, minute, second, millisecond, microsecond, nanosecond) = temporal::round_plain_time(
+        fields.hour,
+        fields.minute,
+        fields.second,
+        fields.millisecond,
+        fields.microsecond,
+        fields.nanosecond,
+        rounding_increment,
+        smallest_unit,
+        rounding_mode,
+    )
+    .ok_or_else(|| Error::range("Temporal.PlainTime rounding failed"))?;
+    let realm = vm.native_callee_closure().unwrap_or(vm.global);
+    create_temporal_plain_time_in_realm(
+        vm,
+        TemporalPlainTimeFields {
+            hour,
+            minute,
+            second,
+            millisecond,
+            microsecond,
+            nanosecond,
+        },
+        realm,
+    )
+}
+
+fn temporal_plain_time_round_unit(value: &str) -> error::Result<temporal::TimeUnit> {
+    Ok(match value {
+        "hour" | "hours" => temporal::TimeUnit::Hour,
+        "minute" | "minutes" => temporal::TimeUnit::Minute,
+        "second" | "seconds" => temporal::TimeUnit::Second,
+        "millisecond" | "milliseconds" => temporal::TimeUnit::Millisecond,
+        "microsecond" | "microseconds" => temporal::TimeUnit::Microsecond,
+        "nanosecond" | "nanoseconds" => temporal::TimeUnit::Nanosecond,
+        _ => return Err(Error::range("Invalid Temporal smallestUnit option")),
+    })
 }
 
 fn temporal_plain_time_format(

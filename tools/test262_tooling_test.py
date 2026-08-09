@@ -165,6 +165,11 @@ from test262_temporal_plain_time_admission import (
     TEMPORAL_PLAIN_TIME_FROM_FLAGS,
     TEMPORAL_PLAIN_TIME_FROM_INCLUDES,
     TEMPORAL_PLAIN_TIME_FROM_NEGATIVE,
+    TEMPORAL_PLAIN_TIME_ROUND_FEATURES,
+    TEMPORAL_PLAIN_TIME_ROUND_FILES,
+    TEMPORAL_PLAIN_TIME_ROUND_FLAGS,
+    TEMPORAL_PLAIN_TIME_ROUND_INCLUDES,
+    TEMPORAL_PLAIN_TIME_ROUND_NEGATIVE,
     TEMPORAL_PLAIN_TIME_TO_STRING_FEATURES,
     TEMPORAL_PLAIN_TIME_TO_STRING_FILES,
     TEMPORAL_PLAIN_TIME_TO_STRING_FLAGS,
@@ -14325,10 +14330,18 @@ class ClassSubclassBuiltinAdmissionTests(unittest.TestCase):
                 TEMPORAL_PLAIN_TIME_TO_JSON_NEGATIVE,
                 "temporal_plain_time_to_json",
             ),
+            (
+                TEMPORAL_PLAIN_TIME_ROUND_FILES,
+                TEMPORAL_PLAIN_TIME_ROUND_FEATURES,
+                TEMPORAL_PLAIN_TIME_ROUND_INCLUDES,
+                TEMPORAL_PLAIN_TIME_ROUND_FLAGS,
+                TEMPORAL_PLAIN_TIME_ROUND_NEGATIVE,
+                "temporal_plain_time_round",
+            ),
         )
         self.assertEqual(
             tuple(len(cohort[0]) for cohort in cohorts),
-            (40, 51, 7, 31, 32, 40, 7),
+            (40, 51, 7, 31, 32, 40, 7, 42),
         )
         for index, cohort in enumerate(cohorts):
             files, features, includes, flags, negative, _ = cohort
@@ -14398,6 +14411,10 @@ class ClassSubclassBuiltinAdmissionTests(unittest.TestCase):
                         path.relative_to(test_root).as_posix()
                         for path in (plain_time / "prototype/toJSON").glob("*.js")
                     },
+                    {
+                        path.relative_to(test_root).as_posix()
+                        for path in (plain_time / "prototype/round").glob("*.js")
+                    },
                 )
             except OSError:
                 return None
@@ -14455,6 +14472,9 @@ class ClassSubclassBuiltinAdmissionTests(unittest.TestCase):
             to_json_future = (
                 root / "test/built-ins/Temporal/PlainTime/prototype/toJSON/future.js"
             )
+            round_future = (
+                root / "test/built-ins/Temporal/PlainTime/prototype/round/future.js"
+            )
             outside = root / "test/built-ins/Temporal/Other/from/basic.js"
             for tool in (test262_runner, test262_analyze):
                 original_root = tool.TEST262
@@ -14473,6 +14493,7 @@ class ClassSubclassBuiltinAdmissionTests(unittest.TestCase):
                             compare_future,
                             to_string_future,
                             to_json_future,
+                            round_future,
                             outside,
                             None,
                             object(),
@@ -14490,6 +14511,9 @@ class ClassSubclassBuiltinAdmissionTests(unittest.TestCase):
                     )
                     self.assertTrue(
                         tool.should_skip({"features": ["Temporal"]}, to_json_future)
+                    )
+                    self.assertTrue(
+                        tool.should_skip({"features": ["Temporal"]}, round_future)
                     )
                     self.assertTrue(tool.should_skip({"features": ["Temporal"]}, outside))
                 finally:

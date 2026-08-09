@@ -25647,6 +25647,125 @@ fn temporal_plain_time_to_json_formats_hidden_time_and_ignores_arguments() {
 }
 
 #[test]
+fn temporal_plain_time_round_observes_options_and_rounds_exactly() {
+    assert_eq!(
+        run(r#"
+            var time = new Temporal.PlainTime(13, 46, 23, 123, 987, 500);
+            for (var key of ['hour', 'minute', 'second', 'millisecond', 'microsecond', 'nanosecond']) {
+              Object.defineProperty(time, key, {
+                get: function () { throw new Error('hidden getter observed'); }
+              });
+            }
+            var order = [];
+            var options = {};
+            Object.defineProperty(options, 'roundingIncrement', {
+              get: function () { order.push('get increment'); return {
+                valueOf: function () { order.push('coerce increment'); return 2.5; }
+              }; }
+            });
+            Object.defineProperty(options, 'roundingMode', {
+              get: function () { order.push('get mode'); return {
+                toString: function () { order.push('coerce mode'); return 'expand'; }
+              }; }
+            });
+            Object.defineProperty(options, 'smallestUnit', {
+              get: function () { order.push('get unit'); return {
+                toString: function () { order.push('coerce unit'); return 'nanosecond'; }
+              }; }
+            });
+            var exact = new Temporal.PlainTime(12, 34, 56, 0, 0, 5).round(options);
+            var invalidOrder = [];
+            var invalid = {};
+            for (var entry of [['roundingIncrement', 25], ['roundingMode', 'expand'], ['smallestUnit', 'hour']]) {
+              Object.defineProperty(invalid, entry[0], {
+                get: (function (name, value) { return function () {
+                  invalidOrder.push(name); return value;
+                }; })(entry[0], entry[1])
+              });
+            }
+            var invalidAfterReads = false;
+            try { time.round(invalid); } catch (error) {
+              invalidAfterReads = error instanceof RangeError;
+            }
+            var brandObserved = false;
+            try {
+              Temporal.PlainTime.prototype.round.call({}, {
+                get roundingIncrement() { brandObserved = true; return 1; }
+              });
+            } catch (error) {}
+            var marker = new Error('marker');
+            var markerCaught = false;
+            try { time.round({ get roundingIncrement() { throw marker; } }); }
+            catch (error) { markerCaught = error === marker; }
+            [
+              exact.toString(), order.join(','), invalidAfterReads, invalidOrder.join(','),
+              brandObserved, markerCaught,
+              time.round('hour').toString(),
+              time.round({ smallestUnit: 'minute', roundingIncrement: 15 }).toString(),
+              time.round({ smallestUnit: 'microsecond', roundingMode: 'halfEven' }).toString(),
+              time.round({ smallestUnit: 'microsecond', roundingMode: 'halfFloor' }).toString(),
+              new Temporal.PlainTime(1, 10).round({
+                smallestUnit: 'minute', roundingIncrement: 20, roundingMode: 'halfEven'
+              }).toString(),
+              new Temporal.PlainTime(23, 59, 59, 999, 999, 999).round('second').toString()
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "12:34:56.000000006|get increment,coerce increment,get mode,coerce mode,get unit,coerce unit|true|roundingIncrement,roundingMode,smallestUnit|false|true|14:00:00|13:45:00|13:46:23.123988|13:46:23.123987|01:00:00|00:00:00"
+        ))
+    );
+}
+
+#[test]
+fn temporal_plain_time_round_uses_method_realm_and_intrinsic_prototype() {
+    assert_eq!(
+        run(r#"
+            var originalIncrement = Object.prototype.roundingIncrement;
+            var originalMode = Object.prototype.roundingMode;
+            Object.prototype.roundingIncrement = 7;
+            Object.prototype.roundingMode = 'floor';
+            var shorthand = new Temporal.PlainTime(12, 31).round('hour');
+            if (originalIncrement === undefined) delete Object.prototype.roundingIncrement;
+            else Object.prototype.roundingIncrement = originalIncrement;
+            if (originalMode === undefined) delete Object.prototype.roundingMode;
+            else Object.prototype.roundingMode = originalMode;
+
+            class Derived extends Temporal.PlainTime {}
+            var derived = new Derived(12, 31).round('hour');
+            var other = $262.createRealm().global;
+            var foreign = new other.Temporal.PlainTime(12, 31);
+            var mainResult = Temporal.PlainTime.prototype.round.call(foreign, 'hour');
+            var foreignRound = other.Temporal.PlainTime.prototype.round;
+            var foreignResult = foreignRound.call(new Temporal.PlainTime(12, 31), 'hour');
+            var foreignType = false;
+            var foreignRange = false;
+            try { foreignRound.call({}, 'hour'); } catch (error) {
+              foreignType = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            try { foreignRound.call(foreign, 'day'); } catch (error) {
+              foreignRange = error instanceof other.RangeError && !(error instanceof RangeError);
+            }
+            var nonconstructable = false;
+            try { new Temporal.PlainTime.prototype.round('hour'); }
+            catch (error) { nonconstructable = error instanceof TypeError; }
+            [
+              Temporal.PlainTime.prototype.round.name,
+              Temporal.PlainTime.prototype.round.length,
+              shorthand.toString(),
+              Object.getPrototypeOf(derived) === Temporal.PlainTime.prototype,
+              !(derived instanceof Derived),
+              Object.getPrototypeOf(mainResult) === Temporal.PlainTime.prototype,
+              Object.getPrototypeOf(foreignResult) === other.Temporal.PlainTime.prototype,
+              foreignType, foreignRange, nonconstructable
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "round|1|13:00:00|true|true|true|true|true|true|true"
+        ))
+    );
+}
+
+#[test]
 fn temporal_plain_date_from_converts_supported_inputs_without_observing_slots() {
     assert_eq!(
         run(r#"
