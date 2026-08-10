@@ -13,6 +13,7 @@ from unittest.mock import mock_open, patch
 
 import test262_analyze
 import test262_runner
+import test262_temporal_calendar_siblings_from_diagnostic as temporal_sibling_from_diagnostic
 import analyze_failures
 from test262_class_computed_field_admission import CLASS_COMPUTED_FIELD_FILES
 from test262_class_default_parameter_admission import CLASS_DEFAULT_PARAMETER_FILES
@@ -281,6 +282,16 @@ from test262_temporal_calendar_siblings_core_admission import (
     TEMPORAL_CALENDAR_SIBLINGS_CORE_BLOCKER_FILES,
     TEMPORAL_CALENDAR_SIBLINGS_CORE_FEATURES,
     TEMPORAL_CALENDAR_SIBLINGS_CORE_FILES,
+)
+from test262_temporal_calendar_siblings_from_admission import (
+    TEMPORAL_CALENDAR_SIBLINGS_FROM_ALL_FEATURES,
+    TEMPORAL_CALENDAR_SIBLINGS_FROM_ALL_FILES,
+    TEMPORAL_CALENDAR_SIBLINGS_FROM_ALL_FLAGS,
+    TEMPORAL_CALENDAR_SIBLINGS_FROM_ALL_INCLUDES,
+    TEMPORAL_CALENDAR_SIBLINGS_FROM_ALL_NEGATIVE,
+    TEMPORAL_CALENDAR_SIBLINGS_FROM_BLOCKER_FILES,
+    TEMPORAL_CALENDAR_SIBLINGS_FROM_FEATURES,
+    TEMPORAL_CALENDAR_SIBLINGS_FROM_FILES,
 )
 from test262_temporal_plain_date_from_admission import (
     TEMPORAL_PLAIN_DATE_FROM_FEATURES,
@@ -6635,6 +6646,182 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                     finally:
                         tool.TEST262 = original_root
 
+    def test_temporal_calendar_siblings_from_manifest_is_exact_live_disjoint_and_shared(self):
+        files = TEMPORAL_CALENDAR_SIBLINGS_FROM_FILES
+        blockers = TEMPORAL_CALENDAR_SIBLINGS_FROM_BLOCKER_FILES
+        all_files = TEMPORAL_CALENDAR_SIBLINGS_FROM_ALL_FILES
+        self.assertEqual(len(files), 74)
+        self.assertEqual(len(blockers), 49)
+        self.assertTrue(files.isdisjoint(blockers))
+        self.assertEqual(all_files, files | blockers)
+        self.assertEqual(set(TEMPORAL_CALENDAR_SIBLINGS_FROM_FEATURES), set(files))
+        for metadata_map in (
+            TEMPORAL_CALENDAR_SIBLINGS_FROM_ALL_FEATURES,
+            TEMPORAL_CALENDAR_SIBLINGS_FROM_ALL_INCLUDES,
+            TEMPORAL_CALENDAR_SIBLINGS_FROM_ALL_FLAGS,
+            TEMPORAL_CALENDAR_SIBLINGS_FROM_ALL_NEGATIVE,
+        ):
+            self.assertEqual(set(metadata_map), set(all_files))
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        corpus_required = "TEST262" in os.environ
+
+        def live_candidate_files():
+            live_files = set()
+            for kind in ("PlainMonthDay", "PlainYearMonth"):
+                directory = test_root / "built-ins/Temporal" / kind / "from"
+                if not directory.is_dir():
+                    if corpus_required:
+                        raise FileNotFoundError(directory)
+                    return None
+                live_files.update(
+                    path.relative_to(test_root).as_posix()
+                    for path in directory.glob("*.js")
+                    if "_FIXTURE" not in path.name
+                )
+            return live_files
+
+        try:
+            live_files = live_candidate_files()
+        except OSError:
+            if corpus_required:
+                raise
+            live_files = None
+        if live_files is not None:
+            self.assertEqual(live_files, all_files)
+            for relative in all_files:
+                path = test_root / relative
+                metadata = test262_runner.parse_meta(path.read_text())
+                self.assertEqual(
+                    frozenset(metadata.get("features", [])),
+                    TEMPORAL_CALENDAR_SIBLINGS_FROM_ALL_FEATURES[relative],
+                    relative,
+                )
+                self.assertEqual(
+                    frozenset(metadata.get("includes", [])),
+                    TEMPORAL_CALENDAR_SIBLINGS_FROM_ALL_INCLUDES[relative],
+                    relative,
+                )
+                self.assertEqual(
+                    frozenset(metadata.get("flags", [])),
+                    TEMPORAL_CALENDAR_SIBLINGS_FROM_ALL_FLAGS[relative],
+                    relative,
+                )
+                self.assertEqual(
+                    metadata.get("negative"),
+                    TEMPORAL_CALENDAR_SIBLINGS_FROM_ALL_NEGATIVE[relative],
+                    relative,
+                )
+                for tool in (test262_runner, test262_analyze):
+                    self.assertEqual(
+                        tool.temporal_calendar_siblings_from_path(path),
+                        relative in files,
+                        relative,
+                    )
+                    self.assertEqual(
+                        tool.temporal_calendar_siblings_from_features(path),
+                        (
+                            TEMPORAL_CALENDAR_SIBLINGS_FROM_FEATURES[relative]
+                            if relative in files
+                            else frozenset()
+                        ),
+                        relative,
+                    )
+                    self.assertEqual(tool.should_skip(metadata, path), relative in blockers)
+
+        with patch("pathlib.Path.is_dir", side_effect=PermissionError):
+            with self.assertRaises(PermissionError):
+                live_candidate_files()
+        with patch("pathlib.Path.is_dir", return_value=False):
+            if corpus_required:
+                with self.assertRaises(FileNotFoundError):
+                    live_candidate_files()
+            else:
+                self.assertIsNone(live_candidate_files())
+
+        tools_dir = Path(__file__).resolve().parent
+        for manifest in tools_dir.glob("test262_*_admission.txt"):
+            if manifest.name == "test262_temporal_calendar_siblings_from_admission.txt":
+                continue
+            existing = {
+                line
+                for raw_line in manifest.read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            self.assertTrue(files.isdisjoint(existing), manifest.name)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = root / "test/built-ins/Temporal/PlainMonthDay/from/future.js"
+            outside = root / "test/built-ins/Other/from/basic.js"
+            for tool in (test262_runner, test262_analyze):
+                self.assertFalse(tool.temporal_calendar_siblings_from_path(None))
+                self.assertFalse(tool.temporal_calendar_siblings_from_path(object()))
+                self.assertEqual(
+                    tool.temporal_calendar_siblings_from_features(None), frozenset()
+                )
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, features in TEMPORAL_CALENDAR_SIBLINGS_FROM_FEATURES.items():
+                        path = root / "test" / relative
+                        self.assertTrue(tool.temporal_calendar_siblings_from_path(path))
+                        self.assertEqual(
+                            tool.temporal_calendar_siblings_from_features(path), features
+                        )
+                        self.assertFalse(
+                            tool.should_skip({"features": sorted(features)}, path)
+                        )
+                    for path in (future, outside):
+                        self.assertFalse(tool.temporal_calendar_siblings_from_path(path))
+                        self.assertEqual(
+                            tool.temporal_calendar_siblings_from_features(path), frozenset()
+                        )
+                        self.assertTrue(tool.should_skip({"features": ["Temporal"]}, path))
+                finally:
+                    tool.TEST262 = original_root
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "test").mkdir()
+            original_root = temporal_sibling_from_diagnostic.test262_runner.TEST262
+            temporal_sibling_from_diagnostic.test262_runner.TEST262 = str(root)
+            try:
+                def expected_status(path):
+                    relative = path.relative_to(root / "test").as_posix()
+                    return (
+                        "fail"
+                        if relative in TEMPORAL_CALENDAR_SIBLINGS_FROM_BLOCKER_FILES
+                        else "pass"
+                    )
+
+                arguments = sorted(TEMPORAL_CALENDAR_SIBLINGS_FROM_ALL_FILES)
+                with patch.object(
+                    temporal_sibling_from_diagnostic.test262_runner,
+                    "run_test",
+                    side_effect=expected_status,
+                ):
+                    temporal_sibling_from_diagnostic.verify_expected_results(arguments)
+                    with self.assertRaisesRegex(RuntimeError, "exact frozen surface"):
+                        temporal_sibling_from_diagnostic.verify_expected_results(arguments[:-1])
+                    with self.assertRaisesRegex(RuntimeError, "exact frozen surface"):
+                        temporal_sibling_from_diagnostic.verify_expected_results(
+                            arguments[:-1] + [arguments[0]]
+                        )
+                    with self.assertRaisesRegex(RuntimeError, "exact frozen surface"):
+                        temporal_sibling_from_diagnostic.verify_expected_results(
+                            arguments + ["built-ins/Temporal/Other/missing.js"]
+                        )
+                with patch.object(
+                    temporal_sibling_from_diagnostic.test262_runner,
+                    "run_test",
+                    return_value="pass",
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "results drifted"):
+                        temporal_sibling_from_diagnostic.verify_expected_results(arguments)
+            finally:
+                temporal_sibling_from_diagnostic.test262_runner.TEST262 = original_root
+
     def test_temporal_plain_date_from_manifest_is_exact_live_disjoint_and_shared(self):
         files = TEMPORAL_PLAIN_DATE_FROM_FILES
         features_by_file = TEMPORAL_PLAIN_DATE_FROM_FEATURES
@@ -6732,8 +6919,8 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
         features_by_file = TEMPORAL_CALENDAR_SIBLINGS_CORE_FEATURES
         blockers = TEMPORAL_CALENDAR_SIBLINGS_CORE_BLOCKER_FILES
         all_files = TEMPORAL_CALENDAR_SIBLINGS_CORE_ALL_FILES
-        self.assertEqual(len(files), 89)
-        self.assertEqual(len(blockers), 15)
+        self.assertEqual(len(files), 93)
+        self.assertEqual(len(blockers), 11)
         self.assertEqual(set(features_by_file), set(files))
         self.assertTrue(files.isdisjoint(blockers))
         self.assertEqual(all_files, files | blockers)
@@ -15570,7 +15757,7 @@ class ClassSubclassBuiltinAdmissionTests(unittest.TestCase):
         )
         self.assertEqual(
             tuple(len(cohort[0]) for cohort in cohorts),
-            (40, 51, 7, 31, 32, 40, 7, 42, 21, 32, 32),
+            (40, 51, 7, 31, 32, 40, 7, 42, 22, 32, 32),
         )
         for index, cohort in enumerate(cohorts):
             files, features, includes, flags, negative, _ = cohort
@@ -15673,7 +15860,7 @@ class ClassSubclassBuiltinAdmissionTests(unittest.TestCase):
                 all_live_with,
                 TEMPORAL_PLAIN_TIME_WITH_FILES | TEMPORAL_PLAIN_TIME_WITH_BLOCKERS,
             )
-            self.assertEqual(len(TEMPORAL_PLAIN_TIME_WITH_BLOCKERS), 1)
+            self.assertEqual(len(TEMPORAL_PLAIN_TIME_WITH_BLOCKERS), 0)
             for relative in TEMPORAL_PLAIN_TIME_WITH_BLOCKERS:
                 path = test_root / relative
                 metadata = test262_runner.parse_meta(path.read_text())

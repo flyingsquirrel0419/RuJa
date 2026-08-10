@@ -632,6 +632,20 @@ pub(crate) struct ParsedPlainDate {
     pub calendar_identifier: Arc<str>,
 }
 
+pub(crate) struct ParsedPlainMonthDay {
+    pub reference_iso_year: i128,
+    pub month: i128,
+    pub day: i128,
+    pub calendar_identifier: Arc<str>,
+}
+
+pub(crate) struct ParsedPlainYearMonth {
+    pub year: i128,
+    pub month: i128,
+    pub reference_iso_day: i128,
+    pub calendar_identifier: Arc<str>,
+}
+
 pub(crate) fn parse_plain_date_string(source: &str) -> Option<ParsedPlainDate> {
     let parsed = parse_date_time(source, true)?;
     if parsed.z {
@@ -667,6 +681,52 @@ pub(crate) fn parse_plain_date_time_string(source: &str) -> Option<ParsedPlainDa
             nanosecond: date_time.nanosecond,
         },
         calendar_identifier,
+    })
+}
+
+pub(crate) fn parse_plain_month_day_string(source: &str) -> Option<ParsedPlainMonthDay> {
+    if let Some(parsed) = parse_date_time(source, true) {
+        if parsed.z {
+            return None;
+        }
+        let calendar_identifier = zoned_date_time_calendar_identifier(source)?;
+        let date_time = iso_date_time(&BigInt::from(parsed.local_nanoseconds), 0)?;
+        return Some(ParsedPlainMonthDay {
+            reference_iso_year: 1972,
+            month: date_time.month,
+            day: date_time.day,
+            calendar_identifier,
+        });
+    }
+
+    let (month, day, _) = parse_annotated_month_day_fields(source.as_bytes())?;
+    Some(ParsedPlainMonthDay {
+        reference_iso_year: 1972,
+        month,
+        day,
+        calendar_identifier: zoned_date_time_calendar_identifier(source)?,
+    })
+}
+
+pub(crate) fn parse_plain_year_month_string(source: &str) -> Option<ParsedPlainYearMonth> {
+    let (year, month) = if let Some(parsed) = parse_date_time(source, true) {
+        if parsed.z {
+            return None;
+        }
+        let date_time = iso_date_time(&BigInt::from(parsed.local_nanoseconds), 0)?;
+        (date_time.year, date_time.month)
+    } else {
+        let (year, month, _) = parse_annotated_year_month_fields(source.as_bytes())?;
+        (year, month)
+    };
+    if (year, month) < (-271_821, 4) || (year, month) > (275_760, 9) {
+        return None;
+    }
+    Some(ParsedPlainYearMonth {
+        year,
+        month,
+        reference_iso_day: 1,
+        calendar_identifier: zoned_date_time_calendar_identifier(source)?,
     })
 }
 
@@ -989,9 +1049,9 @@ fn parse_annotated_full_date(bytes: &[u8]) -> Option<Option<&[u8]>> {
     annotations_at_end(bytes, &mut index)
 }
 
-fn parse_annotated_year_month(bytes: &[u8]) -> Option<Option<&[u8]>> {
+fn parse_annotated_year_month_fields(bytes: &[u8]) -> Option<(i128, i128, Option<&[u8]>)> {
     let mut index = 0;
-    parse_date_year(bytes, &mut index)?;
+    let year = parse_date_year(bytes, &mut index)?;
     if bytes.get(index) == Some(&b'-') {
         index += 1;
     }
@@ -999,10 +1059,14 @@ fn parse_annotated_year_month(bytes: &[u8]) -> Option<Option<&[u8]>> {
     if !(1..=12).contains(&month) {
         return None;
     }
-    annotations_at_end(bytes, &mut index)
+    Some((year, month, annotations_at_end(bytes, &mut index)?))
 }
 
-fn parse_annotated_month_day(bytes: &[u8]) -> Option<Option<&[u8]>> {
+fn parse_annotated_year_month(bytes: &[u8]) -> Option<Option<&[u8]>> {
+    parse_annotated_year_month_fields(bytes).map(|(_, _, annotation)| annotation)
+}
+
+fn parse_annotated_month_day_fields(bytes: &[u8]) -> Option<(i128, i128, Option<&[u8]>)> {
     let mut index = 0;
     if bytes.get(0..2) == Some(b"--") {
         index = 2;
@@ -1015,7 +1079,11 @@ fn parse_annotated_month_day(bytes: &[u8]) -> Option<Option<&[u8]>> {
     if day == 0 || day > days_in_month(1972, month)? {
         return None;
     }
-    annotations_at_end(bytes, &mut index)
+    Some((month, day, annotations_at_end(bytes, &mut index)?))
+}
+
+fn parse_annotated_month_day(bytes: &[u8]) -> Option<Option<&[u8]>> {
+    parse_annotated_month_day_fields(bytes).map(|(_, _, annotation)| annotation)
 }
 
 fn parse_time_zone_from_annotated_date(source: &str) -> Option<i128> {
@@ -1721,10 +1789,10 @@ mod tests {
         add_plain_time, format_duration, format_instant, format_plain_date, format_plain_time,
         parse_calendar_identifier, parse_duration_string, parse_instant_string,
         parse_offset_string, parse_plain_date_string, parse_plain_date_time_string,
-        parse_plain_time_string, parse_time_zone_identifier, parse_time_zone_identifier_like,
-        parse_time_zone_offset, parse_zoned_date_time_string, resolve_zoned_date_time_epoch,
-        round_signed_to_increment, AnnotationDisplay, InstantPrecision, InstantRoundingMode,
-        ZonedDateTimeOffsetOption,
+        parse_plain_month_day_string, parse_plain_time_string, parse_plain_year_month_string,
+        parse_time_zone_identifier, parse_time_zone_identifier_like, parse_time_zone_offset,
+        parse_zoned_date_time_string, resolve_zoned_date_time_epoch, round_signed_to_increment,
+        AnnotationDisplay, InstantPrecision, InstantRoundingMode, ZonedDateTimeOffsetOption,
     };
     use num_bigint::BigInt;
 
@@ -2122,6 +2190,47 @@ mod tests {
         assert!(parse_plain_date_time_string("1976-11-18+00:00").is_none());
         assert!(parse_plain_date_time_string("1976-11-18[u-ca=gregory]").is_none());
         assert!(parse_plain_date_time_string("-000000-11-18").is_none());
+    }
+
+    #[test]
+    fn parses_partial_date_strings_without_applying_offsets() {
+        for source in [
+            "05-02",
+            "--0502[Asia/Tokyo][u-ca=ISO8601]",
+            "2000-05-02T00-02:30[America/St_Johns]",
+        ] {
+            let parsed = parse_plain_month_day_string(source).expect("MonthDay should parse");
+            assert_eq!(
+                (parsed.reference_iso_year, parsed.month, parsed.day),
+                (1972, 5, 2)
+            );
+            assert_eq!(parsed.calendar_identifier.as_ref(), "iso8601");
+        }
+        for source in ["09-15Z", "2022-09-15+00:00", "09-15[u-ca=chinese]"] {
+            assert!(parse_plain_month_day_string(source).is_none(), "{source}");
+        }
+
+        for source in [
+            "2019-12",
+            "201912[Africa/Abidjan][u-ca=ISO8601]",
+            "2019-12-15T00+01[Europe/Vienna]",
+        ] {
+            let parsed = parse_plain_year_month_string(source).expect("YearMonth should parse");
+            assert_eq!(
+                (parsed.year, parsed.month, parsed.reference_iso_day),
+                (2019, 12, 1)
+            );
+            assert_eq!(parsed.calendar_identifier.as_ref(), "iso8601");
+        }
+        for source in [
+            "2022-09Z",
+            "2022-09-15+00:00",
+            "2022-09[u-ca=hebrew]",
+            "-271821-03-31",
+            "+275760-10",
+        ] {
+            assert!(parse_plain_year_month_string(source).is_none(), "{source}");
+        }
     }
 
     #[test]

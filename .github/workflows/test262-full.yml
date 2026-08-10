@@ -192,6 +192,12 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_calendar_siblings_core_manifest_is_exact_live_disjoint_and_shared
           -v
+      - name: Verify exact Temporal calendar sibling factory admission
+        working-directory: tools
+        run: >-
+          TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_calendar_siblings_from_manifest_is_exact_live_disjoint_and_shared
+          -v
       - name: Verify exact Temporal.PlainDate.from admission
         working-directory: tools
         run: >-
@@ -1188,7 +1194,7 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
             "${admitted[@]}" > temporal_calendar_siblings_core_result.txt 2>&1
           cat temporal_calendar_siblings_core_result.txt
-          grep -q '^RATE=100.0 PASS=89 FAIL=0 SKIP=0 TOTAL=89 RAN=89$' \
+          grep -q '^RATE=100.0 PASS=93 FAIL=0 SKIP=0 TOTAL=93 RAN=93$' \
             temporal_calendar_siblings_core_result.txt
           mapfile -t complete < <(grep -hEv '^(#|$)' \
             tools/test262_temporal_calendar_siblings_core_admission.txt \
@@ -1197,8 +1203,26 @@ jobs:
             python3 tools/test262_temporal_calendar_siblings_core_diagnostic.py \
             "${complete[@]}" > temporal_calendar_siblings_core_diagnostic.txt 2>&1
           cat temporal_calendar_siblings_core_diagnostic.txt
-          grep -q '^RATE=85.6 PASS=89 FAIL=15 SKIP=0 TOTAL=104 RAN=104$' \
+          grep -q '^RATE=89.4 PASS=93 FAIL=11 SKIP=0 TOTAL=104 RAN=104$' \
             temporal_calendar_siblings_core_diagnostic.txt
+      - name: Require exact Temporal calendar sibling factory boundary
+        run: |
+          mapfile -t admitted < <(grep -hEv '^(#|$)' \
+            tools/test262_temporal_calendar_siblings_from_admission.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
+            "${admitted[@]}" > temporal_calendar_siblings_from_result.txt 2>&1
+          cat temporal_calendar_siblings_from_result.txt
+          grep -q '^RATE=100.0 PASS=74 FAIL=0 SKIP=0 TOTAL=74 RAN=74$' \
+            temporal_calendar_siblings_from_result.txt
+          mapfile -t complete < <(grep -hEv '^(#|$)' \
+            tools/test262_temporal_calendar_siblings_from_admission.txt \
+            tools/test262_temporal_calendar_siblings_from_blockers.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_calendar_siblings_from_diagnostic.py \
+            "${complete[@]}" > temporal_calendar_siblings_from_diagnostic.txt 2>&1
+          cat temporal_calendar_siblings_from_diagnostic.txt
+          grep -q '^RATE=60.2 PASS=74 FAIL=49 SKIP=0 TOTAL=123 RAN=123$' \
+            temporal_calendar_siblings_from_diagnostic.txt
 
   temporal-plain-date-core:
     needs: [build, setup]
@@ -1731,7 +1755,7 @@ jobs:
             python3 tools/test262_temporal_plain_time_diagnostic.py \
             "${files[@]}" > temporal_plain_time_result.txt 2>&1
           cat temporal_plain_time_result.txt
-          grep -q '^RATE=100.0 PASS=335 FAIL=0 SKIP=0 TOTAL=335 RAN=335$' \
+          grep -q '^RATE=100.0 PASS=336 FAIL=0 SKIP=0 TOTAL=336 RAN=336$' \
             temporal_plain_time_result.txt
           mapfile -t with_files < <(
             grep -hEv '^(#|$)' \
@@ -1742,7 +1766,7 @@ jobs:
             python3 tools/test262_temporal_plain_time_diagnostic.py \
             "${with_files[@]}" > temporal_plain_time_with_result.txt 2>&1
           cat temporal_plain_time_with_result.txt
-          grep -q '^RATE=95.5 PASS=21 FAIL=1 SKIP=0 TOTAL=22 RAN=22$' \
+          grep -q '^RATE=100.0 PASS=22 FAIL=0 SKIP=0 TOTAL=22 RAN=22$' \
             temporal_plain_time_with_result.txt
 
   temporal-plain-date-time-equals:

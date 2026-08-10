@@ -12,7 +12,7 @@ use super::{
 use crate::bytecode::{Chunk, Op};
 use crate::value::{
     ArrayData, FunctionData, FunctionKind, GcIdx, HeapObj, NativeConstructMode, PromiseStatus,
-    PropertyDescriptor, PropertyKey, ReferenceBase, ReferenceRecord, ReferencedName,
+    PropertyDescriptor, PropertyKey, ReferenceBase, ReferenceRecord, ReferencedName, TemporalKind,
     UncoercedPropertyName,
 };
 use crate::Value;
@@ -931,11 +931,11 @@ fn temporal_namespace_installation_rolls_back_last_boundary_on_default_stack() {
     let baseline_registries = realm_registry_counts(&vm);
     let global = vm.global;
 
-    vm.set_max_heap_objects(Some(baseline_live + 165));
+    vm.set_max_heap_objects(Some(baseline_live + 167));
     let object_proto = vm.object_proto.clone();
     let error =
         crate::builtins::install_temporal_namespace_in_env(&mut vm, global, None, object_proto)
-            .expect_err("allocation 166 must fail on the ordinary test stack");
+            .expect_err("allocation 168 must fail on the ordinary test stack");
     vm.set_max_heap_objects(None);
 
     assert_eq!(error.kind, crate::error::ErrorKind::Range);
@@ -955,9 +955,9 @@ fn temporal_namespace_installation_covers_every_allocation_boundary_inner() {
     let baseline_live = vm.heap.live_count();
     let global = vm.global;
 
-    // Allocations 18 through 166 cover the method/accessor batches and the
+    // Allocations 18 through 168 cover the method/accessor batches and the
     // two namespace objects that must publish only after the batch succeeds.
-    for extra_capacity in 17..166 {
+    for extra_capacity in 17..168 {
         vm.set_max_heap_objects(Some(baseline_live + extra_capacity));
         let object_proto = vm.object_proto.clone();
         let result =
@@ -978,11 +978,11 @@ fn temporal_namespace_installation_covers_every_allocation_boundary_inner() {
         );
     }
 
-    vm.set_max_heap_objects(Some(baseline_live + 166));
+    vm.set_max_heap_objects(Some(baseline_live + 168));
     let object_proto = vm.object_proto.clone();
     let temporal =
         crate::builtins::install_temporal_namespace_in_env(&mut vm, global, None, object_proto)
-            .expect("exact 166-object capacity must install the complete namespace");
+            .expect("exact 168-object capacity must install the complete namespace");
     vm.set_max_heap_objects(None);
     assert_eq!(vm.gc_pins.len(), baseline_pins);
     assert_eq!(vm.get_global("Temporal"), temporal);
@@ -1033,6 +1033,16 @@ fn temporal_calendar_sibling_result_allocations_fail_cleanly_and_retry_after_gc(
             "new Temporal.PlainYearMonth(2000, 5).year;",
             Value::Number(2000.0),
         ),
+        (
+            "Temporal.PlainMonthDay.from('05-02');",
+            "Temporal.PlainMonthDay.from('05-02').day;",
+            Value::Number(2.0),
+        ),
+        (
+            "Temporal.PlainYearMonth.from('2000-05');",
+            "Temporal.PlainYearMonth.from('2000-05').year;",
+            Value::Number(2000.0),
+        ),
     ] {
         let mut vm = Vm::new().expect("failed to initialize VM");
         vm.gc();
@@ -1057,6 +1067,57 @@ fn temporal_calendar_sibling_result_allocations_fail_cleanly_and_retry_after_gc(
         vm.set_max_heap_objects(None);
         assert_eq!(result, expected);
         assert_eq!(vm.gc_pins.len(), baseline_pins);
+    }
+}
+
+#[test]
+fn temporal_calendar_sibling_from_preserves_hidden_reference_components() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    for (source, expected) in [
+        (
+            "Temporal.PlainMonthDay.from(new Temporal.PlainMonthDay(11, 16, undefined, 1960))",
+            (1960, 11, 16, true),
+        ),
+        (
+            "Temporal.PlainMonthDay.from({ year: 2001, month: 2, day: 28 })",
+            (1972, 2, 28, true),
+        ),
+        (
+            "Temporal.PlainYearMonth.from(new Temporal.PlainYearMonth(2000, 5, undefined, 7))",
+            (2000, 5, 7, false),
+        ),
+        (
+            "Temporal.PlainYearMonth.from('2019-12-15T23:00-12:00')",
+            (2019, 12, 1, false),
+        ),
+    ] {
+        let Value::Object(index) = vm.run(source).expect("factory input should convert") else {
+            panic!("factory must return a Temporal object");
+        };
+        vm.heap
+            .with_obj(index.0, |object| match (&object, expected.3) {
+                (
+                    HeapObj::Temporal(crate::value::TemporalData {
+                        kind: TemporalKind::PlainMonthDay { fields, .. },
+                        ..
+                    }),
+                    true,
+                ) => assert_eq!(
+                    (fields.reference_iso_year, fields.month, fields.day),
+                    (expected.0, expected.1, expected.2)
+                ),
+                (
+                    HeapObj::Temporal(crate::value::TemporalData {
+                        kind: TemporalKind::PlainYearMonth { fields, .. },
+                        ..
+                    }),
+                    false,
+                ) => assert_eq!(
+                    (fields.year, fields.month, fields.reference_iso_day),
+                    (expected.0, expected.1, expected.2)
+                ),
+                _ => panic!("factory returned the wrong Temporal brand"),
+            });
     }
 }
 

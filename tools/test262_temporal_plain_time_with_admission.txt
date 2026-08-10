@@ -14,6 +14,7 @@ built-ins/Temporal/PlainTime/prototype/with/options-read-before-algorithmic-vali
 built-ins/Temporal/PlainTime/prototype/with/options-undefined.js
 built-ins/Temporal/PlainTime/prototype/with/options-wrong-type.js
 built-ins/Temporal/PlainTime/prototype/with/order-of-operations.js
+built-ins/Temporal/PlainTime/prototype/with/plaintimelike-invalid.js
 built-ins/Temporal/PlainTime/prototype/with/overflow-invalid-string.js
 built-ins/Temporal/PlainTime/prototype/with/overflow-undefined.js
 built-ins/Temporal/PlainTime/prototype/with/overflow-wrong-type.js

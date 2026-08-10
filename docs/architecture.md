@@ -5017,8 +5017,8 @@ intrinsic fallback, GC tracing, failed-Realm rollback, and constructible-native
 inventory include all four identities. The installer adds 19 objects after
 `Duration.prototype.total`: PlainMonthDay uses prototype, constructor, three
 getters, and `valueOf`; PlainYearMonth uses prototype, constructor, ten
-getters, and `valueOf`. `Temporal.Now` and `%Temporal%` are therefore
-allocations 165 and 166, with 165 maximum live pins. The exhaustive allocation
+getters, and `valueOf`. `Temporal.Now` and `%Temporal%` were therefore
+allocations 165 and 166, with 165 maximum live pins before static factories. The exhaustive allocation
 sweep runs on an explicit 8 MiB test thread because debug-build stack frames
 for 149 repeated installer rollback attempts exceed Rust's default test-thread
 stack; production installation behavior is unchanged.
@@ -5037,6 +5037,36 @@ calendar-object fast paths while preserving foreign-Realm records.
 - 선택한 방식: reference component까지 포함한 두 compact field record, Realm-local constructor/prototype registries, branded core getters/valueOf/tag, exhaustive hidden-calendar extractor를 추가한다.
 - 다른 대안 대신 이 방식을 선택한 이유: ordinary fields와 stub은 getter 비관찰/branding을 보장하지 못하고 PlainDate alias는 internal-slot 종류를 섞는다. parser와 arithmetic 동시 도입은 독립된 grammar/ordering 표면을 검증 없이 넓힌다.
 - 장점, 단점 및 영향: ISO range/leap rules, constructor order, subclass/cross-Realm fallback, GC/OOM/fuel, 166-object installer rollback과 downstream calendar fast paths가 고정된다. from/formatting/arithmetic/non-ISO calendar는 명시적으로 후속 경계다.
+```
+
+Static `from` adds one Realm-local, non-constructable, length-1 native per
+brand. Installation now uses 168 allocations and 167 maximum live pins.
+Branded inputs copy their hidden calendar and reference component without
+public property access. Other objects use the central hidden-calendar fast
+path, then read MonthDay fields as `calendar, day, month, monthCode, year` or
+YearMonth fields as `calendar, month, monthCode, year`; options overflow is
+read afterward. Method Realm, rather than the receiver or subclass, owns the
+result prototype.
+
+MonthDay property bags validate an arbitrary-size explicit Gregorian year for
+overflow only, then store reference ISO year 1972. This avoids narrowing huge
+years before leap calculation. MonthCode syntax rejects non-leap `M00` during
+field conversion. YearMonth rejects non-positive numeric months at the same
+conversion step, and property bags and strings always store reference day 1.
+Dedicated partial-date parsers accept `MM-DD` and
+`YYYY-MM`; full date/time parsing shares the audited Temporal parser. Both
+charge input bytes before parsing, reject `Z` and date-only offsets, ignore
+offsets and zone annotations only when time is present, and accept only the
+ISO calendar. Result creation preserves copied fields across GC retry and OOM.
+
+```text
+[Decision Log]
+- 목적과 의도: partial-date factory conversion을 hidden brand, parser, observable order, Realm 및 resource 경계까지 명세에 맞게 연결한다.
+- 기존 구현 및 제약 조건: constructor records는 reference component를 저장했지만 public constructor 호출은 from의 clone/order/overflow 의미를 대체할 수 없고 기존 full-date parser만으로 MM-DD와 YYYY-MM를 표현할 수 없었다.
+- 검토한 주요 대안: constructor 재호출, 공용 PlainDate converter, string slice 기반 임시 parser, 타입별 converter와 structured parser를 검토했다.
+- 선택한 방식: hidden clone fast path, 타입별 ordered property collector, shared full-date parser와 두 structured partial parser, method-Realm allocator를 사용한다.
+- 다른 대안 대신 이 방식을 선택한 이유: constructor 재호출은 reference component를 잃고 PlainDate converter는 필드 관찰 순서를 늘린다. 구조화 parser는 annotation/offset 검증을 기존 parser와 공유하면서 partial grammar만 좁게 소유한다.
+- 장점, 단점 및 영향: hidden getter 비관찰, huge-year leap overflow, options precedence, long-input fuel, GC/OOM과 168-allocation rollback이 고정된다. formatting과 non-ISO calendar는 별도 완전 단위로 남는다.
 ```
 
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

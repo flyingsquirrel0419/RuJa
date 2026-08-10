@@ -42,12 +42,22 @@ def should_skip(meta, path=None):
 
 
 def verify_expected_results(arguments):
-    requested = {_relative(path) for path in arguments}
-    requested.discard(None)
-    frozen = requested & SURFACE
     test_root = Path(test262_runner.TEST262) / "test"
-    actual = {path: test262_runner.run_test(test_root / path) for path in frozen}
-    expected = {path: "fail" if path in BLOCKERS else "pass" for path in frozen}
+    if not test_root.is_dir():
+        raise FileNotFoundError(test_root)
+    relative_arguments = [_relative(test_root / path) for path in arguments]
+    requested = set(relative_arguments)
+    if (
+        len(arguments) != len(SURFACE)
+        or None in requested
+        or len(requested) != len(arguments)
+        or requested != SURFACE
+    ):
+        raise RuntimeError(
+            "Temporal calendar sibling core diagnostic requires the exact frozen surface"
+        )
+    actual = {path: test262_runner.run_test(test_root / path) for path in SURFACE}
+    expected = {path: "fail" if path in BLOCKERS else "pass" for path in SURFACE}
     if actual != expected:
         raise RuntimeError(f"Temporal calendar sibling core results drifted: {actual}")
 

@@ -25900,6 +25900,205 @@ fn temporal_plain_month_day_and_year_month_use_distinct_hidden_iso_slots() {
 }
 
 #[test]
+fn temporal_calendar_sibling_from_converts_partial_dates_and_hidden_inputs() {
+    assert_eq!(
+        run(r#"
+            var constrained = Temporal.PlainMonthDay.from(
+              { year: 2001, monthCode: "M02", day: 29 },
+              { overflow: "constrain" }
+            );
+            var hugeYear = Temporal.PlainMonthDay.from({
+              year: 1e100, month: 1, day: 1
+            });
+            var parsedMonthDay = Temporal.PlainMonthDay.from(
+              "2000-05-02T00-02:30[America/St_Johns]"
+            );
+            var parsedYearMonth = Temporal.PlainYearMonth.from(
+              "2019-12-15T00+01[Europe/Vienna]"
+            );
+            var constrainedYearMonth = Temporal.PlainYearMonth.from(
+              { year: 2021, month: 99 },
+              { overflow: "constrain" }
+            );
+
+            var monthDaySource = new Temporal.PlainMonthDay(11, 16, undefined, 1960);
+            var yearMonthSource = new Temporal.PlainYearMonth(2000, 5, undefined, 7);
+            Object.defineProperty(monthDaySource, "day", {
+              get: function () { throw new Error("day observed"); }
+            });
+            Object.defineProperty(yearMonthSource, "year", {
+              get: function () { throw new Error("year observed"); }
+            });
+            var monthDayClone = Temporal.PlainMonthDay.from(monthDaySource);
+            var yearMonthClone = Temporal.PlainYearMonth.from(yearMonthSource);
+
+            var date = new Temporal.PlainDate(1976, 11, 18);
+            Object.defineProperty(date, "calendar", {
+              get: function () { throw new Error("calendar observed"); }
+            });
+            var monthDayFromDate = Temporal.PlainMonthDay.from(date);
+            var yearMonthFromDate = Temporal.PlainYearMonth.from(date);
+
+            var other = $262.createRealm().global;
+            var foreignMonthDay = other.Temporal.PlainMonthDay.from({ month: 6, day: 3 });
+            var foreignYearMonth = other.Temporal.PlainYearMonth.from({ year: 2001, month: 7 });
+            [
+              constrained.monthCode, constrained.day,
+              hugeYear.monthCode, hugeYear.day,
+              parsedMonthDay.monthCode, parsedMonthDay.day,
+              parsedYearMonth.year, parsedYearMonth.month,
+              constrainedYearMonth.year, constrainedYearMonth.month,
+              monthDayClone.monthCode,
+              yearMonthClone.month,
+              monthDayClone !== monthDaySource,
+              yearMonthClone !== yearMonthSource,
+              monthDayFromDate.monthCode, monthDayFromDate.day,
+              yearMonthFromDate.year, yearMonthFromDate.month,
+              Object.getPrototypeOf(foreignMonthDay) === other.Temporal.PlainMonthDay.prototype,
+              Object.getPrototypeOf(foreignYearMonth) === other.Temporal.PlainYearMonth.prototype,
+              Temporal.PlainMonthDay.from.length,
+              Temporal.PlainYearMonth.from.length
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "M02|28|M01|1|M05|2|2019|12|2021|12|M11|5|true|true|M11|18|1976|11|true|true|1|1"
+        ))
+    );
+}
+
+#[test]
+fn temporal_calendar_sibling_from_preserves_observable_order_and_errors() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            function field(name, value) {
+              return { valueOf: function () { log.push(name); return value; } };
+            }
+            var fields = {
+              get calendar() { log.push("calendar"); return "iso8601"; },
+              get day() { log.push("get day"); return field("day", 2); },
+              get month() { log.push("get month"); return field("month", 5); },
+              get monthCode() {
+                log.push("get monthCode");
+                return { toString: function () { log.push("monthCode"); return "M05"; } };
+              },
+              get year() { log.push("get year"); return field("year", 2000); }
+            };
+            var options = {
+              get overflow() {
+                log.push("get overflow");
+                return { toString: function () { log.push("overflow"); return "constrain"; } };
+              }
+            };
+            Temporal.PlainMonthDay.from(fields, options);
+            var monthDayOrder = log.join(",");
+
+            log.length = 0;
+            var ymFields = {
+              get calendar() { log.push("calendar"); return "iso8601"; },
+              get month() { log.push("get month"); return field("month", 5); },
+              get monthCode() {
+                log.push("get monthCode");
+                return { toString: function () { log.push("monthCode"); return "M05"; } };
+              },
+              get year() { log.push("get year"); return field("year", 2000); }
+            };
+            Temporal.PlainYearMonth.from(ymFields, options);
+            var yearMonthOrder = log.join(",");
+
+            log.length = 0;
+            var invalidStringBeforeOptions = false;
+            try { Temporal.PlainYearMonth.from("2020-13", options); }
+            catch (error) {
+              invalidStringBeforeOptions = error instanceof RangeError && log.length === 0;
+            }
+            var missingBeforeRange = false;
+            try { Temporal.PlainMonthDay.from({ day: 32 }, { overflow: "reject" }); }
+            catch (error) { missingBeforeRange = error instanceof TypeError; }
+            var invalidMonthCodeBeforeYear = false;
+            try { Temporal.PlainMonthDay.from({ day: 1, monthCode: "L99M", year: Symbol() }); }
+            catch (error) { invalidMonthCodeBeforeYear = error instanceof RangeError; }
+            var yearBeforeMonthCodeSuitability = false;
+            try { Temporal.PlainMonthDay.from({ day: 1, monthCode: "M99L", year: Symbol() }); }
+            catch (error) { yearBeforeMonthCodeSuitability = error instanceof TypeError; }
+            var nonStringBeforeOptions = false;
+            try { Temporal.PlainMonthDay.from(123, options); }
+            catch (error) { nonStringBeforeOptions = error instanceof TypeError && log.length === 0; }
+            var zeroMonthCodeIsSyntacticRangeError = false;
+            try { Temporal.PlainMonthDay.from({ monthCode: "M00" }); }
+            catch (error) { zeroMonthCodeIsSyntacticRangeError = error instanceof RangeError; }
+            log.length = 0;
+            var nonPositiveYearMonthStopsDuringMonth = false;
+            try {
+              Temporal.PlainYearMonth.from({
+                get month() { log.push("month"); return 0; },
+                get monthCode() { log.push("monthCode"); return "M01"; },
+                get year() { log.push("year"); return 2000; }
+              }, options);
+            } catch (error) {
+              nonPositiveYearMonthStopsDuringMonth =
+                error instanceof RangeError && log.join(",") === "month";
+            }
+            [
+              monthDayOrder,
+              yearMonthOrder,
+              invalidStringBeforeOptions,
+              missingBeforeRange,
+              invalidMonthCodeBeforeYear,
+              yearBeforeMonthCodeSuitability,
+              nonStringBeforeOptions,
+              zeroMonthCodeIsSyntacticRangeError,
+              nonPositiveYearMonthStopsDuringMonth
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "calendar,get day,day,get month,month,get monthCode,monthCode,get year,year,get overflow,overflow|calendar,get month,month,get monthCode,monthCode,get year,year,get overflow,overflow|true|true|true|true|true|true|true"
+        ))
+    );
+}
+
+#[test]
+fn temporal_calendar_sibling_from_meters_strings_and_property_coercion() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run(
+        r#"
+        var longMonthDay = "05-02" + "x".repeat(4096);
+        var longYearMonth = "2020-05" + "x".repeat(4096);
+        var loopingField = {
+          valueOf: function () { while (true) {} }
+        };
+        var loopingMonthDay = { month: loopingField, day: 1 };
+        var loopingYearMonth = { year: loopingField, month: 1 };
+        "#,
+    )
+    .expect("fuel fixtures should initialize");
+
+    for source in [
+        "Temporal.PlainMonthDay.from(longMonthDay);",
+        "Temporal.PlainYearMonth.from(longYearMonth);",
+    ] {
+        vm.set_fuel(Some(64));
+        let error = vm
+            .run(source)
+            .expect_err("long partial-date parsing should consume bounded fuel");
+        assert_eq!(error.kind, ruja::ErrorKind::Fuel, "{source}");
+        vm.set_fuel(None);
+    }
+
+    for source in [
+        "Temporal.PlainMonthDay.from(loopingMonthDay);",
+        "Temporal.PlainYearMonth.from(loopingYearMonth);",
+    ] {
+        vm.set_fuel(Some(1_000));
+        let error = vm
+            .run(source)
+            .expect_err("property coercion should remain bounded by VM fuel");
+        assert_eq!(error.kind, ruja::ErrorKind::Fuel, "{source}");
+        vm.set_fuel(None);
+    }
+}
+
+#[test]
 fn temporal_calendar_fast_path_accepts_month_day_and_year_month_without_getters() {
     assert_eq!(
         run(r#"

@@ -1,3 +1,2 @@
 # Pinned Test262 revision: 9e61c12835c5e4a3bdba93850427e6742c4f64c4
-# Requires unimplemented PlainMonthDay.from and PlainYearMonth.from factories before with() runs.
-built-ins/Temporal/PlainTime/prototype/with/plaintimelike-invalid.js
+# No blockers after PlainMonthDay.from and PlainYearMonth.from landed.

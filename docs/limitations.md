@@ -60,9 +60,13 @@ The following resource limits are enforced:
   validation, subclass and cross-Realm prototype fallback, branded ISO
   accessors, `@@toStringTag`, and always-throwing `valueOf`. Their hidden
   calendars participate in all existing ToTemporalCalendar fast paths without
-  observing public properties. Static `from`, equality/comparison,
-  serialization, date conversion, arithmetic/difference, locale formatting,
-  and non-ISO calendars remain unsupported.
+  observing public properties. Realm-local static `from` clones branded
+  values, converts ordered ISO property bags, parses audited partial/full date
+  strings, and supports constrain/reject overflow with method-Realm results.
+  Equality/comparison, serialization, date conversion,
+  arithmetic/difference, locale formatting, and non-ISO calendars remain
+  unsupported. In particular, `prototype.toString` remains a separate
+  formatter/options/annotation unit rather than a factory helper stub.
   Realm-local `%Temporal.PlainTime%` supports six-field hidden-slot
   construction, subclassing, branded accessors, `@@toStringTag`, static
   `from` and lexicographic `compare`, hidden-record `equals`, and
@@ -73,8 +77,8 @@ The following resource limits are enforced:
   property bags, and the audited time String grammar. `round` supports String
   shorthand, all time units, valid increments, all rounding modes, and
   midnight rollover. `with` implements partial merge and constrain/reject
-  overflow, but one direct Test262 case remains blocked because it calls the
-  unimplemented PlainMonthDay/PlainYearMonth `from` factories. Difference,
+  overflow; its complete direct Test262 directory now passes after the
+  PlainMonthDay/PlainYearMonth factories landed. Difference,
   locale serialization, and other PlainTime methods remain unsupported.
   Realm-local `%Temporal.ZonedDateTime%` supports hidden-slot construction for
   UTC and fixed offsets, exact epoch/time-zone/calendar accessors, subclassing,

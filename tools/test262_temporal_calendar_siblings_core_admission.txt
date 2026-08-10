@@ -33,6 +33,7 @@ built-ins/Temporal/PlainMonthDay/prototype/valueOf/length.js
 built-ins/Temporal/PlainMonthDay/prototype/valueOf/name.js
 built-ins/Temporal/PlainMonthDay/prototype/valueOf/not-a-constructor.js
 built-ins/Temporal/PlainMonthDay/prototype/valueOf/prop-desc.js
+built-ins/Temporal/PlainMonthDay/prototype/valueOf/basic.js
 built-ins/Temporal/PlainMonthDay/prototype/toStringTag/prop-desc.js
 built-ins/Temporal/PlainYearMonth/argument-invalid.js
 built-ins/Temporal/PlainYearMonth/builtin.js
@@ -63,12 +64,14 @@ built-ins/Temporal/PlainYearMonth/prototype/eraYear/branding.js
 built-ins/Temporal/PlainYearMonth/prototype/eraYear/prop-desc.js
 built-ins/Temporal/PlainYearMonth/prototype/year/branding.js
 built-ins/Temporal/PlainYearMonth/prototype/year/prop-desc.js
+built-ins/Temporal/PlainYearMonth/prototype/year/basic.js
 built-ins/Temporal/PlainYearMonth/prototype/month/basic.js
 built-ins/Temporal/PlainYearMonth/prototype/month/branding.js
 built-ins/Temporal/PlainYearMonth/prototype/month/prop-desc.js
 built-ins/Temporal/PlainYearMonth/prototype/monthCode/basic.js
 built-ins/Temporal/PlainYearMonth/prototype/monthCode/branding.js
 built-ins/Temporal/PlainYearMonth/prototype/monthCode/prop-desc.js
+built-ins/Temporal/PlainYearMonth/prototype/monthCode/no-leap-months.js
 built-ins/Temporal/PlainYearMonth/prototype/daysInMonth/basic.js
 built-ins/Temporal/PlainYearMonth/prototype/daysInMonth/branding.js
 built-ins/Temporal/PlainYearMonth/prototype/daysInMonth/prop-desc.js
@@ -87,4 +90,5 @@ built-ins/Temporal/PlainYearMonth/prototype/valueOf/length.js
 built-ins/Temporal/PlainYearMonth/prototype/valueOf/name.js
 built-ins/Temporal/PlainYearMonth/prototype/valueOf/not-a-constructor.js
 built-ins/Temporal/PlainYearMonth/prototype/valueOf/prop-desc.js
+built-ins/Temporal/PlainYearMonth/prototype/valueOf/basic.js
 built-ins/Temporal/PlainYearMonth/prototype/toStringTag/prop-desc.js
