@@ -4,6 +4,31 @@
 
 ### Changed
 
+- Added Realm-local, non-constructable, length-2 static
+  `Temporal.PlainYearMonth.compare`. It completely converts the first input
+  before observing the second, then lexicographically compares the hidden
+  `(year, month, reference ISO day)` tuple and returns primitive Number
+  `-1`, `+0`, or `1`. Calendar identifiers are validated during conversion
+  but intentionally ignored by ordering. Branded values bypass public
+  getters, the static receiver is ignored, and native errors use the method
+  Realm. Property-bag conversion preserves each active input across
+  observable GC and root-preflight retry; String conversion precharges each
+  input's bytes independently, and branded comparison allocates no result
+  object. Exact pinned built-ins coverage is **39/39**. The four-file Intl402
+  companion is **1 pass / 3 non-ISO blockers**: `future-calendar.js` passes,
+  while the three remaining files require Gregorian construction or era-field
+  conversion before their compare assertions. The function is installer
+  allocation 174; complete installation uses 176 allocations and 175 maximum
+  live pins.
+
+  [Decision Log]
+  - 목적과 의도: PlainYearMonth static ordering을 hidden reference ISO day, left-to-right conversion, Realm 및 sandbox resource 경계까지 완결한다.
+  - 기존 구현 및 제약 조건: shared YearMonth converter와 full hidden ISO record는 있었지만 static compare가 없었다. equals는 calendar identity를 비교하지만 compare는 각 calendar를 변환·검증한 뒤 ordering에서 무시해야 하며 non-ISO calendar backend는 아직 없다.
+  - 검토한 주요 대안: year/month만 비교, equals comparator 재사용, public getter 또는 temporary object 비교, shared converter 결과의 three-field tuple 직접 비교를 검토했다.
+  - 선택한 방식: 두 인수를 shared converter로 순서대로 완전 변환하고 `(year, month, reference ISO day)`를 lexicographic 비교한 뒤 calendar identity를 제외한 primitive Number 결과를 반환한다.
+  - 다른 대안 대신 이 방식을 선택한 이유: year/month-only는 branded reference-day 계약을 깨고 equals 재사용은 calendar를 잘못 비교한다. visible/temporary-object 경로는 getter, subclass, Realm 및 GC/OOM 관찰을 추가한다.
+  - 장점, 단점 및 영향: first-abrupt short circuit, hidden getter 비관찰, method-Realm errors, per-position GC/root retry와 String fuel, allocation-free branded result, exact built-ins 39/39 및 Intl 1/3 경계가 재현된다. 세 Intl blocker는 comparator가 아니라 non-ISO construction/conversion 후속 범위다.
+
 - Added Realm-local, non-constructable, length-1
   `Temporal.PlainYearMonth.prototype.equals`. It brands the receiver before
   argument observation, reuses complete YearMonth conversion, compares the

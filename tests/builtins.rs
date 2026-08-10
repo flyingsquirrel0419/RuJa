@@ -27248,6 +27248,129 @@ fn temporal_plain_year_month_equals_roots_argument_across_observable_gc() {
 }
 
 #[test]
+fn temporal_plain_year_month_compare_orders_hidden_records_and_converts_left_to_right() {
+    assert_eq!(
+        run(r#"
+            var one = new Temporal.PlainYearMonth(2000, 5, 'iso8601', 1);
+            var two = new Temporal.PlainYearMonth(2000, 5, 'iso8601', 2);
+            var reads = 0;
+            for (var key of ['calendarId', 'year', 'month', 'monthCode']) {
+              Object.defineProperty(one, key, {
+                get: function () { reads++; throw new Error('observed'); }
+              });
+            }
+            var order = [];
+            function bag(label, year, month) {
+              return {
+                get calendar() { order.push(label + ' calendar'); return 'iso8601'; },
+                get month() { order.push(label + ' month'); return month; },
+                get monthCode() {
+                  order.push(label + ' monthCode');
+                  return 'M' + (month < 10 ? '0' : '') + month;
+                },
+                get year() { order.push(label + ' year'); return year; }
+              };
+            }
+            [
+              Temporal.PlainYearMonth.compare.name,
+              Temporal.PlainYearMonth.compare.length,
+              Temporal.PlainYearMonth.compare(one, two), reads,
+              Temporal.PlainYearMonth.compare(two, one),
+              Temporal.PlainYearMonth.compare(one, one),
+              Temporal.PlainYearMonth.compare(bag('one', 1994, 11), bag('two', 2013, 6)),
+              order.join(',')
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "compare|2|-1|0|1|0|-1|one calendar,one month,one monthCode,one year,two calendar,two month,two monthCode,two year"
+        ))
+    );
+}
+
+#[test]
+fn temporal_plain_year_month_compare_uses_function_realm_and_ignores_receiver() {
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var foreignCompare = other.Temporal.PlainYearMonth.compare;
+            var valid = foreignCompare.call(null, '1994-11', '2013-06');
+            var firstRealm = false;
+            var secondRealm = false;
+            try { foreignCompare(1, '2013-06'); } catch (error) {
+              firstRealm = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            try { foreignCompare('1994-11', 'invalid'); } catch (error) {
+              secondRealm = error instanceof other.RangeError && !(error instanceof RangeError);
+            }
+            var nonconstructable = false;
+            try { new Temporal.PlainYearMonth.compare(); }
+            catch (error) { nonconstructable = error instanceof TypeError; }
+            [valid, firstRealm, secondRealm, nonconstructable].join('|');
+        "#),
+        Value::String(Arc::from("-1|true|true|true"))
+    );
+}
+
+#[test]
+fn temporal_plain_year_month_compare_stops_before_the_second_argument_on_abrupt_completion() {
+    assert_eq!(
+        run(r#"
+            var sentinel = {};
+            var secondObserved = false;
+            var first = {
+              get calendar() { throw sentinel; },
+              month: 5,
+              year: 2000
+            };
+            var second = {
+              get calendar() { secondObserved = true; return 'iso8601'; },
+              month: 6,
+              year: 2000
+            };
+            var identity = false;
+            try { Temporal.PlainYearMonth.compare(first, second); }
+            catch (error) { identity = error === sentinel; }
+            [identity, secondObserved].join('|');
+        "#),
+        Value::String(Arc::from("true|false"))
+    );
+}
+
+#[test]
+fn temporal_plain_year_month_compare_roots_each_argument_across_observable_gc() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+    assert_eq!(
+        vm.run(
+            r#"
+            function bag(year, collect) {
+              return {
+                get calendar() { if (collect) forceGc(); return 'iso8601'; },
+                month: 5,
+                monthCode: 'M05',
+                year: year
+              };
+            }
+            [
+              Temporal.PlainYearMonth.compare(bag(2000, true), bag(2001, false)),
+              Temporal.PlainYearMonth.compare(bag(2000, false), bag(2001, true))
+            ].join('|');
+            "#,
+        )
+        .expect("PlainYearMonth.compare arguments should survive observable GC"),
+        Value::String(Arc::from("-1|-1"))
+    );
+}
+
+#[test]
 fn temporal_plain_time_with_merges_partial_fields_and_regulates_overflow() {
     assert_eq!(
         run(r#"

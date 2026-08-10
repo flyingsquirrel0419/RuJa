@@ -1,0 +1,4 @@
+# Exact non-ISO calendar blockers in the four-file Intl402 companion directory.
+intl402/Temporal/PlainYearMonth/compare/compare-calendar.js
+intl402/Temporal/PlainYearMonth/compare/exhaustive.js
+intl402/Temporal/PlainYearMonth/compare/infinity-throws-rangeerror.js

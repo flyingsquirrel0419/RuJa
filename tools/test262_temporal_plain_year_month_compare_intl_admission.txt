@@ -1,0 +1,2 @@
+# Exact independently passing Intl402 PlainYearMonth.compare tests.
+intl402/Temporal/PlainYearMonth/compare/future-calendar.js

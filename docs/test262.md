@@ -15172,3 +15172,43 @@ admission, making that complete surface **73/0/73**.
 - 다른 대안 대신 이 방식을 선택한 이유: prefix는 future tests를 자동 허용하고 일부 fixture 제외는 full hidden-record equality를 축소 보고한다. owner admission 이동만 dependency와 denominator를 동시에 보존한다.
 - 장점, 단점 및 영향: direct 40/0/40, arithmetic 73/0/73, runner/analyzer parity, metadata/disjointness/corpus/future/result drift가 ordinary/full CI에서 재현된다.
 ```
+
+## Temporal PlainYearMonth static compare
+
+At pinned Test262 revision
+`9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the complete built-ins
+`Temporal.PlainYearMonth.compare` directory contains 39 files. Exact admission
+and forced execution are both **39 pass / 0 fail / 0 skip**. The surface covers
+built-in shape and nonconstruction, ignored static receiver, both argument
+positions, branded-slot getter non-observation, complete property-bag and
+String conversion, hidden reference ISO day ordering, range limits, calendar
+syntax, annotations, and abrupt errors.
+
+The Intl402 companion directory contains four files and is frozen separately
+at **1 pass / 3 fail / 0 skip**. `future-calendar.js` passes by verifying that
+not-yet-supported calendar IDs fail in both argument positions. The exact
+blockers are `compare-calendar.js`, `exhaustive.js`, and
+`infinity-throws-rangeerror.js`; they require Gregorian construction or
+era/eraYear property-bag conversion before reaching their intended compare
+assertions. They therefore remain non-ISO calendar blockers, not comparator
+failures. Once conversion succeeds, compare intentionally ignores calendar
+identity and orders only `(year, month, reference ISO day)`.
+
+Dedicated built-ins and Intl manifests freeze exact path identity and live
+features, includes, flags, and negative metadata. Their diagnostics require
+the complete argument sets and exact per-file outcomes, rejecting duplicate,
+missing, outside-root, inaccessible-corpus, future-path, and result drift.
+Runtime tests separately freeze left-to-right conversion and first-abrupt
+short circuit, method-Realm errors, hidden getter non-observation, both
+observable-GC positions, root-preflight failure/retry, allocation-free branded
+comparison, and each String position's byte-proportional exact fuel boundary.
+
+```text
+[Decision Log]
+- 목적과 의도: PlainYearMonth.compare의 complete built-ins denominator와 Intl402 non-ISO prerequisite를 분리해 실제 supported boundary를 고정한다.
+- 기존 구현 및 제약 조건: broad Temporal/Intl gates는 direct 39개와 companion 4개를 숨겼고 method 부재 TypeError는 일부 expected-error 결과를 거짓 통과시킬 수 있었다. Intl 세 파일은 Gregorian constructor 또는 era conversion에서 comparator 전에 멈춘다.
+- 검토한 주요 대안: directory prefix 허용, built-ins만 계상, Intl 네 파일 전체 admission, exact direct manifest와 1/3 companion complement를 검토했다.
+- 선택한 방식: built-ins 39-path identity와 metadata를 complete admission으로 고정하고 Intl four-file surface를 one-file admission과 three-file non-ISO blocker manifest로 분리한다. diagnostics는 exact argument 및 result maps를 강제한다.
+- 다른 대안 대신 이 방식을 선택한 이유: prefix는 future sibling을 자동 허용하고 built-ins-only 보고는 전체 compare caller 표면을 숨긴다. Intl 전체 admission은 아직 없는 Gregorian/era object model을 지원한다고 과장한다.
+- 장점, 단점 및 영향: built-ins 39/0/39와 Intl 1/3/4, metadata/disjointness/corpus/future/result drift 및 runtime Realm/GC/fuel 계약이 독립 재현된다. calendar conversion 구현 후 세 blocker를 재실행해 admission으로 이동해야 한다.
+```

@@ -5182,4 +5182,34 @@ pins.
 - 장점, 단점 및 영향: hidden getter 비관찰, reference-day distinction, property-bag/string canonicalization, cross-Realm errors, GC/root failure retry, zero-result allocation, exact 40/40과 arithmetic 73/73 및 175-allocation rollback이 고정된다. non-ISO calendar backend는 별도 후속 범위다.
 ```
 
+Static `Temporal.PlainYearMonth.compare` is a Realm-local,
+non-constructable, length-2 native function whose receiver is ignored. It
+invokes the shared ToTemporalYearMonth converter for the first operand and
+only after that conversion succeeds for the second. Each conversion validates
+and returns a complete hidden record plus its calendar identifier. Ordering
+then deliberately discards both identifiers and lexicographically compares
+`(year, month, reference ISO day)`, returning primitive Number `-1`, `+0`, or
+`1`. The hidden day is required: two branded YearMonth values with equal
+public year and month can still order differently.
+
+Branded inputs copy slots without public getters or heap allocation.
+Property-bag conversion retains its active input across observable GC,
+preflights roots before observation, preserves abrupt identity, and leaves no
+pins behind on failure or retry. String conversion charges every source byte
+for each argument independently; exact fuel succeeds and one unit less aborts.
+Native conversion errors are created in the compare function's Realm. The
+primitive result adds no heap object. `compare` is installer allocation 174;
+`Temporal.Now` and `%Temporal%` move to 175 and 176, with 175 maximum live
+pins.
+
+```text
+[Decision Log]
+- 목적과 의도: PlainYearMonth ordering을 complete conversion과 hidden ISO tuple에 연결하면서 calendar-independent compare 및 Realm/resource 불변식을 보존한다.
+- 기존 구현 및 제약 조건: shared converter는 fields와 canonical calendar를 함께 반환하고 equals는 둘 다 비교한다. compare는 first-before-second abrupt 순서, hidden reference day 비교, conversion 후 calendar 무시가 필요하며 non-ISO backend는 아직 없다.
+- 검토한 주요 대안: year/month pair만 비교, equals의 full-record comparator 재사용, public getter/serialization 비교, shared converter 뒤 three-field tuple 비교를 검토했다.
+- 선택한 방식: 각 operand를 left-to-right로 완전 변환한 뒤 calendar 결과를 버리고 `(year, month, reference ISO day)`의 lexicographic ordering만 primitive Number로 publish한다.
+- 다른 대안 대신 이 방식을 선택한 이유: pair-only는 branded hidden day를 잃고 equals 재사용은 calendar identity를 잘못 ordering에 포함한다. visible/serialization 경로는 명세에 없는 getter, annotation, temporary allocation과 Realm 관찰을 만든다.
+- 장점, 단점 및 영향: hidden getter 비관찰, first-abrupt short circuit, method-Realm errors, 양쪽 argument의 observable GC/root retry, per-string fuel, allocation-free branded compare와 176-allocation rollback이 고정된다. built-ins 39/39가 통과하고 Intl402는 1 pass/3 non-ISO blocker로 분리된다. Gregorian construction/era conversion은 comparator 밖의 후속 calendar subsystem 책임이다.
+```
+
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

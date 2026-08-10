@@ -80,11 +80,18 @@
   overflow observation, lower-unit rejection, canonical reference day 1, and
   method-Realm results, plus hidden-record `equals` over year, month,
   reference day, and calendar identity after complete argument conversion.
+  Static `PlainYearMonth.compare` completely converts both operands
+  left-to-right, then lexicographically compares hidden year, month, and
+  reference ISO day while ignoring calendar identity after conversion. It
+  returns allocation-free primitive `-1`, `+0`, or `1`, preserves method-Realm
+  errors and per-argument GC/fuel boundaries, and passes all **39/39** pinned
+  built-ins tests. The Intl402 companion is **1 pass / 3 non-ISO calendar
+  blockers**.
   Remaining PlainDate and PlainDateTime arithmetic, formatting, and
   conversion methods, calendar-relative and zoned Duration operations beyond
   the supported `total` boundary, remaining PlainMonthDay/PlainYearMonth
-  static comparison, conversion, arithmetic beyond PlainYearMonth `add`/`subtract`, serialization, locale, and non-ISO
-  calendar methods, named IANA timezone
+  conversion, arithmetic beyond PlainYearMonth `add`/`subtract`,
+  serialization, locale, and non-ISO calendar methods, named IANA timezone
   transitions, the remaining RFC 9557 grammar, and `Temporal.Now` methods
   remain outside the supported boundary.
 - `class`/`extends`/`super`

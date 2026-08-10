@@ -19,6 +19,8 @@ import test262_temporal_calendar_siblings_formatter_surface_diagnostic as tempor
 import test262_temporal_calendar_siblings_to_string_diagnostic as temporal_sibling_to_string_diagnostic
 import test262_temporal_calendar_siblings_with_diagnostic as temporal_sibling_with_diagnostic
 import test262_temporal_plain_year_month_arithmetic_diagnostic as temporal_year_month_arithmetic_diagnostic
+import test262_temporal_plain_year_month_compare_diagnostic as temporal_year_month_compare_diagnostic
+import test262_temporal_plain_year_month_compare_intl_diagnostic as temporal_year_month_compare_intl_diagnostic
 import test262_temporal_plain_year_month_equals_diagnostic as temporal_year_month_equals_diagnostic
 import analyze_failures
 from test262_class_computed_field_admission import CLASS_COMPUTED_FIELD_FILES
@@ -332,6 +334,26 @@ from test262_temporal_plain_year_month_equals_admission import (
     TEMPORAL_PLAIN_YEAR_MONTH_EQUALS_FLAGS,
     TEMPORAL_PLAIN_YEAR_MONTH_EQUALS_INCLUDES,
     TEMPORAL_PLAIN_YEAR_MONTH_EQUALS_NEGATIVE,
+)
+from test262_temporal_plain_year_month_compare_admission import (
+    TEMPORAL_PLAIN_YEAR_MONTH_COMPARE_FEATURES,
+    TEMPORAL_PLAIN_YEAR_MONTH_COMPARE_FILES,
+    TEMPORAL_PLAIN_YEAR_MONTH_COMPARE_FLAGS,
+    TEMPORAL_PLAIN_YEAR_MONTH_COMPARE_INCLUDES,
+    TEMPORAL_PLAIN_YEAR_MONTH_COMPARE_NEGATIVE,
+)
+from test262_temporal_plain_year_month_compare_intl_admission import (
+    TEMPORAL_PLAIN_YEAR_MONTH_COMPARE_INTL_BLOCKERS,
+    TEMPORAL_PLAIN_YEAR_MONTH_COMPARE_INTL_FEATURES,
+    TEMPORAL_PLAIN_YEAR_MONTH_COMPARE_INTL_FILES,
+    TEMPORAL_PLAIN_YEAR_MONTH_COMPARE_INTL_FLAGS,
+    TEMPORAL_PLAIN_YEAR_MONTH_COMPARE_INTL_INCLUDES,
+    TEMPORAL_PLAIN_YEAR_MONTH_COMPARE_INTL_NEGATIVE,
+    TEMPORAL_PLAIN_YEAR_MONTH_COMPARE_INTL_SURFACE,
+    TEMPORAL_PLAIN_YEAR_MONTH_COMPARE_INTL_SURFACE_FEATURES,
+    TEMPORAL_PLAIN_YEAR_MONTH_COMPARE_INTL_SURFACE_FLAGS,
+    TEMPORAL_PLAIN_YEAR_MONTH_COMPARE_INTL_SURFACE_INCLUDES,
+    TEMPORAL_PLAIN_YEAR_MONTH_COMPARE_INTL_SURFACE_NEGATIVE,
 )
 from test262_temporal_plain_date_from_admission import (
     TEMPORAL_PLAIN_DATE_FROM_FEATURES,
@@ -7260,6 +7282,355 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                         temporal_year_month_equals_diagnostic.verify_expected_results(arguments)
             finally:
                 temporal_year_month_equals_diagnostic.test262_runner.TEST262 = original_root
+
+    def test_temporal_plain_year_month_compare_surface_is_exact_live_disjoint_and_shared(self):
+        files = TEMPORAL_PLAIN_YEAR_MONTH_COMPARE_FILES
+        self.assertEqual(files, temporal_year_month_compare_diagnostic.SURFACE)
+        self.assertEqual(len(files), 39)
+        for metadata_map in (
+            TEMPORAL_PLAIN_YEAR_MONTH_COMPARE_FEATURES,
+            TEMPORAL_PLAIN_YEAR_MONTH_COMPARE_INCLUDES,
+            TEMPORAL_PLAIN_YEAR_MONTH_COMPARE_FLAGS,
+            TEMPORAL_PLAIN_YEAR_MONTH_COMPARE_NEGATIVE,
+        ):
+            self.assertEqual(set(metadata_map), set(files))
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        directory = test_root / "built-ins/Temporal/PlainYearMonth/compare"
+        corpus_required = "TEST262" in os.environ
+        try:
+            live_files = (
+                {
+                    path.relative_to(test_root).as_posix()
+                    for path in directory.glob("*.js")
+                    if "_FIXTURE" not in path.name
+                }
+                if directory.is_dir()
+                else None
+            )
+        except OSError:
+            if corpus_required:
+                raise
+            live_files = None
+        if corpus_required and live_files is None:
+            raise FileNotFoundError(directory)
+        if live_files is not None:
+            self.assertEqual(live_files, set(files))
+            for relative in files:
+                path = test_root / relative
+                metadata = test262_runner.parse_meta(path.read_text())
+                for key, expected in (
+                    ("features", TEMPORAL_PLAIN_YEAR_MONTH_COMPARE_FEATURES[relative]),
+                    ("includes", TEMPORAL_PLAIN_YEAR_MONTH_COMPARE_INCLUDES[relative]),
+                    ("flags", TEMPORAL_PLAIN_YEAR_MONTH_COMPARE_FLAGS[relative]),
+                ):
+                    self.assertEqual(frozenset(metadata.get(key, [])), expected, relative)
+                self.assertEqual(
+                    metadata.get("negative"),
+                    TEMPORAL_PLAIN_YEAR_MONTH_COMPARE_NEGATIVE[relative],
+                    relative,
+                )
+                for tool in (test262_runner, test262_analyze):
+                    self.assertTrue(tool.temporal_plain_year_month_compare_path(path), relative)
+                    self.assertEqual(
+                        tool.temporal_plain_year_month_compare_features(path),
+                        TEMPORAL_PLAIN_YEAR_MONTH_COMPARE_FEATURES[relative],
+                    )
+                    self.assertFalse(tool.should_skip(metadata, path), relative)
+
+        tools_dir = Path(__file__).resolve().parent
+        for manifest in tools_dir.glob("test262_*_admission.txt"):
+            if manifest.name == "test262_temporal_plain_year_month_compare_admission.txt":
+                continue
+            existing = {
+                line
+                for raw_line in manifest.read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            self.assertTrue(files.isdisjoint(existing), manifest.name)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = root / "test/built-ins/Temporal/PlainYearMonth/compare/future.js"
+            outside = root / "test/built-ins/Temporal/Other/compare/basic.js"
+            for tool in (test262_runner, test262_analyze):
+                self.assertFalse(tool.temporal_plain_year_month_compare_path(None))
+                self.assertFalse(tool.temporal_plain_year_month_compare_path(object()))
+                self.assertEqual(
+                    tool.temporal_plain_year_month_compare_features(None), frozenset()
+                )
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, features in (
+                        TEMPORAL_PLAIN_YEAR_MONTH_COMPARE_FEATURES.items()
+                    ):
+                        path = root / "test" / relative
+                        self.assertTrue(tool.temporal_plain_year_month_compare_path(path))
+                        self.assertEqual(
+                            tool.temporal_plain_year_month_compare_features(path), features
+                        )
+                        self.assertFalse(
+                            tool.should_skip({"features": sorted(features)}, path)
+                        )
+                    for path in (future, outside):
+                        self.assertFalse(tool.temporal_plain_year_month_compare_path(path))
+                        self.assertEqual(
+                            tool.temporal_plain_year_month_compare_features(path),
+                            frozenset(),
+                        )
+                        self.assertTrue(
+                            tool.should_skip({"features": ["Temporal"]}, path)
+                        )
+                finally:
+                    tool.TEST262 = original_root
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "test").mkdir()
+            original_root = temporal_year_month_compare_diagnostic.test262_runner.TEST262
+            temporal_year_month_compare_diagnostic.test262_runner.TEST262 = str(root)
+            arguments = sorted(files)
+            try:
+                with patch.object(
+                    temporal_year_month_compare_diagnostic.test262_runner,
+                    "run_test",
+                    return_value="pass",
+                ):
+                    temporal_year_month_compare_diagnostic.verify_expected_results(arguments)
+                    for invalid in (
+                        arguments[:-1],
+                        arguments[:-1] + [arguments[0]],
+                        arguments + ["built-ins/Temporal/Other/compare.js"],
+                    ):
+                        with self.assertRaisesRegex(RuntimeError, "exact frozen surface"):
+                            temporal_year_month_compare_diagnostic.verify_expected_results(
+                                invalid
+                            )
+                with patch.object(
+                    temporal_year_month_compare_diagnostic.test262_runner,
+                    "run_test",
+                    return_value="fail",
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "results drifted"):
+                        temporal_year_month_compare_diagnostic.verify_expected_results(
+                            arguments
+                        )
+            finally:
+                temporal_year_month_compare_diagnostic.test262_runner.TEST262 = original_root
+
+    def test_temporal_plain_year_month_compare_intl_surface_is_exact_live_disjoint_and_shared(self):
+        files = TEMPORAL_PLAIN_YEAR_MONTH_COMPARE_INTL_FILES
+        blockers = TEMPORAL_PLAIN_YEAR_MONTH_COMPARE_INTL_BLOCKERS
+        surface = TEMPORAL_PLAIN_YEAR_MONTH_COMPARE_INTL_SURFACE
+        self.assertEqual(files, surface - blockers)
+        self.assertEqual(blockers, temporal_year_month_compare_intl_diagnostic.BLOCKERS)
+        self.assertEqual(surface, temporal_year_month_compare_intl_diagnostic.SURFACE)
+        self.assertEqual(len(files), 1)
+        self.assertEqual(len(blockers), 3)
+        self.assertEqual(len(surface), 4)
+        self.assertTrue(files.isdisjoint(blockers))
+        self.assertTrue(surface.isdisjoint(TEMPORAL_PLAIN_YEAR_MONTH_COMPARE_FILES))
+        for metadata_map in (
+            TEMPORAL_PLAIN_YEAR_MONTH_COMPARE_INTL_FEATURES,
+            TEMPORAL_PLAIN_YEAR_MONTH_COMPARE_INTL_INCLUDES,
+            TEMPORAL_PLAIN_YEAR_MONTH_COMPARE_INTL_FLAGS,
+            TEMPORAL_PLAIN_YEAR_MONTH_COMPARE_INTL_NEGATIVE,
+        ):
+            self.assertEqual(set(metadata_map), set(files))
+        for metadata_map in (
+            TEMPORAL_PLAIN_YEAR_MONTH_COMPARE_INTL_SURFACE_FEATURES,
+            TEMPORAL_PLAIN_YEAR_MONTH_COMPARE_INTL_SURFACE_INCLUDES,
+            TEMPORAL_PLAIN_YEAR_MONTH_COMPARE_INTL_SURFACE_FLAGS,
+            TEMPORAL_PLAIN_YEAR_MONTH_COMPARE_INTL_SURFACE_NEGATIVE,
+        ):
+            self.assertEqual(set(metadata_map), set(surface))
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        directory = test_root / "intl402/Temporal/PlainYearMonth/compare"
+        corpus_required = "TEST262" in os.environ
+        try:
+            live_files = (
+                {
+                    path.relative_to(test_root).as_posix()
+                    for path in directory.glob("*.js")
+                    if "_FIXTURE" not in path.name
+                }
+                if directory.is_dir()
+                else None
+            )
+        except OSError:
+            if corpus_required:
+                raise
+            live_files = None
+        if corpus_required and live_files is None:
+            raise FileNotFoundError(directory)
+        if live_files is not None:
+            self.assertEqual(live_files, set(surface))
+            for relative in surface:
+                path = test_root / relative
+                metadata = test262_runner.parse_meta(path.read_text())
+                for key, expected in (
+                    (
+                        "features",
+                        TEMPORAL_PLAIN_YEAR_MONTH_COMPARE_INTL_SURFACE_FEATURES[
+                            relative
+                        ],
+                    ),
+                    (
+                        "includes",
+                        TEMPORAL_PLAIN_YEAR_MONTH_COMPARE_INTL_SURFACE_INCLUDES[
+                            relative
+                        ],
+                    ),
+                    (
+                        "flags",
+                        TEMPORAL_PLAIN_YEAR_MONTH_COMPARE_INTL_SURFACE_FLAGS[
+                            relative
+                        ],
+                    ),
+                ):
+                    self.assertEqual(frozenset(metadata.get(key, [])), expected, relative)
+                self.assertEqual(
+                    metadata.get("negative"),
+                    TEMPORAL_PLAIN_YEAR_MONTH_COMPARE_INTL_SURFACE_NEGATIVE[relative],
+                    relative,
+                )
+                for tool in (test262_runner, test262_analyze):
+                    if relative in files:
+                        self.assertTrue(
+                            tool.temporal_plain_year_month_compare_intl_path(path),
+                            relative,
+                        )
+                        self.assertEqual(
+                            tool.temporal_plain_year_month_compare_intl_features(path),
+                            TEMPORAL_PLAIN_YEAR_MONTH_COMPARE_INTL_FEATURES[relative],
+                        )
+                        self.assertFalse(tool.should_skip(metadata, path), relative)
+                    else:
+                        self.assertFalse(
+                            tool.temporal_plain_year_month_compare_intl_path(path),
+                            relative,
+                        )
+                        self.assertEqual(
+                            tool.temporal_plain_year_month_compare_intl_features(path),
+                            frozenset(),
+                        )
+                        self.assertTrue(tool.should_skip(metadata, path), relative)
+
+        tools_dir = Path(__file__).resolve().parent
+        for manifest in tools_dir.glob("test262_*_admission.txt"):
+            if (
+                manifest.name
+                == "test262_temporal_plain_year_month_compare_intl_admission.txt"
+            ):
+                continue
+            existing = {
+                line
+                for raw_line in manifest.read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            self.assertTrue(surface.isdisjoint(existing), manifest.name)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = root / "test/intl402/Temporal/PlainYearMonth/compare/future.js"
+            outside = root / "test/intl402/Temporal/Other/compare/basic.js"
+            for tool in (test262_runner, test262_analyze):
+                self.assertFalse(tool.temporal_plain_year_month_compare_intl_path(None))
+                self.assertFalse(tool.temporal_plain_year_month_compare_intl_path(object()))
+                self.assertEqual(
+                    tool.temporal_plain_year_month_compare_intl_features(None),
+                    frozenset(),
+                )
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative in surface:
+                        path = root / "test" / relative
+                        features = (
+                            TEMPORAL_PLAIN_YEAR_MONTH_COMPARE_INTL_SURFACE_FEATURES[
+                                relative
+                            ]
+                        )
+                        if relative in files:
+                            self.assertTrue(
+                                tool.temporal_plain_year_month_compare_intl_path(path)
+                            )
+                            self.assertEqual(
+                                tool.temporal_plain_year_month_compare_intl_features(
+                                    path
+                                ),
+                                features,
+                            )
+                            self.assertFalse(
+                                tool.should_skip({"features": sorted(features)}, path)
+                            )
+                        else:
+                            self.assertFalse(
+                                tool.temporal_plain_year_month_compare_intl_path(path)
+                            )
+                            self.assertEqual(
+                                tool.temporal_plain_year_month_compare_intl_features(
+                                    path
+                                ),
+                                frozenset(),
+                            )
+                            self.assertTrue(
+                                tool.should_skip({"features": sorted(features)}, path)
+                            )
+                    for path in (future, outside):
+                        self.assertFalse(
+                            tool.temporal_plain_year_month_compare_intl_path(path)
+                        )
+                        self.assertEqual(
+                            tool.temporal_plain_year_month_compare_intl_features(path),
+                            frozenset(),
+                        )
+                        self.assertTrue(
+                            tool.should_skip({"features": ["Temporal"]}, path)
+                        )
+                finally:
+                    tool.TEST262 = original_root
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            test_root = root / "test"
+            test_root.mkdir()
+            diagnostic_runner = temporal_year_month_compare_intl_diagnostic.test262_runner
+            original_root = diagnostic_runner.TEST262
+            diagnostic_runner.TEST262 = str(root)
+            arguments = sorted(surface)
+
+            def expected_result(path):
+                relative = Path(path).resolve().relative_to(test_root.resolve()).as_posix()
+                return "fail" if relative in blockers else "pass"
+
+            try:
+                with patch.object(
+                    diagnostic_runner,
+                    "run_test",
+                    side_effect=expected_result,
+                ):
+                    temporal_year_month_compare_intl_diagnostic.verify_expected_results(
+                        arguments
+                    )
+                    for invalid in (
+                        arguments[:-1],
+                        arguments[:-1] + [arguments[0]],
+                        arguments + ["intl402/Temporal/Other/compare.js"],
+                    ):
+                        with self.assertRaisesRegex(RuntimeError, "exact frozen surface"):
+                            temporal_year_month_compare_intl_diagnostic.verify_expected_results(
+                                invalid
+                            )
+                with patch.object(diagnostic_runner, "run_test", return_value="pass"):
+                    with self.assertRaisesRegex(RuntimeError, "results drifted"):
+                        temporal_year_month_compare_intl_diagnostic.verify_expected_results(
+                            arguments
+                        )
+            finally:
+                diagnostic_runner.TEST262 = original_root
 
     def test_temporal_plain_year_month_arithmetic_surface_is_exact_live_and_shared(self):
         files = TEMPORAL_PLAIN_YEAR_MONTH_ARITHMETIC_FILES

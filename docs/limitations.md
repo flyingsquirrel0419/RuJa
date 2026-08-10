@@ -73,10 +73,18 @@ The following resource limits are enforced:
   arithmetic from day 1, and return canonical method-Realm results.
   `PlainYearMonth.prototype.equals` compares converted hidden year, month,
   reference day, and calendar identity without public getters; direct
-  arithmetic and equals directories are complete. Static comparison, JSON serialization,
-  date conversion,
-  remaining arithmetic/difference, locale formatting, and non-ISO calendars remain
-  unsupported.
+  arithmetic and equals directories are complete. Static
+  `PlainYearMonth.compare` converts inputs left-to-right and compares hidden
+  `(year, month, reference ISO day)` tuples while ignoring calendar identity
+  only after conversion succeeds. Its primitive result is allocation-free;
+  method-Realm errors, argument rooting across observable GC, root-preflight
+  retry, and per-String fuel charging remain enforced. The pinned built-ins
+  directory is complete **39/39**. The Intl402 companion is **1 pass / 3
+  blockers**: the passing future-calendar test confirms unsupported IDs fail
+  closed, while Gregorian construction and era-field conversion prevent the
+  other three files from reaching their intended assertions. JSON
+  serialization, date conversion, remaining arithmetic/difference, locale
+  formatting, and non-ISO calendars remain unsupported.
   Realm-local `%Temporal.PlainTime%` supports six-field hidden-slot
   construction, subclassing, branded accessors, `@@toStringTag`, static
   `from` and lexicographic `compare`, hidden-record `equals`, and
@@ -104,7 +112,7 @@ The following resource limits are enforced:
   transition-aware midnight gap/overlap resolution exists. Named IANA time-zone transitions,
   the remaining ZonedDateTime string grammar, the remaining RFC 9557
   grammar, remaining PlainMonthDay/PlainYearMonth methods beyond the supported
-  PlainYearMonth `add`/`subtract`/`equals`, remaining duration
+  PlainYearMonth `add`/`subtract`/`equals`/`compare`, remaining duration
   operations, and `Temporal.Now` methods remain unsupported.
 
 - **Execution fuel**: `Vm::set_fuel(Some(n))` bounds dispatched opcodes and

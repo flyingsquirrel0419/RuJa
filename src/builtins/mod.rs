@@ -6291,7 +6291,7 @@ pub(crate) fn install_temporal_namespace_in_env(
     global: Option<&Value>,
     object_proto: Value,
 ) -> error::Result<Value> {
-    vm.try_reserve_gc_pins(174)?;
+    vm.try_reserve_gc_pins(175)?;
     let mut pin_count = 0;
     let result = (|| {
         let instant_prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
@@ -7296,6 +7296,13 @@ pub(crate) fn install_temporal_namespace_in_env(
             env,
         )?);
         pin_count += vm.pin(&plain_year_month_equals);
+        let plain_year_month_compare = Value::Object(vm.new_native_function_in_env_with_gc_retry(
+            "compare",
+            temporal_plain_year_month_compare,
+            2,
+            env,
+        )?);
+        pin_count += vm.pin(&plain_year_month_compare);
 
         let Value::Object(instant_constructor_index) = instant_constructor.clone() else {
             unreachable!()
@@ -7863,6 +7870,10 @@ pub(crate) fn install_temporal_namespace_in_env(
                     .props
                     .lock()
                     .insert(PropertyKey::from("from"), data_prop(plain_year_month_from));
+                function.props.lock().insert(
+                    PropertyKey::from("compare"),
+                    data_prop(plain_year_month_compare),
+                );
             });
         let Value::Object(plain_year_month_prototype_index) = plain_year_month_prototype.clone()
         else {
@@ -11903,6 +11914,27 @@ fn temporal_plain_year_month_equals(
     Ok(Value::Bool(
         fields == other_fields && temporal_calendar_equals(&calendar_identifier, &other_calendar),
     ))
+}
+
+fn temporal_plain_year_month_compare(
+    vm: &mut Vm,
+    args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    let (one, _) =
+        to_temporal_plain_year_month(vm, args.first().unwrap_or(&Value::Undefined), None)?;
+    let (two, _) =
+        to_temporal_plain_year_month(vm, args.get(1).unwrap_or(&Value::Undefined), None)?;
+    let result = match (one.year, one.month, one.reference_iso_day).cmp(&(
+        two.year,
+        two.month,
+        two.reference_iso_day,
+    )) {
+        std::cmp::Ordering::Less => -1.0,
+        std::cmp::Ordering::Equal => 0.0,
+        std::cmp::Ordering::Greater => 1.0,
+    };
+    Ok(Value::Number(result))
 }
 
 fn to_temporal_plain_year_month(

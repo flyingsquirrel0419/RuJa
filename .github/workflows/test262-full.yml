@@ -222,6 +222,13 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_year_month_equals_surface_is_exact_live_disjoint_and_shared
           -v
+      - name: Verify exact Temporal.PlainYearMonth compare admissions
+        working-directory: tools
+        run: >-
+          TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_year_month_compare_surface_is_exact_live_disjoint_and_shared
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_year_month_compare_intl_surface_is_exact_live_disjoint_and_shared
+          -v
       - name: Verify Temporal calendar sibling formatter surface
         working-directory: tools
         run: >-
@@ -1217,6 +1224,7 @@ jobs:
             harness
             test/built-ins/Temporal/PlainMonthDay
             test/built-ins/Temporal/PlainYearMonth
+            test/intl402/Temporal/PlainYearMonth/compare
       - name: Require exact Temporal calendar sibling core boundary
         run: |
           mapfile -t admitted < <(grep -hEv '^(#|$)' \
@@ -1301,6 +1309,27 @@ jobs:
           cat temporal_plain_year_month_equals_result.txt
           grep -q '^RATE=100.0 PASS=40 FAIL=0 SKIP=0 TOTAL=40 RAN=40$' \
             temporal_plain_year_month_equals_result.txt
+      - name: Require exact Temporal.PlainYearMonth compare boundary
+        run: |
+          mapfile -t files < <(grep -hEv '^(#|$)' \
+            tools/test262_temporal_plain_year_month_compare_admission.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_plain_year_month_compare_diagnostic.py \
+            "${files[@]}" > temporal_plain_year_month_compare_result.txt 2>&1
+          cat temporal_plain_year_month_compare_result.txt
+          grep -q '^RATE=100.0 PASS=39 FAIL=0 SKIP=0 TOTAL=39 RAN=39$' \
+            temporal_plain_year_month_compare_result.txt
+      - name: Require exact Intl402 Temporal.PlainYearMonth compare companion
+        run: |
+          mapfile -t files < <(grep -hEv '^(#|$)' \
+            tools/test262_temporal_plain_year_month_compare_intl_admission.txt \
+            tools/test262_temporal_plain_year_month_compare_intl_blockers.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_plain_year_month_compare_intl_diagnostic.py \
+            "${files[@]}" > temporal_plain_year_month_compare_intl_result.txt 2>&1
+          cat temporal_plain_year_month_compare_intl_result.txt
+          grep -q '^RATE=25.0 PASS=1 FAIL=3 SKIP=0 TOTAL=4 RAN=4$' \
+            temporal_plain_year_month_compare_intl_result.txt
       - name: Diagnose complete Temporal calendar sibling formatter surface
         run: |
           mapfile -t files < <(grep -hEv '^(#|$)' \
