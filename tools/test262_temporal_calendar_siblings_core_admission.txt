@@ -92,3 +92,15 @@ built-ins/Temporal/PlainYearMonth/prototype/valueOf/not-a-constructor.js
 built-ins/Temporal/PlainYearMonth/prototype/valueOf/prop-desc.js
 built-ins/Temporal/PlainYearMonth/prototype/valueOf/basic.js
 built-ins/Temporal/PlainYearMonth/prototype/toStringTag/prop-desc.js
+# Formatter-backed constructor assertions admitted with sibling toString support.
+built-ins/Temporal/PlainMonthDay/argument-convert.js
+built-ins/Temporal/PlainMonthDay/basic.js
+built-ins/Temporal/PlainMonthDay/calendar-always.js
+built-ins/Temporal/PlainMonthDay/refisoyear-undefined.js
+built-ins/Temporal/PlainMonthDay/subclass.js
+built-ins/Temporal/PlainYearMonth/argument-convert.js
+built-ins/Temporal/PlainYearMonth/basic.js
+built-ins/Temporal/PlainYearMonth/calendar-always.js
+built-ins/Temporal/PlainYearMonth/limits.js
+built-ins/Temporal/PlainYearMonth/refisoday-undefined.js
+built-ins/Temporal/PlainYearMonth/subclass.js

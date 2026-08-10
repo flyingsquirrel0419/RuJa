@@ -547,6 +547,54 @@ fn temporal_plain_date_to_string_precharges_calendar_name_bytes() {
 }
 
 #[test]
+fn temporal_calendar_sibling_to_string_precharges_calendar_name_bytes() {
+    const BUDGET: i64 = 10_000;
+    for (fixture, short_expression, long_expression) in [
+        (
+            "globalThis.partialToStringFuel = new Temporal.PlainMonthDay(5, 2); globalThis.partialToStringLong = 'x'.repeat(512);",
+            "partialToStringFuel.toString({ calendarName: 'auto' });",
+            "partialToStringFuel.toString({ calendarName: partialToStringLong });",
+        ),
+        (
+            "globalThis.partialToStringFuel = new Temporal.PlainYearMonth(2000, 5); globalThis.partialToStringLong = 'x'.repeat(512);",
+            "partialToStringFuel.toString({ calendarName: 'auto' });",
+            "partialToStringFuel.toString({ calendarName: partialToStringLong });",
+        ),
+    ] {
+        let mut vm = Vm::new().expect("failed to initialize VM");
+        vm.run(fixture)
+            .expect("partial-date toString fuel fixture should initialize");
+
+        vm.set_fuel(Some(BUDGET));
+        vm.run(short_expression)
+            .expect("short calendarName should format");
+        let short_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+
+        vm.set_fuel(Some(BUDGET));
+        let error = vm
+            .run(long_expression)
+            .expect_err("long invalid calendarName should reach option validation");
+        assert_eq!(error.kind, ruja::ErrorKind::Range);
+        let long_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+        assert!(long_work >= short_work + 500);
+
+        vm.set_fuel(Some(long_work - 1));
+        let error = vm
+            .run(long_expression)
+            .expect_err("N-1 fuel must abort during option conversion");
+        assert_eq!(error.kind, ruja::ErrorKind::Fuel);
+        assert_eq!(vm.fuel_remaining(), Some(0));
+
+        vm.set_fuel(Some(long_work));
+        let error = vm
+            .run(long_expression)
+            .expect_err("exact measured fuel should reach invalid-option validation");
+        assert_eq!(error.kind, ruja::ErrorKind::Range);
+        assert_eq!(vm.fuel_remaining(), Some(0));
+    }
+}
+
+#[test]
 fn temporal_plain_date_time_compare_precharges_each_string_argument() {
     const BUDGET: i64 = 20_000;
     let mut vm = Vm::new().expect("failed to initialize VM");

@@ -24,6 +24,9 @@ TEMPORAL_CALENDAR_SIBLINGS_FROM_ALL_FILES = (
     TEMPORAL_CALENDAR_SIBLINGS_FROM_FILES
     | TEMPORAL_CALENDAR_SIBLINGS_FROM_BLOCKER_FILES
 )
+TEMPORAL_CALENDAR_SIBLINGS_FROM_FORMATTER_TRANSITIONS = _read_manifest(
+    "test262_temporal_calendar_siblings_from_formatter_transitions.txt"
+)
 
 _PASSING_TEMPORAL_HELPER_FILES = frozenset(
     f"built-ins/Temporal/{kind}/from/{name}.js"
@@ -47,7 +50,7 @@ _PASSING_TEMPORAL_HELPER_FILES = frozenset(
     for name in names
 )
 _TEMPORAL_HELPERS = (
-    TEMPORAL_CALENDAR_SIBLINGS_FROM_BLOCKER_FILES
+    TEMPORAL_CALENDAR_SIBLINGS_FROM_FORMATTER_TRANSITIONS
     | _PASSING_TEMPORAL_HELPER_FILES
 )
 _COMPARE_ARRAY_SUFFIXES = frozenset(
@@ -136,7 +139,13 @@ TEMPORAL_CALENDAR_SIBLINGS_FROM_ALL_NEGATIVE = {
     path: None for path in TEMPORAL_CALENDAR_SIBLINGS_FROM_ALL_FILES
 }
 
-if len(TEMPORAL_CALENDAR_SIBLINGS_FROM_FILES) != 74:
-    raise RuntimeError("Temporal calendar sibling from admission must contain 74 files")
-if len(TEMPORAL_CALENDAR_SIBLINGS_FROM_BLOCKER_FILES) != 49:
-    raise RuntimeError("Temporal calendar sibling from blockers must contain 49 files")
+if len(TEMPORAL_CALENDAR_SIBLINGS_FROM_FILES) != 123:
+    raise RuntimeError("Temporal calendar sibling from admission must contain 123 files")
+if TEMPORAL_CALENDAR_SIBLINGS_FROM_BLOCKER_FILES:
+    raise RuntimeError("Temporal calendar sibling from blockers must be empty")
+if (
+    len(TEMPORAL_CALENDAR_SIBLINGS_FROM_FORMATTER_TRANSITIONS) != 49
+    or not TEMPORAL_CALENDAR_SIBLINGS_FROM_FORMATTER_TRANSITIONS
+    <= TEMPORAL_CALENDAR_SIBLINGS_FROM_FILES
+):
+    raise RuntimeError("Temporal calendar sibling from transitions must contain 49 admitted files")

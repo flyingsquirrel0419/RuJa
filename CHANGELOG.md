@@ -4,6 +4,32 @@
 
 ### Changed
 
+- Added Realm-local, non-constructable, length-0
+  `Temporal.PlainMonthDay.prototype.toString` and
+  `Temporal.PlainYearMonth.prototype.toString`. Both methods brand before
+  reading the rooted options object, convert only `calendarName`, preserve
+  getter/coercion abrupt completion and method-Realm errors, then serialize
+  hidden reference ISO components without public accessors or temporary
+  Temporal objects. For ISO records, `auto`/`never` emit `MM-DD` or `YYYY-MM`;
+  `always` and `critical` include the complete reference date and calendar
+  annotation. Non-ISO records retain their reference component even when
+  annotation is suppressed. Extended years are preserved. Direct Test262
+  coverage is exact **33/0/0**. The
+  formatter also resolves all **11** core and **49** factory complements, so
+  those complete boundaries are now **104/0/0** and **123/0/0**. A frozen
+  128-file dependency diagnostic reports **93 pass / 35 fail**; the failures
+  belong to independently unimplemented sibling `with`, `add`, and
+  `subtract`. The installer now reserves 169 maximum live pins across 170
+  allocations.
+
+  [Decision Log]
+  - 목적과 의도: 두 partial-date formatter를 reference component, calendar annotation, options observation, Realm/resource 계약까지 완전한 독립 경계로 구현한다.
+  - 기존 구현 및 제약 조건: constructor와 factory는 hidden reference year/day를 보존했지만 formatter가 없어 direct 33개와 helper 기반 core/factory 60개가 intended assertion을 완료하지 못했다. non-ISO calendar 생성은 아직 지원하지 않는다.
+  - 검토한 주요 대안: helper 전용 stub, visible getter 기반 직렬화, PlainDate formatter 재호출, 두 hidden record 전용 formatter와 공용 calendarName option reader를 검토했다.
+  - 선택한 방식: brand를 먼저 확인하고 rooted options에서 calendarName만 명세 순서로 변환한 뒤 copied hidden slots를 직접 포맷한다. exact direct manifest와 128-file transition/blocker 진단을 별도로 고정한다.
+  - 다른 대안 대신 이 방식을 선택한 이유: stub은 옵션과 annotation 지원을 거짓 주장하고 public/PlainDate 경로는 receiver getter, constructor, reference component를 잘못 관찰한다. hidden direct formatter만 타입별 축약형과 annotated full reference date를 동시에 보존한다.
+  - 장점, 단점 및 영향: extended year, always/critical annotation, brand-first error, cross-Realm ownership, getter/coercion abrupt identity, GC/OOM/fuel, no-result-heap allocation과 exact 33/104/123 경계가 재현된다. 남은 35개는 formatter 결함이 아니라 with/add/subtract 소유다.
+
 - Added Realm-local static `Temporal.PlainMonthDay.from` and
   `Temporal.PlainYearMonth.from`. Both factories clone branded hidden records
   without observing public accessors, convert ISO property bags in specified
@@ -13,13 +39,15 @@
   canonical 1972 reference year; YearMonth stores reference day 1 and rejects
   non-positive numeric months during field conversion. The shared monthCode
   parser rejects non-leap `M00` syntax before required-field validation. Exact
-  Test262 admission is **74/0/0**, with the **49** remaining direct files
-  frozen behind the separately unimplemented sibling `prototype.toString`
-  surface. Forced execution is **74/49/123**. The former PlainTime `with`
+  Test262 admission was **74/0/0** at landing, with **49** direct files frozen
+  behind the then-unimplemented sibling `prototype.toString` surface. The
+  later formatter unit now makes the complete factory boundary **123/0/0**.
+  The former PlainTime `with`
   blocker is now admitted, making that directory and combined PlainTime
   boundary **22/0/0** and **336/0/0**. Four factory-dependent accessor/valueOf
-  fixtures also move the sibling core boundary to **93/0/11**. The installer
-  now reserves 167 maximum live pins across 168 allocations.
+  fixtures initially moved the sibling core boundary to **93/0/11**; the later
+  formatter unit completes it at **104/0/0**. At factory landing the installer
+  reserved 167 maximum live pins across 168 allocations.
 
   [Decision Log]
   - 목적과 의도: 두 partial-date factory의 실제 hidden-slot conversion, parser, overflow, Realm/resource 계약을 구현하고 독립 검증 가능한 Test262 경계를 공개한다.
@@ -27,7 +55,7 @@
   - 검토한 주요 대안: constructor 호출로 대체, visible property clone, helper 통과용 임시 toString, factory 74-path admission과 49-path formatter blocker 분리를 검토했다.
   - 선택한 방식: branded hidden clone과 ISO property/string converter를 타입별로 구현하고 metadata까지 exact manifest에 고정한다. helper가 formatter를 호출하기 전에 factory 의미를 독립 증명하는 74개만 admit한다.
   - 다른 대안 대신 이 방식을 선택한 이유: constructor/visible clone은 reference component와 getter 비관찰을 깨고 임시 formatter는 별도 옵션/annotation 계약을 거짓 지원한다. 분리된 complement가 실제 책임 경계를 보존한다.
-  - 장점, 단점 및 영향: field/options order, M00 syntax, non-positive month error timing, arbitrary-size leap-year validation, parser range, subclass/Realm, GC/OOM/fuel과 downstream PlainTime/core 해제가 재현된다. 49개는 formatter 단위가 완료될 때 다시 감사해야 한다.
+  - 장점, 단점 및 영향: field/options order, M00 syntax, non-positive month error timing, arbitrary-size leap-year validation, parser range, subclass/Realm, GC/OOM/fuel과 downstream PlainTime/core 해제가 재현된다. 당시 분리한 49개는 후속 formatter 단위에서 재감사되어 모두 admission으로 이동했다.
 
 - Added Realm-local `%Temporal.PlainMonthDay%` and
   `%Temporal.PlainYearMonth%` constructor/accessor cores with distinct hidden
@@ -36,9 +64,9 @@
   `newTarget.prototype`, support subclass and cross-Realm fallback semantics,
   and expose branded calendar/date getters, `valueOf`, and `@@toStringTag`.
   Central hidden-calendar extraction now accepts both records without reading
-  public `calendar` or `calendarId` properties. After the later static factory
-  unit, the pinned direct core is exact **93/0/0** with a frozen **11**-file
-  serialization complement. Eleven
+  public `calendar` or `calendarId` properties. Static factories first moved
+  the pinned direct core to **93/0/11**; the later formatter unit completes it
+  at exact **104/0/0**. Eleven
   existing `calendar-temporal-object.js` blockers move into their owning
   admissions; `Temporal.Duration.prototype.total` is now complete **78/0/0**.
   At that point, `PlainTime.prototype.with/plaintimelike-invalid.js` remained

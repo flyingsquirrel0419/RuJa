@@ -6291,7 +6291,7 @@ pub(crate) fn install_temporal_namespace_in_env(
     global: Option<&Value>,
     object_proto: Value,
 ) -> error::Result<Value> {
-    vm.try_reserve_gc_pins(167)?;
+    vm.try_reserve_gc_pins(169)?;
     let mut pin_count = 0;
     let result = (|| {
         let instant_prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
@@ -7160,6 +7160,11 @@ pub(crate) fn install_temporal_namespace_in_env(
             "valueOf",
             temporal_plain_month_day_value_of
         );
+        alloc_plain_month_day_native!(
+            plain_month_day_to_string,
+            "toString",
+            temporal_plain_month_day_to_string
+        );
 
         let plain_year_month_prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
             props: Mutex::new(IndexMap::new()),
@@ -7249,6 +7254,11 @@ pub(crate) fn install_temporal_namespace_in_env(
             plain_year_month_value_of,
             "valueOf",
             temporal_plain_year_month_value_of
+        );
+        alloc_plain_year_month_native!(
+            plain_year_month_to_string,
+            "toString",
+            temporal_plain_year_month_to_string
         );
 
         let Value::Object(instant_constructor_index) = instant_constructor.clone() else {
@@ -7785,6 +7795,10 @@ pub(crate) fn install_temporal_namespace_in_env(
                     PropertyKey::from("valueOf"),
                     data_prop(plain_month_day_value_of),
                 );
+                props.insert(
+                    PropertyKey::from("toString"),
+                    data_prop(plain_month_day_to_string),
+                );
                 let mut tag = data_prop(Value::String(Arc::from("Temporal.PlainMonthDay")));
                 tag.writable = false;
                 props.insert(
@@ -7841,6 +7855,10 @@ pub(crate) fn install_temporal_namespace_in_env(
                 props.insert(
                     PropertyKey::from("valueOf"),
                     data_prop(plain_year_month_value_of),
+                );
+                props.insert(
+                    PropertyKey::from("toString"),
+                    data_prop(plain_year_month_to_string),
                 );
                 let mut tag = data_prop(Value::String(Arc::from("Temporal.PlainYearMonth")));
                 tag.writable = false;
@@ -10845,17 +10863,16 @@ fn temporal_plain_date_equals(
     ))
 }
 
-fn temporal_plain_date_to_string(
+fn temporal_calendar_name_to_string_option(
     vm: &mut Vm,
     args: &[Value],
-    this: Option<Value>,
-) -> error::Result<Value> {
-    let (fields, calendar_identifier) = temporal_plain_date_slots(vm, this)?;
+    receiver_name: &str,
+) -> error::Result<temporal::AnnotationDisplay> {
     let options = args.first().cloned().unwrap_or(Value::Undefined);
     if !matches!(options, Value::Undefined | Value::Object(_)) {
-        return Err(Error::type_err(
-            "Temporal.PlainDate.prototype.toString options must be an object",
-        ));
+        return Err(Error::type_err(format!(
+            "Temporal.{receiver_name}.prototype.toString options must be an object"
+        )));
     }
     vm.try_reserve_value_roots(std::slice::from_ref(&options))?;
     let options_pin = vm.pin(&options);
@@ -10868,12 +10885,20 @@ fn temporal_plain_date_to_string(
                 value => Some(temporal_option_to_string(vm, &value)?),
             }
         };
-        let calendar_name =
-            temporal_annotation_display(calendar_name.as_deref(), "calendarName", true)?;
-        temporal_plain_date_format(fields, &calendar_identifier, calendar_name)
+        temporal_annotation_display(calendar_name.as_deref(), "calendarName", true)
     })();
     vm.unpin_many(options_pin);
     result
+}
+
+fn temporal_plain_date_to_string(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let (fields, calendar_identifier) = temporal_plain_date_slots(vm, this)?;
+    let calendar_name = temporal_calendar_name_to_string_option(vm, args, "PlainDate")?;
+    temporal_plain_date_format(fields, &calendar_identifier, calendar_name)
 }
 
 fn temporal_plain_date_to_json(
@@ -11234,6 +11259,25 @@ fn temporal_plain_month_day_value_of(
     Err(Error::type_err(
         "Temporal.PlainMonthDay.prototype.valueOf always throws",
     ))
+}
+
+fn temporal_plain_month_day_to_string(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let (fields, calendar_identifier) = temporal_plain_month_day_slots(vm, this)?;
+    let calendar_name = temporal_calendar_name_to_string_option(vm, args, "PlainMonthDay")?;
+    temporal::format_plain_month_day(
+        fields.reference_iso_year,
+        fields.month,
+        fields.day,
+        &calendar_identifier,
+        calendar_name,
+    )
+    .map(Arc::<str>::from)
+    .map(Value::String)
+    .ok_or_else(|| Error::range("Temporal.PlainMonthDay string formatting failed"))
 }
 
 fn temporal_plain_year_month_slots(
@@ -11614,6 +11658,25 @@ fn temporal_plain_year_month_value_of(
     Err(Error::type_err(
         "Temporal.PlainYearMonth.prototype.valueOf always throws",
     ))
+}
+
+fn temporal_plain_year_month_to_string(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let (fields, calendar_identifier) = temporal_plain_year_month_slots(vm, this)?;
+    let calendar_name = temporal_calendar_name_to_string_option(vm, args, "PlainYearMonth")?;
+    temporal::format_plain_year_month(
+        fields.year,
+        fields.month,
+        fields.reference_iso_day,
+        &calendar_identifier,
+        calendar_name,
+    )
+    .map(Arc::<str>::from)
+    .map(Value::String)
+    .ok_or_else(|| Error::range("Temporal.PlainYearMonth string formatting failed"))
 }
 
 fn temporal_plain_time_slots(

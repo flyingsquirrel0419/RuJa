@@ -26099,6 +26099,108 @@ fn temporal_calendar_sibling_from_meters_strings_and_property_coercion() {
 }
 
 #[test]
+fn temporal_calendar_sibling_to_string_formats_hidden_reference_components() {
+    assert_eq!(
+        run(r#"
+            var monthDay = new Temporal.PlainMonthDay(11, 16, undefined, 1960);
+            var yearMonth = new Temporal.PlainYearMonth(2000, 5, undefined, 7);
+            var reads = 0;
+            for (var value of [monthDay, yearMonth]) {
+              for (var key of ['calendarId', 'day', 'monthCode', 'year', 'month']) {
+                Object.defineProperty(value, key, {
+                  get: function () { reads++; throw new Error('observed'); }
+                });
+              }
+            }
+            [
+              Temporal.PlainMonthDay.prototype.toString.name,
+              Temporal.PlainMonthDay.prototype.toString.length,
+              monthDay.toString(),
+              monthDay.toString({ calendarName: 'always' }),
+              monthDay.toString({ calendarName: 'critical' }),
+              monthDay.toString({ calendarName: 'never' }),
+              Temporal.PlainYearMonth.prototype.toString.name,
+              Temporal.PlainYearMonth.prototype.toString.length,
+              yearMonth.toString(),
+              yearMonth.toString({ calendarName: 'always' }),
+              yearMonth.toString({ calendarName: 'critical' }),
+              yearMonth.toString({ calendarName: 'never' }),
+              new Temporal.PlainYearMonth(-1, 8).toString(),
+              new Temporal.PlainYearMonth(10000, 6).toString(),
+              reads
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "toString|0|11-16|1960-11-16[u-ca=iso8601]|1960-11-16[!u-ca=iso8601]|11-16|toString|0|2000-05|2000-05-07[u-ca=iso8601]|2000-05-07[!u-ca=iso8601]|2000-05|-000001-08|+010000-06|0"
+        ))
+    );
+}
+
+#[test]
+fn temporal_calendar_sibling_to_string_orders_options_and_uses_method_realm() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var optionValue = {};
+            Object.defineProperty(optionValue, 'toString', {
+              get: function () {
+                log.push('get toString');
+                return function () { log.push('call toString'); return 'always'; };
+              }
+            });
+            var options = {};
+            Object.defineProperty(options, 'calendarName', {
+              get: function () { log.push('get calendarName'); return optionValue; }
+            });
+            new Temporal.PlainMonthDay(5, 2).toString(options);
+            var order = log.join(',');
+
+            log.length = 0;
+            var brandFirst = false;
+            try { Temporal.PlainYearMonth.prototype.toString.call({}, options); }
+            catch (error) { brandFirst = error instanceof TypeError && log.length === 0; }
+            var primitiveOptions = false;
+            try { new Temporal.PlainMonthDay(5, 2).toString(null); }
+            catch (error) { primitiveOptions = error instanceof TypeError; }
+            var callableOptions = new Temporal.PlainYearMonth(2000, 5).toString(function () {});
+            var symbolOption = false;
+            try { new Temporal.PlainMonthDay(5, 2).toString({ calendarName: Symbol() }); }
+            catch (error) { symbolOption = error instanceof TypeError; }
+
+            var other = $262.createRealm().global;
+            var receiverRealm = false;
+            var optionRealm = false;
+            try { other.Temporal.PlainMonthDay.prototype.toString.call({}); }
+            catch (error) {
+              receiverRealm = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            try {
+              other.Temporal.PlainYearMonth.prototype.toString.call(
+                new other.Temporal.PlainYearMonth(2000, 5),
+                { calendarName: 'invalid' }
+              );
+            } catch (error) {
+              optionRealm = error instanceof other.RangeError && !(error instanceof RangeError);
+            }
+            var monthDayNonconstructable = false;
+            var yearMonthNonconstructable = false;
+            try { new Temporal.PlainMonthDay.prototype.toString(); }
+            catch (error) { monthDayNonconstructable = error instanceof TypeError; }
+            try { new Temporal.PlainYearMonth.prototype.toString(); }
+            catch (error) { yearMonthNonconstructable = error instanceof TypeError; }
+            [
+              order, brandFirst, primitiveOptions, callableOptions, symbolOption,
+              receiverRealm, optionRealm,
+              monthDayNonconstructable, yearMonthNonconstructable
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "get calendarName,get toString,call toString|true|true|2000-05|true|true|true|true|true"
+        ))
+    );
+}
+
+#[test]
 fn temporal_calendar_fast_path_accepts_month_day_and_year_month_without_getters() {
     assert_eq!(
         run(r#"

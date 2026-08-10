@@ -1,0 +1,35 @@
+# Pinned Test262 revision: 9e61c12835c5e4a3bdba93850427e6742c4f64c4
+# Exact PlainMonthDay.prototype.toString and PlainYearMonth.prototype.toString coverage.
+built-ins/Temporal/PlainMonthDay/prototype/toString/branding.js
+built-ins/Temporal/PlainMonthDay/prototype/toString/builtin.js
+built-ins/Temporal/PlainMonthDay/prototype/toString/calendarname-always.js
+built-ins/Temporal/PlainMonthDay/prototype/toString/calendarname-auto.js
+built-ins/Temporal/PlainMonthDay/prototype/toString/calendarname-critical.js
+built-ins/Temporal/PlainMonthDay/prototype/toString/calendarname-invalid-string.js
+built-ins/Temporal/PlainMonthDay/prototype/toString/calendarname-never.js
+built-ins/Temporal/PlainMonthDay/prototype/toString/calendarname-undefined.js
+built-ins/Temporal/PlainMonthDay/prototype/toString/calendarname-wrong-type.js
+built-ins/Temporal/PlainMonthDay/prototype/toString/length.js
+built-ins/Temporal/PlainMonthDay/prototype/toString/name.js
+built-ins/Temporal/PlainMonthDay/prototype/toString/not-a-constructor.js
+built-ins/Temporal/PlainMonthDay/prototype/toString/options-object.js
+built-ins/Temporal/PlainMonthDay/prototype/toString/options-wrong-type.js
+built-ins/Temporal/PlainMonthDay/prototype/toString/order-of-operations.js
+built-ins/Temporal/PlainMonthDay/prototype/toString/prop-desc.js
+built-ins/Temporal/PlainYearMonth/prototype/toString/branding.js
+built-ins/Temporal/PlainYearMonth/prototype/toString/builtin.js
+built-ins/Temporal/PlainYearMonth/prototype/toString/calendarname-always.js
+built-ins/Temporal/PlainYearMonth/prototype/toString/calendarname-auto.js
+built-ins/Temporal/PlainYearMonth/prototype/toString/calendarname-critical.js
+built-ins/Temporal/PlainYearMonth/prototype/toString/calendarname-invalid-string.js
+built-ins/Temporal/PlainYearMonth/prototype/toString/calendarname-never.js
+built-ins/Temporal/PlainYearMonth/prototype/toString/calendarname-undefined.js
+built-ins/Temporal/PlainYearMonth/prototype/toString/calendarname-wrong-type.js
+built-ins/Temporal/PlainYearMonth/prototype/toString/length.js
+built-ins/Temporal/PlainYearMonth/prototype/toString/name.js
+built-ins/Temporal/PlainYearMonth/prototype/toString/not-a-constructor.js
+built-ins/Temporal/PlainYearMonth/prototype/toString/options-object.js
+built-ins/Temporal/PlainYearMonth/prototype/toString/options-wrong-type.js
+built-ins/Temporal/PlainYearMonth/prototype/toString/order-of-operations.js
+built-ins/Temporal/PlainYearMonth/prototype/toString/prop-desc.js
+built-ins/Temporal/PlainYearMonth/prototype/toString/year-format.js

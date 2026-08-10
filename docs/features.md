@@ -72,11 +72,13 @@
   option-aware `toString`, `toJSON`, and `valueOf`. ZonedDateTime strings may omit time when followed directly by a
   time-zone annotation. Property-bag
   conversion currently accepts ISO calendars with UTC or minute-precision
-  fixed offsets. Remaining PlainDate and PlainDateTime methods,
-  arithmetic/formatting and conversion methods, calendar-relative and zoned
-  Duration operations beyond the supported `total` boundary,
-  remaining PlainMonthDay/PlainYearMonth formatting, comparison, conversion,
-  arithmetic and non-ISO calendar methods, named IANA timezone
+  fixed offsets. PlainMonthDay/PlainYearMonth provide option-aware hidden-record
+  `toString` with all calendar annotation modes and reference-component
+  output. Remaining PlainDate and PlainDateTime arithmetic, formatting, and
+  conversion methods, calendar-relative and zoned Duration operations beyond
+  the supported `total` boundary, remaining PlainMonthDay/PlainYearMonth
+  comparison, conversion, arithmetic, serialization, locale, and non-ISO
+  calendar methods, named IANA timezone
   transitions, the remaining RFC 9557 grammar, and `Temporal.Now` methods
   remain outside the supported boundary.
 - `class`/`extends`/`super`

@@ -15016,10 +15016,10 @@ Ordinary and dedicated full CI require literal exact and forced counts.
 At pinned Test262 revision
 `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the audited constructor,
 prototype, accessor, `valueOf`, and `@@toStringTag` candidate surface contains
-104 files. After the later static factories unlock four accessor/valueOf
-fixtures, exact admission is **93 pass / 0 fail / 0 skip**. Forced execution
-is **93 pass / 11 fail / 0 skip**; all 11 blockers require intentionally
-separate serialization behavior. The admission contains no
+104 files. Static factories first unlocked four accessor/valueOf fixtures;
+the later sibling formatter unlocks the remaining 11 serialization-dependent
+fixtures. Exact and forced execution are now both **104 pass / 0 fail / 0
+skip**. The admission contains no
 method-absence TypeError false positives.
 
 The two genuine hidden brands unlock eleven existing calendar-object fixtures:
@@ -15034,38 +15034,34 @@ blockers remain. The later static factory unit moves the former
 making that directory **22/0/0**.
 
 The dedicated manifest freezes exact path identity and live metadata across
-both type directories. Its 11-path complement rejects future accidental
-expansion. Runner and analyzer share the same exact helper; malformed,
+both type directories. Its complement is now empty after formatter admission.
+Runner and analyzer share the same exact helper; malformed,
 outside-root, inaccessible, absent-corpus, and future paths fail closed. Full
-CI separately requires literal **93/0/0** admission and **93/11/104** forced
-results.
+CI separately requires literal **104/0/0** admission and forced results.
 
 ```text
 [Decision Log]
 - 목적과 의도: 두 partial-date type의 real hidden-slot constructor/accessor core와 그 downstream calendar fast-path 효과를 exact supported accounting에 반영한다.
 - 기존 구현 및 제약 조건: 타입 부재로 11개 calendar-temporal-object fixture가 intended assertion 전에 실패했고 broad Temporal gate는 direct candidate 104개를 모두 숨겼다.
 - 검토한 주요 대안: blocker 파일만 이동, directory prefix 허용, constructor 존재만으로 전체 type 지원 주장, 초기 89-path admission과 15-path complement를 검토했다.
-- 선택한 방식: constructor core에서 독립 통과한 89개를 먼저 admit하고, 후속 static factory가 intended assertion을 해제한 accessor/valueOf 4개를 재실행해 93개로 확장한다. serialization 의존 11개는 frozen complement로 둔다.
+- 선택한 방식: constructor core에서 독립 통과한 89개를 먼저 admit하고, static factory가 해제한 4개와 formatter가 해제한 11개를 각 후속 단위에서 재실행해 104개로 확장한다.
 - 다른 대안 대신 이 방식을 선택한 이유: prefix와 broad type claim은 아직 없는 factory/formatting/arithmetic을 거짓 허용한다. downstream만 이동하면 신규 type 자체의 metadata/descriptor/branding 회귀를 잡지 못한다.
-- 장점, 단점 및 영향: direct exact 93/0/11, total 78/0, 10개 다른 calendar fast-path directory 완결, live metadata/disjointness/future gating이 재현된다. 당시 PlainTime.with의 from 의존 blocker도 후속 factory 단위에서 해제됐고 sibling의 나머지 methods는 명시적으로 남는다.
+- 장점, 단점 및 영향: direct exact/forced 104/0, total 78/0, 10개 다른 calendar fast-path directory 완결, live metadata/disjointness/future gating이 재현된다. 당시 PlainTime.with의 from 의존 blocker도 후속 factory 단위에서 해제됐고 sibling의 나머지 methods는 명시적으로 남는다.
 ```
 
 ## Temporal PlainMonthDay/PlainYearMonth static factories
 
-The two pinned `from` directories contain 123 files. Exact admission is
-**74 pass / 0 fail / 0 skip**. Forced execution is **74 pass / 49 fail / 0
-skip**. Every failure reaches `temporalHelpers.js` after successful factory
-conversion and then requires the independently unimplemented
-`PlainMonthDay.prototype.toString` or `PlainYearMonth.prototype.toString`.
-No formatter stub is exposed to inflate factory coverage.
+The two pinned `from` directories contain 123 files. Exact admission and
+forced execution are now both **123 pass / 0 fail / 0 skip**. The later real
+sibling formatters resolve the former 49-file helper complement after
+successful factory conversion; no formatter stub was used.
 
 One shared manifest module freezes all 123 path identities and their exact
 features, includes, flags, and negative metadata. Runner and analyzer admit
-only the 74 independently verifiable paths. The diagnostic forces the complete
-74-admission plus 49-blocker complement and rejects any per-file pass/fail
-drift before reporting **74/49/123**. Corpus absence and permission failures
-fail closed. Ordinary and full CI both require literal admission and forced
-counts. The real factories also unlock the former
+all 123 paths. The diagnostic forces the complete admission and rejects any
+per-file drift before reporting **123/0/123**. Corpus absence and permission
+failures fail closed. Ordinary and full CI both require literal admission and
+forced counts. The real factories also unlock the former
 `PlainTime.prototype.with/plaintimelike-invalid.js` blocker, making that
 directory complete **22/0/0**.
 
@@ -15074,7 +15070,33 @@ directory complete **22/0/0**.
 - 목적과 의도: 두 static factory의 독립 conformance 경계를 formatter dependency와 분리해 exact accounting으로 고정한다.
 - 기존 구현 및 제약 조건: direct 123개 중 49개는 factory 결과를 helper의 toString으로 검증하므로 factory가 맞아도 formatter 부재로 실패한다. broad Temporal gate와 method 부재 TypeError는 실제 지원을 증명하지 않는다.
 - 검토한 주요 대안: 123개 전체 admit, helper stub 추가, 실패 파일 제외, 74 admission과 49 frozen complement를 검토했다.
-- 선택한 방식: intended factory assertion이 독립 도달하는 74개만 admit하고 helper formatter 의존 49개를 metadata 포함 blocker로 유지한다. downstream PlainTime 한 파일은 별도 owner manifest에서 재실행 후 이동한다.
+- 선택한 방식: 최초에는 independently reachable 74개와 formatter 의존 49개를 분리하고, 실제 formatter 구현 후 49개를 재실행해 admission으로 이동한다. downstream PlainTime 한 파일은 별도 owner manifest에서 재실행 후 이동한다.
 - 다른 대안 대신 이 방식을 선택한 이유: 전체 admit과 stub은 formatter 계약을 거짓 지원하고 단순 제외는 denominator와 future 책임을 숨긴다. exact complement는 factory 회귀와 formatter 후속 작업을 동시에 드러낸다.
-- 장점, 단점 및 영향: exact 74/0/0, forced 74/49/123, live corpus/metadata/future/disjointness와 downstream 22/0이 재현된다. formatter 구현 후 49개를 intended assertion 기준으로 다시 감사해야 한다.
+- 장점, 단점 및 영향: exact/forced 123/0, live corpus/metadata/future/disjointness와 downstream 22/0이 재현된다. 49-file transition manifest가 formatter 해제 근거를 보존한다.
+```
+
+## Temporal PlainMonthDay/PlainYearMonth prototype.toString
+
+The two complete direct directories contain 33 files: 16 PlainMonthDay and 17
+PlainYearMonth. Exact admission and forced execution are both **33 pass / 0
+fail / 0 skip**. Per-file features, includes, flags, and negative metadata are
+frozen and shared by runner and analyzer. The diagnostic requires the exact
+path set and fails closed on duplicates, missing/outside paths, corpus errors,
+or result drift.
+
+Formatter-dependent downstream discovery is frozen separately. Direct files
+plus 11 former core blockers, 49 former factory blockers, and 35 independently
+blocked `with`/`add`/`subtract` files form an exact 128-file surface. Its
+diagnostic reports **93 pass / 35 fail / 0 skip**. This distinguishes the 93
+formatter-owned transitions from arithmetic/mutation methods without claiming
+those methods as supported.
+
+```text
+[Decision Log]
+- 목적과 의도: 두 partial-date toString directory와 formatter가 해제한 downstream assertion을 exact supported accounting에 반영한다.
+- 기존 구현 및 제약 조건: broad Temporal gate가 direct 33개를 숨겼고 core/factory 60개는 absent formatter에서 멈췄다. 같은 helper를 쓰는 35개는 with/add/subtract가 먼저 실패한다.
+- 검토한 주요 대안: directory prefix admission, 128개 전체를 formatter pass로 계상, helper 호출 파일 제외, direct admission과 transition/blocker diagnostic 분리를 검토했다.
+- 선택한 방식: direct 33개만 method admission으로 열고 former blocker 60개는 owner admission으로 이동한다. deterministic helper/direct-call discovery의 128개 표면은 93 pass와 35 fail identity를 별도 manifest로 고정한다.
+- 다른 대안 대신 이 방식을 선택한 이유: prefix는 future test를 자동 허용하고 128개 전체 계상은 다른 미구현 API를 formatter 결함 또는 지원으로 오분류한다. owner별 이동과 별도 진단만 구현 책임과 denominator를 함께 보존한다.
+- 장점, 단점 및 영향: exact direct 33/0, core 104/0, factory 123/0, dependency 93/35, metadata/corpus/future gating이 재현된다. 남은 35개는 with/add/subtract 구현 때 다시 감사한다.
 ```

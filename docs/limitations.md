@@ -63,10 +63,12 @@ The following resource limits are enforced:
   observing public properties. Realm-local static `from` clones branded
   values, converts ordered ISO property bags, parses audited partial/full date
   strings, and supports constrain/reject overflow with method-Realm results.
-  Equality/comparison, serialization, date conversion,
+  Realm-local `prototype.toString` brands before options, supports all four
+  calendar annotation modes, and formats hidden reference year/day records
+  without public property access. Equality/comparison, JSON serialization,
+  date conversion,
   arithmetic/difference, locale formatting, and non-ISO calendars remain
-  unsupported. In particular, `prototype.toString` remains a separate
-  formatter/options/annotation unit rather than a factory helper stub.
+  unsupported.
   Realm-local `%Temporal.PlainTime%` supports six-field hidden-slot
   construction, subclassing, branded accessors, `@@toStringTag`, static
   `from` and lexicographic `compare`, hidden-record `equals`, and

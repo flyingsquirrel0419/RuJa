@@ -1746,6 +1746,48 @@ pub(crate) fn format_plain_date(
     Some(output)
 }
 
+pub(crate) fn format_plain_month_day(
+    reference_iso_year: i32,
+    month: u8,
+    day: u8,
+    calendar_identifier: &str,
+    calendar_name: AnnotationDisplay,
+) -> Option<String> {
+    let show_reference_year = matches!(
+        calendar_name,
+        AnnotationDisplay::Always | AnnotationDisplay::Critical
+    ) || calendar_identifier != "iso8601";
+    let mut output = String::with_capacity(32);
+    if show_reference_year {
+        write_year(&mut output, i128::from(reference_iso_year))?;
+        output.push('-');
+    }
+    write!(output, "{month:02}-{day:02}").ok()?;
+    write_calendar_annotation(&mut output, calendar_identifier, calendar_name);
+    Some(output)
+}
+
+pub(crate) fn format_plain_year_month(
+    year: i32,
+    month: u8,
+    reference_iso_day: u8,
+    calendar_identifier: &str,
+    calendar_name: AnnotationDisplay,
+) -> Option<String> {
+    let show_reference_day = matches!(
+        calendar_name,
+        AnnotationDisplay::Always | AnnotationDisplay::Critical
+    ) || calendar_identifier != "iso8601";
+    let mut output = String::with_capacity(32);
+    write_year(&mut output, i128::from(year))?;
+    write!(output, "-{month:02}").ok()?;
+    if show_reference_day {
+        write!(output, "-{reference_iso_day:02}").ok()?;
+    }
+    write_calendar_annotation(&mut output, calendar_identifier, calendar_name);
+    Some(output)
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct ZonedDateTimeFormatOptions {
     pub precision: InstantPrecision,
@@ -1786,13 +1828,14 @@ pub(crate) fn format_zoned_date_time(
 #[cfg(test)]
 mod tests {
     use super::{
-        add_plain_time, format_duration, format_instant, format_plain_date, format_plain_time,
-        parse_calendar_identifier, parse_duration_string, parse_instant_string,
-        parse_offset_string, parse_plain_date_string, parse_plain_date_time_string,
-        parse_plain_month_day_string, parse_plain_time_string, parse_plain_year_month_string,
-        parse_time_zone_identifier, parse_time_zone_identifier_like, parse_time_zone_offset,
-        parse_zoned_date_time_string, resolve_zoned_date_time_epoch, round_signed_to_increment,
-        AnnotationDisplay, InstantPrecision, InstantRoundingMode, ZonedDateTimeOffsetOption,
+        add_plain_time, format_duration, format_instant, format_plain_date, format_plain_month_day,
+        format_plain_time, format_plain_year_month, parse_calendar_identifier,
+        parse_duration_string, parse_instant_string, parse_offset_string, parse_plain_date_string,
+        parse_plain_date_time_string, parse_plain_month_day_string, parse_plain_time_string,
+        parse_plain_year_month_string, parse_time_zone_identifier, parse_time_zone_identifier_like,
+        parse_time_zone_offset, parse_zoned_date_time_string, resolve_zoned_date_time_epoch,
+        round_signed_to_increment, AnnotationDisplay, InstantPrecision, InstantRoundingMode,
+        ZonedDateTimeOffsetOption,
     };
     use num_bigint::BigInt;
 
@@ -1889,6 +1932,42 @@ mod tests {
         assert_eq!(
             format_plain_date(-1, 8, 7, "gregory", AnnotationDisplay::Critical).as_deref(),
             Some("-000001-08-07[!u-ca=gregory]")
+        );
+    }
+
+    #[test]
+    fn formats_partial_dates_with_reference_components_only_for_annotations() {
+        assert_eq!(
+            format_plain_month_day(1972, 5, 2, "iso8601", AnnotationDisplay::Auto).as_deref(),
+            Some("05-02")
+        );
+        assert_eq!(
+            format_plain_month_day(1960, 11, 16, "iso8601", AnnotationDisplay::Always).as_deref(),
+            Some("1960-11-16[u-ca=iso8601]")
+        );
+        assert_eq!(
+            format_plain_month_day(1972, 5, 2, "iso8601", AnnotationDisplay::Critical).as_deref(),
+            Some("1972-05-02[!u-ca=iso8601]")
+        );
+        assert_eq!(
+            format_plain_month_day(1960, 11, 16, "gregory", AnnotationDisplay::Never).as_deref(),
+            Some("1960-11-16")
+        );
+        assert_eq!(
+            format_plain_year_month(2000, 5, 7, "iso8601", AnnotationDisplay::Auto).as_deref(),
+            Some("2000-05")
+        );
+        assert_eq!(
+            format_plain_year_month(2000, 5, 7, "iso8601", AnnotationDisplay::Always).as_deref(),
+            Some("2000-05-07[u-ca=iso8601]")
+        );
+        assert_eq!(
+            format_plain_year_month(-1, 8, 1, "iso8601", AnnotationDisplay::Never).as_deref(),
+            Some("-000001-08")
+        );
+        assert_eq!(
+            format_plain_year_month(2000, 5, 7, "gregory", AnnotationDisplay::Never).as_deref(),
+            Some("2000-05-07")
         );
     }
 

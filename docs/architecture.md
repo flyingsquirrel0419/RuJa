@@ -5066,7 +5066,36 @@ ISO calendar. Result creation preserves copied fields across GC retry and OOM.
 - 검토한 주요 대안: constructor 재호출, 공용 PlainDate converter, string slice 기반 임시 parser, 타입별 converter와 structured parser를 검토했다.
 - 선택한 방식: hidden clone fast path, 타입별 ordered property collector, shared full-date parser와 두 structured partial parser, method-Realm allocator를 사용한다.
 - 다른 대안 대신 이 방식을 선택한 이유: constructor 재호출은 reference component를 잃고 PlainDate converter는 필드 관찰 순서를 늘린다. 구조화 parser는 annotation/offset 검증을 기존 parser와 공유하면서 partial grammar만 좁게 소유한다.
-- 장점, 단점 및 영향: hidden getter 비관찰, huge-year leap overflow, options precedence, long-input fuel, GC/OOM과 168-allocation rollback이 고정된다. formatting과 non-ISO calendar는 별도 완전 단위로 남는다.
+- 장점, 단점 및 영향: hidden getter 비관찰, huge-year leap overflow, options precedence, long-input fuel, GC/OOM과 168-allocation rollback이 고정된다. non-ISO calendar는 별도 완전 단위로 남고 formatting은 아래 후속 경계에서 완결된다.
+```
+
+Each partial-date prototype now owns a Realm-local, non-constructable,
+length-0 `toString`. Receiver branding precedes options validation. An
+`undefined` options value selects `auto`; otherwise the object is pinned before
+the single observable `calendarName` read and its string coercion. Abrupt
+getter/coercion results retain identity, while native TypeError and RangeError
+objects come from the method Realm. The common option reader is also used by
+PlainDate, keeping all three methods on one observable-order contract.
+
+Formatting consumes copied hidden slots only. ISO PlainMonthDay emits `MM-DD`
+for `auto`/`never`, or `referenceYear-MM-DD` plus the normal/critical calendar
+annotation. ISO PlainYearMonth similarly emits `YYYY-MM`, or
+`YYYY-MM-referenceDay` plus the annotation. Non-ISO records always retain the
+reference component even when `never` suppresses the annotation. Extended
+years reuse the audited ISO year formatter. This preserves constructor/from reference components and
+avoids public getters, constructors, species, temporary Temporal objects, and
+result heap allocation. The two native functions occupy installer allocations
+153 and 168; complete installation uses 170 allocations and 169 maximum live
+pins.
+
+```text
+[Decision Log]
+- 목적과 의도: partial-date hidden records를 calendarName 옵션과 RFC 9557 annotation에 직접 연결하면서 Realm, GC/OOM, fuel 경계를 보존한다.
+- 기존 구현 및 제약 조건: hidden reference year/day와 공용 ISO year/calendar annotation formatter는 있었지만 sibling methods가 없었다. factory helper 49개와 core 11개가 결과 검증 중 absent method에서 멈췄다.
+- 검토한 주요 대안: helper 통과용 최소 문자열, visible getters, PlainDate native callback 재사용, 공용 option reader와 타입별 pure formatter를 검토했다.
+- 선택한 방식: brand/copy 후 options object를 pin하고 calendarName 하나만 변환한다. 타입별 formatter는 copied fields와 shared year/annotation primitives만 사용해 Arc String을 publish한다.
+- 다른 대안 대신 이 방식을 선택한 이유: 최소 문자열은 always/critical/reference semantics를 잃고 visible/callback 경로는 명세에 없는 property 및 receiver 종류를 관찰한다. pure formatter는 no-result-GC와 deterministic fuel 경계를 유지한다.
+- 장점, 단점 및 영향: brand-first order, abrupt identity, cross-Realm errors, extended year, hidden reference output, allocation rollback과 exact Test262 33/104/123가 고정된다. non-ISO calendar construction 및 with/add/subtract는 별도 경계다.
 ```
 
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

@@ -119,7 +119,7 @@ TEMPORAL_CALENDAR_SIBLINGS_CORE_ALL_NEGATIVE = {
     path: None for path in TEMPORAL_CALENDAR_SIBLINGS_CORE_ALL_FILES
 }
 
-if len(TEMPORAL_CALENDAR_SIBLINGS_CORE_FILES) != 93:
-    raise RuntimeError("Temporal calendar sibling core admission must contain 93 files")
-if len(TEMPORAL_CALENDAR_SIBLINGS_CORE_BLOCKER_FILES) != 11:
-    raise RuntimeError("Temporal calendar sibling core blockers must contain 11 files")
+if len(TEMPORAL_CALENDAR_SIBLINGS_CORE_FILES) != 104:
+    raise RuntimeError("Temporal calendar sibling core admission must contain 104 files")
+if TEMPORAL_CALENDAR_SIBLINGS_CORE_BLOCKER_FILES:
+    raise RuntimeError("Temporal calendar sibling core blockers must be empty")
