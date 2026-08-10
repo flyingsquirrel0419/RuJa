@@ -65,7 +65,9 @@ The following resource limits are enforced:
   strings, and supports constrain/reject overflow with method-Realm results.
   Realm-local `prototype.toString` brands before options, supports all four
   calendar annotation modes, and formats hidden reference year/day records
-  without public property access. Equality/comparison, JSON serialization,
+  without public property access. Realm-local `prototype.with` performs
+  ordered partial ISO merge, canonical reference-year/day publication, and
+  constrain/reject overflow without public property access. Equality/comparison, JSON serialization,
   date conversion,
   arithmetic/difference, locale formatting, and non-ISO calendars remain
   unsupported.
@@ -95,7 +97,7 @@ The following resource limits are enforced:
   minute-precision fixed offsets only. `startOfDay` rejects named zones until
   transition-aware midnight gap/overlap resolution exists. Named IANA time-zone transitions,
   the remaining ZonedDateTime string grammar, the remaining RFC 9557
-  grammar, remaining PlainMonthDay/PlainYearMonth methods, remaining duration
+  grammar, remaining PlainMonthDay/PlainYearMonth methods beyond `with`, remaining duration
   operations, and `Temporal.Now` methods remain unsupported.
 
 - **Execution fuel**: `Vm::set_fuel(Some(n))` bounds dispatched opcodes and

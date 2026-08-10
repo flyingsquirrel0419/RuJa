@@ -506,6 +506,94 @@ fn temporal_plain_time_with_precharges_field_and_overflow_strings() {
 }
 
 #[test]
+fn temporal_partial_date_with_precharges_all_converted_strings() {
+    const BUDGET: i64 = 30_000;
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        globalThis.monthDayWithFuel = new Temporal.PlainMonthDay(5, 2);
+        globalThis.yearMonthWithFuel = new Temporal.PlainYearMonth(2000, 5);
+        globalThis.partialDateWithShortNumber = { valueOf() { return '1'; } };
+        globalThis.partialDateWithLongNumber = { valueOf() { return '1' + ' '.repeat(512); } };
+        globalThis.partialDateWithShortMonthCode = { toString() { return 'M01'; } };
+        globalThis.partialDateWithLongMonthCode = { toString() { return 'M01' + ' '.repeat(512); } };
+        globalThis.partialDateWithShortOverflow = { toString() { return 'constrain'; } };
+        globalThis.partialDateWithLongOverflow = { toString() { return 'x'.repeat(512); } };
+        "#,
+    )
+    .expect("partial-date with fuel fixtures should initialize");
+
+    for (short, long, label) in [
+        (
+            "monthDayWithFuel.with({ day: partialDateWithShortNumber });",
+            "monthDayWithFuel.with({ day: partialDateWithLongNumber });",
+            "MonthDay day",
+        ),
+        (
+            "monthDayWithFuel.with({ monthCode: partialDateWithShortMonthCode });",
+            "monthDayWithFuel.with({ monthCode: partialDateWithLongMonthCode });",
+            "MonthDay monthCode",
+        ),
+        (
+            "monthDayWithFuel.with({ year: partialDateWithShortNumber });",
+            "monthDayWithFuel.with({ year: partialDateWithLongNumber });",
+            "MonthDay year",
+        ),
+        (
+            "yearMonthWithFuel.with({ month: partialDateWithShortNumber });",
+            "yearMonthWithFuel.with({ month: partialDateWithLongNumber });",
+            "YearMonth month",
+        ),
+        (
+            "yearMonthWithFuel.with({ monthCode: partialDateWithShortMonthCode });",
+            "yearMonthWithFuel.with({ monthCode: partialDateWithLongMonthCode });",
+            "YearMonth monthCode",
+        ),
+        (
+            "yearMonthWithFuel.with({ year: partialDateWithShortNumber });",
+            "yearMonthWithFuel.with({ year: partialDateWithLongNumber });",
+            "YearMonth year",
+        ),
+        (
+            "monthDayWithFuel.with({ day: 1 }, { overflow: partialDateWithShortOverflow });",
+            "monthDayWithFuel.with({ day: 1 }, { overflow: partialDateWithLongOverflow });",
+            "MonthDay overflow",
+        ),
+        (
+            "yearMonthWithFuel.with({ month: 1 }, { overflow: partialDateWithShortOverflow });",
+            "yearMonthWithFuel.with({ month: 1 }, { overflow: partialDateWithLongOverflow });",
+            "YearMonth overflow",
+        ),
+    ] {
+        let short = format!("try {{ {short} }} catch (error) {{}}");
+        let long = format!("try {{ {long} }} catch (error) {{}}");
+        vm.set_fuel(Some(BUDGET));
+        vm.run(&short).expect("short conversion should run");
+        let short_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+
+        vm.set_fuel(Some(BUDGET));
+        vm.run(&long).expect("long conversion should run");
+        let long_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+        assert!(
+            long_work >= short_work + 500,
+            "{label} conversion must charge the produced string"
+        );
+
+        vm.set_fuel(Some(long_work - 1));
+        let error = vm
+            .run(&long)
+            .expect_err("N-1 fuel must abort during partial-date conversion");
+        assert_eq!(error.kind, ruja::ErrorKind::Fuel, "{label}");
+        assert_eq!(vm.fuel_remaining(), Some(0), "{label}");
+
+        vm.set_fuel(Some(long_work));
+        vm.run(&long)
+            .expect("exact measured fuel should complete conversion");
+        assert_eq!(vm.fuel_remaining(), Some(0), "{label}");
+    }
+}
+
+#[test]
 fn temporal_plain_date_to_string_precharges_calendar_name_bytes() {
     const BUDGET: i64 = 10_000;
     let mut vm = Vm::new().expect("failed to initialize VM");

@@ -207,17 +207,27 @@ jobs:
             "${files[@]}" | tee temporal_calendar_siblings_to_string_result.txt
           grep -q '^RATE=100.0 PASS=33 FAIL=0 SKIP=0 TOTAL=33 RAN=33$' \
             temporal_calendar_siblings_to_string_result.txt
+      - name: Run exact Temporal calendar sibling with admission
+        run: |
+          mapfile -t files < <(grep -hEv '^(#|$)' \
+            tools/test262_temporal_calendar_siblings_with_admission.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_calendar_siblings_with_diagnostic.py \
+            "${files[@]}" | tee temporal_calendar_siblings_with_result.txt
+          grep -q '^RATE=100.0 PASS=43 FAIL=0 SKIP=0 TOTAL=43 RAN=43$' \
+            temporal_calendar_siblings_with_result.txt
       - name: Diagnose complete Temporal calendar sibling formatter surface
         run: |
           mapfile -t files < <(grep -hEv '^(#|$)' \
             tools/test262_temporal_calendar_siblings_to_string_admission.txt \
             tools/test262_temporal_calendar_siblings_core_formatter_transitions.txt \
             tools/test262_temporal_calendar_siblings_from_formatter_transitions.txt \
+            tools/test262_temporal_calendar_siblings_with_formatter_transitions.txt \
             tools/test262_temporal_calendar_siblings_formatter_downstream_blockers.txt)
           TEST262="$GITHUB_WORKSPACE/test262" \
             python3 tools/test262_temporal_calendar_siblings_formatter_surface_diagnostic.py \
             "${files[@]}" | tee temporal_calendar_siblings_formatter_diagnostic.txt
-          grep -q '^RATE=72.7 PASS=93 FAIL=35 SKIP=0 TOTAL=128 RAN=128$' \
+          grep -q '^RATE=82.8 PASS=106 FAIL=22 SKIP=0 TOTAL=128 RAN=128$' \
             temporal_calendar_siblings_formatter_diagnostic.txt
       - name: Run exact Temporal.PlainTime admissions
         run: |

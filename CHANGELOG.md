@@ -4,6 +4,29 @@
 
 ### Changed
 
+- Added Realm-local, non-constructable, length-1
+  `Temporal.PlainMonthDay.prototype.with` and
+  `Temporal.PlainYearMonth.prototype.with`. Both methods brand first, reject
+  branded date/time inputs and observable `calendar`/`timeZone` fields, read
+  partial fields in specification order, and defer options conversion until
+  field conversion completes. ISO merge invalidates the receiver's paired
+  month/monthCode field correctly, applies constrain/reject overflow, and
+  creates a fresh method-Realm intrinsic result. MonthDay uses an explicit
+  year only for leap/overflow calculation and always stores reference year
+  1972; YearMonth always stores reference day 1. Exact direct Test262 coverage
+  is **43/0/0**. Thirteen formatter-dependent transitions now pass, moving the
+  frozen 128-file formatter surface to **106 pass / 22 fail**; only
+  YearMonth `add`/`subtract` remain blocked there. The installer now reserves
+  171 maximum live pins across 172 allocations.
+
+  [Decision Log]
+  - 목적과 의도: 두 partial-date mutation method를 hidden-slot merge, observable order, overflow, Realm 및 sandbox resource 경계까지 완결한다.
+  - 기존 구현 및 제약 조건: constructor/from/toString은 있었지만 with가 없어 direct 43개와 formatter helper를 사용하는 13개가 intended assertion 전에 실패했다. 현재 calendar subsystem은 ISO만 생성한다.
+  - 검토한 주요 대안: property bag을 factory로 전달, visible getter clone, PlainTime.with 일반화, 타입별 partial reader와 hidden-record resolver를 검토했다.
+  - 선택한 방식: shared partial-object guard 뒤 타입별 ordered reader를 사용하고 copied receiver fields와 partial fields를 ISO merge한 뒤 method-Realm allocator로 canonical reference record를 만든다.
+  - 다른 대안 대신 이 방식을 선택한 이유: factory는 calendar를 재관찰하고 완전한 입력을 요구하며 visible clone은 hidden reference와 getter 비관찰을 깨뜨린다. 타입별 reader만 MonthDay의 overflow-only year와 YearMonth의 day 미관찰을 정확히 보존한다.
+  - 장점, 단점 및 영향: brand/error precedence, monthCode semantic validation timing, arbitrary-size leap year, subclass/cross-Realm result, abrupt identity, GC/OOM/fuel, installer rollback과 exact 43/0 경계가 재현된다. non-ISO CalendarMergeFields와 add/subtract는 후속 단위다.
+
 - Added Realm-local, non-constructable, length-0
   `Temporal.PlainMonthDay.prototype.toString` and
   `Temporal.PlainYearMonth.prototype.toString`. Both methods brand before
@@ -17,10 +40,10 @@
   coverage is exact **33/0/0**. The
   formatter also resolves all **11** core and **49** factory complements, so
   those complete boundaries are now **104/0/0** and **123/0/0**. A frozen
-  128-file dependency diagnostic reports **93 pass / 35 fail**; the failures
-  belong to independently unimplemented sibling `with`, `add`, and
-  `subtract`. The installer now reserves 169 maximum live pins across 170
-  allocations.
+  128-file dependency diagnostic initially reported **93 pass / 35 fail**.
+  The later `with` unit moves it to **106 pass / 22 fail**; remaining failures
+  belong to independently unimplemented `add` and `subtract`. The installer
+  at formatter landing reserved 169 maximum live pins across 170 allocations.
 
   [Decision Log]
   - 목적과 의도: 두 partial-date formatter를 reference component, calendar annotation, options observation, Realm/resource 계약까지 완전한 독립 경계로 구현한다.
@@ -28,7 +51,7 @@
   - 검토한 주요 대안: helper 전용 stub, visible getter 기반 직렬화, PlainDate formatter 재호출, 두 hidden record 전용 formatter와 공용 calendarName option reader를 검토했다.
   - 선택한 방식: brand를 먼저 확인하고 rooted options에서 calendarName만 명세 순서로 변환한 뒤 copied hidden slots를 직접 포맷한다. exact direct manifest와 128-file transition/blocker 진단을 별도로 고정한다.
   - 다른 대안 대신 이 방식을 선택한 이유: stub은 옵션과 annotation 지원을 거짓 주장하고 public/PlainDate 경로는 receiver getter, constructor, reference component를 잘못 관찰한다. hidden direct formatter만 타입별 축약형과 annotated full reference date를 동시에 보존한다.
-  - 장점, 단점 및 영향: extended year, always/critical annotation, brand-first error, cross-Realm ownership, getter/coercion abrupt identity, GC/OOM/fuel, no-result-heap allocation과 exact 33/104/123 경계가 재현된다. 남은 35개는 formatter 결함이 아니라 with/add/subtract 소유다.
+  - 장점, 단점 및 영향: extended year, always/critical annotation, brand-first error, cross-Realm ownership, getter/coercion abrupt identity, GC/OOM/fuel, no-result-heap allocation과 exact 33/104/123 경계가 재현된다. 후속 with 이후 남은 22개는 formatter 결함이 아니라 add/subtract 소유다.
 
 - Added Realm-local static `Temporal.PlainMonthDay.from` and
   `Temporal.PlainYearMonth.from`. Both factories clone branded hidden records

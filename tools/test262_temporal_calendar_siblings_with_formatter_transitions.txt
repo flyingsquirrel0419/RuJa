@@ -1,0 +1,14 @@
+# with assertions unblocked by the partial-date formatters.
+built-ins/Temporal/PlainMonthDay/prototype/with/basic.js
+built-ins/Temporal/PlainMonthDay/prototype/with/copy-properties-not-undefined.js
+built-ins/Temporal/PlainMonthDay/prototype/with/iso-year-used-only-for-overflow.js
+built-ins/Temporal/PlainMonthDay/prototype/with/options-object.js
+built-ins/Temporal/PlainMonthDay/prototype/with/overflow-undefined.js
+built-ins/Temporal/PlainMonthDay/prototype/with/overflow-wrong-type.js
+built-ins/Temporal/PlainMonthDay/prototype/with/subclassing-ignored.js
+built-ins/Temporal/PlainYearMonth/prototype/with/basic.js
+built-ins/Temporal/PlainYearMonth/prototype/with/copy-properties-not-undefined.js
+built-ins/Temporal/PlainYearMonth/prototype/with/options-object.js
+built-ins/Temporal/PlainYearMonth/prototype/with/overflow-undefined.js
+built-ins/Temporal/PlainYearMonth/prototype/with/overflow-wrong-type.js
+built-ins/Temporal/PlainYearMonth/prototype/with/subclassing-ignored.js

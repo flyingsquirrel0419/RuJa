@@ -24,6 +24,9 @@ def _read_manifest(name):
 CORE_TRANSITIONS = _read_manifest(
     "test262_temporal_calendar_siblings_core_formatter_transitions.txt"
 )
+WITH_TRANSITIONS = _read_manifest(
+    "test262_temporal_calendar_siblings_with_formatter_transitions.txt"
+)
 BLOCKERS = _read_manifest(
     "test262_temporal_calendar_siblings_formatter_downstream_blockers.txt"
 )
@@ -31,12 +34,13 @@ PASSING = (
     TEMPORAL_CALENDAR_SIBLINGS_TO_STRING_FILES
     | CORE_TRANSITIONS
     | TEMPORAL_CALENDAR_SIBLINGS_FROM_FORMATTER_TRANSITIONS
+    | WITH_TRANSITIONS
 )
 SURFACE = PASSING | BLOCKERS
 _SHARED_SHOULD_SKIP = test262_runner.should_skip
 
-if len(PASSING) != 93 or len(BLOCKERS) != 35 or len(SURFACE) != 128:
-    raise RuntimeError("Temporal calendar sibling formatter surface must be 93 pass / 35 fail")
+if len(PASSING) != 106 or len(BLOCKERS) != 22 or len(SURFACE) != 128:
+    raise RuntimeError("Temporal calendar sibling formatter surface must be 106 pass / 22 fail")
 
 
 def _relative(path):

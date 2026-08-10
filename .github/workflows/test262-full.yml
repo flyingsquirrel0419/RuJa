@@ -204,6 +204,12 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_calendar_siblings_to_string_manifest_is_exact_live_and_shared
           -v
+      - name: Verify exact Temporal calendar sibling with admission
+        working-directory: tools
+        run: >-
+          TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_calendar_siblings_with_manifest_is_exact_live_disjoint_and_shared
+          -v
       - name: Verify Temporal calendar sibling formatter surface
         working-directory: tools
         run: >-

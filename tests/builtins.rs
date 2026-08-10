@@ -26892,6 +26892,162 @@ fn temporal_plain_time_round_uses_method_realm_and_intrinsic_prototype() {
 }
 
 #[test]
+fn temporal_partial_date_with_merges_fields_and_applies_iso_overflow() {
+    assert_eq!(
+        run(r#"
+            var leap = new Temporal.PlainMonthDay(2, 29, 'iso8601', 1972);
+            var common = leap.with({ year: -999999 });
+            var stillLeap = leap.with({ year: -1000000 });
+            var rejected = false;
+            try { leap.with({ year: -999999 }, { overflow: 'reject' }); }
+            catch (error) { rejected = error instanceof RangeError; }
+            var moved = leap.with({ monthCode: 'M04', day: 31 });
+            var noncanonicalReceiver = new Temporal.PlainMonthDay(1, 31, 'iso8601', 2001);
+            var canonicalOverflow = noncanonicalReceiver.with({ month: 2 });
+            var mismatch = false;
+            try { leap.with({ month: 3, monthCode: 'M04' }); }
+            catch (error) { mismatch = error instanceof RangeError; }
+
+            var yearMonth = new Temporal.PlainYearMonth(2019, 10, 'iso8601', 27);
+            var changedYear = yearMonth.with({ year: 2020 });
+            var constrainedMonth = yearMonth.with({ month: 99 });
+            var changedCode = yearMonth.with({ monthCode: 'M02' });
+            var yearMonthRejected = false;
+            try { yearMonth.with({ month: 13 }, { overflow: 'reject' }); }
+            catch (error) { yearMonthRejected = error instanceof RangeError; }
+            [
+              common.toString({ calendarName: 'always' }),
+              stillLeap.toString(), rejected, moved.toString(), canonicalOverflow.toString(), mismatch,
+              changedYear.toString({ calendarName: 'always' }),
+              constrainedMonth.toString(), changedCode.toString(), yearMonthRejected
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "1972-02-28[u-ca=iso8601]|02-29|true|04-30|02-29|true|2020-10-01[u-ca=iso8601]|2019-12|2019-02|true"
+        ))
+    );
+}
+
+#[test]
+fn temporal_partial_date_with_observes_fields_before_options_and_brand_first() {
+    assert_eq!(
+        run(r#"
+            var monthDay = new Temporal.PlainMonthDay(5, 2);
+            var monthDayOrder = [];
+            var monthDayFields = {};
+            for (var key of ['calendar', 'timeZone']) {
+              Object.defineProperty(monthDayFields, key, {
+                get: (function(name) { return function() {
+                  monthDayOrder.push('get ' + name); return undefined;
+                }; })(key)
+              });
+            }
+            for (var key of ['day', 'month', 'year']) {
+              Object.defineProperty(monthDayFields, key, {
+                get: (function(name) { return function() {
+                  monthDayOrder.push('get ' + name);
+                  return { valueOf: function() {
+                    monthDayOrder.push('coerce ' + name); return 1.7;
+                  }};
+                }; })(key)
+              });
+            }
+            Object.defineProperty(monthDayFields, 'monthCode', { get: function() {
+              monthDayOrder.push('get monthCode');
+              return { toString: function() {
+                monthDayOrder.push('coerce monthCode'); return 'M01';
+              }};
+            }});
+            var options = { get overflow() {
+              monthDayOrder.push('get overflow');
+              return { toString: function() {
+                monthDayOrder.push('coerce overflow'); return 'constrain';
+              }};
+            }};
+            var monthDayResult = monthDay.with(monthDayFields, options);
+            var monthDayBrandObserved = false;
+            try { Temporal.PlainMonthDay.prototype.with.call({}, {
+              get calendar() { monthDayBrandObserved = true; return undefined; }, day: 1
+            }); } catch (error) {}
+
+            var yearMonth = new Temporal.PlainYearMonth(2000, 5);
+            var dayObserved = false;
+            var yearMonthResult = yearMonth.with({
+              month: 8,
+              get day() { dayObserved = true; throw new Error('unreachable'); }
+            });
+            var temporalRejected = false;
+            try { yearMonth.with(new Temporal.PlainYearMonth(2001, 1)); }
+            catch (error) { temporalRejected = error instanceof TypeError; }
+            var marker = {};
+            var markerPreserved = false;
+            try { monthDay.with({ get day() { throw marker; } }); }
+            catch (error) { markerPreserved = error === marker; }
+            [
+              monthDayResult.toString(), monthDayOrder.join(','), monthDayBrandObserved,
+              yearMonthResult.toString(), dayObserved, temporalRejected, markerPreserved
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "01-01|get calendar,get timeZone,get day,coerce day,get month,coerce month,get monthCode,coerce monthCode,get year,coerce year,get overflow,coerce overflow|false|2000-08|false|true|true"
+        ))
+    );
+}
+
+#[test]
+fn temporal_partial_date_with_uses_method_realm_and_intrinsic_prototype() {
+    assert_eq!(
+        run(r#"
+            class DerivedMonthDay extends Temporal.PlainMonthDay {}
+            class DerivedYearMonth extends Temporal.PlainYearMonth {}
+            var derivedMonthDay = new DerivedMonthDay(5, 2).with({ day: 3 });
+            var derivedYearMonth = new DerivedYearMonth(2000, 5).with({ month: 6 });
+            var other = $262.createRealm().global;
+            var foreignMonthDayWith = other.Temporal.PlainMonthDay.prototype.with;
+            var foreignYearMonthWith = other.Temporal.PlainYearMonth.prototype.with;
+            var foreignMonthDay = foreignMonthDayWith.call(
+              new Temporal.PlainMonthDay(5, 2), { day: 3 }
+            );
+            var foreignYearMonth = foreignYearMonthWith.call(
+              new Temporal.PlainYearMonth(2000, 5), { month: 6 }
+            );
+            var foreignType = false;
+            try { foreignMonthDayWith.call({}, { day: 3 }); } catch (error) {
+              foreignType = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            var foreignRange = false;
+            try { foreignYearMonthWith.call(
+              new Temporal.PlainYearMonth(2000, 5), { month: 13 }, { overflow: 'reject' }
+            ); } catch (error) {
+              foreignRange = error instanceof other.RangeError && !(error instanceof RangeError);
+            }
+            var monthDayConstruct = false;
+            var yearMonthConstruct = false;
+            try { new Temporal.PlainMonthDay.prototype.with({ day: 3 }); }
+            catch (error) { monthDayConstruct = error instanceof TypeError; }
+            try { new Temporal.PlainYearMonth.prototype.with({ month: 6 }); }
+            catch (error) { yearMonthConstruct = error instanceof TypeError; }
+            [
+              Temporal.PlainMonthDay.prototype.with.name,
+              Temporal.PlainMonthDay.prototype.with.length,
+              Temporal.PlainYearMonth.prototype.with.name,
+              Temporal.PlainYearMonth.prototype.with.length,
+              Object.getPrototypeOf(derivedMonthDay) === Temporal.PlainMonthDay.prototype,
+              !(derivedMonthDay instanceof DerivedMonthDay),
+              Object.getPrototypeOf(derivedYearMonth) === Temporal.PlainYearMonth.prototype,
+              !(derivedYearMonth instanceof DerivedYearMonth),
+              Object.getPrototypeOf(foreignMonthDay) === other.Temporal.PlainMonthDay.prototype,
+              Object.getPrototypeOf(foreignYearMonth) === other.Temporal.PlainYearMonth.prototype,
+              foreignType, foreignRange, monthDayConstruct, yearMonthConstruct
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "with|1|with|1|true|true|true|true|true|true|true|true|true|true"
+        ))
+    );
+}
+
+#[test]
 fn temporal_plain_time_with_merges_partial_fields_and_regulates_overflow() {
     assert_eq!(
         run(r#"

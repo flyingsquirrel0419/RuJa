@@ -5020,7 +5020,7 @@ getters, and `valueOf`; PlainYearMonth uses prototype, constructor, ten
 getters, and `valueOf`. `Temporal.Now` and `%Temporal%` were therefore
 allocations 165 and 166, with 165 maximum live pins before static factories. The exhaustive allocation
 sweep runs on an explicit 8 MiB test thread because debug-build stack frames
-for 149 repeated installer rollback attempts exceed Rust's default test-thread
+for 155 repeated installer rollback attempts exceed Rust's default test-thread
 stack; production installation behavior is unchanged.
 
 Calendar extraction is centralized over all five calendar-bearing hidden
@@ -5096,6 +5096,36 @@ pins.
 - 선택한 방식: brand/copy 후 options object를 pin하고 calendarName 하나만 변환한다. 타입별 formatter는 copied fields와 shared year/annotation primitives만 사용해 Arc String을 publish한다.
 - 다른 대안 대신 이 방식을 선택한 이유: 최소 문자열은 always/critical/reference semantics를 잃고 visible/callback 경로는 명세에 없는 property 및 receiver 종류를 관찰한다. pure formatter는 no-result-GC와 deterministic fuel 경계를 유지한다.
 - 장점, 단점 및 영향: brand-first order, abrupt identity, cross-Realm errors, extended year, hidden reference output, allocation rollback과 exact Test262 33/104/123가 고정된다. non-ISO calendar construction 및 with/add/subtract는 별도 경계다.
+```
+
+Both partial-date prototypes also own a Realm-local, non-constructable,
+length-1 `with`. Receiver branding precedes every input observation. A shared
+partial-object guard rejects primitives, the six Temporal date/time brands,
+and non-undefined `calendar` or `timeZone` properties in that order. Dedicated
+readers then convert MonthDay `day, month, monthCode, year` or YearMonth
+`month, monthCode, year`; YearMonth never reads `day`. The item and options are
+pinned together across getters, coercion, GC, and abrupt completion. Options
+object validation and `overflow` conversion occur only after all partial-field
+work.
+
+ISO merge operates on copied hidden records without public accessors. A
+partial numeric month invalidates the receiver monthCode, and a partial
+monthCode invalidates the receiver month. MonthDay defaults overflow-year
+calculation to 1972 regardless of a noncanonical receiver reference year,
+uses an explicit arbitrary-size year only for leap/overflow, and publishes
+reference year 1972. YearMonth never retains the receiver reference day and
+publishes day 1. Both create a fresh object with the method Realm intrinsic
+prototype. The functions are installer allocations 154 and 170; complete
+installation uses 172 allocations and 171 maximum live pins.
+
+```text
+[Decision Log]
+- 목적과 의도: partial-date with의 hidden merge와 observable/resource 경계를 complete direct directory 수준으로 구현한다.
+- 기존 구현 및 제약 조건: factory converter는 complete input과 calendar extraction을 소유해 partial merge에 재사용하면 calendar getter 중복, required-field 오류, reference component drift가 생긴다. 현재 생성 가능한 calendar는 ISO뿐이다.
+- 검토한 주요 대안: factory 왕복, receiver public getter clone, PlainTime partial struct 일반화, shared guard와 타입별 partial/resolve 단계를 검토했다.
+- 선택한 방식: partial-object 검증만 공유하고 타입별 ordered reader와 ISO resolver를 둔다. copied slots는 fallback으로만 쓰며 reference year/day는 calendar field preparation 규칙에 따라 canonicalize한다.
+- 다른 대안 대신 이 방식을 선택한 이유: factory/visible 경로는 명세에 없는 관찰과 Realm allocation을 만들고 범용 partial struct는 MonthDay year의 overflow-only 의미와 YearMonth day 미관찰을 흐린다.
+- 장점, 단점 및 영향: exact getter/options order, error precedence, huge-year leap overflow, method-Realm errors/results, GC/OOM/fuel 및 full installer rollback이 고정된다. non-ISO CalendarMergeFields와 arithmetic은 후속 calendar subsystem 책임이다.
 ```
 
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)
