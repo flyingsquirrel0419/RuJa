@@ -27048,6 +27048,110 @@ fn temporal_partial_date_with_uses_method_realm_and_intrinsic_prototype() {
 }
 
 #[test]
+fn temporal_plain_year_month_add_and_subtract_balance_year_month_units() {
+    assert_eq!(
+        run(r#"
+            var base = new Temporal.PlainYearMonth(1994, 11, 'iso8601', 27);
+            var duration = new Temporal.Duration(18, 7);
+            var reads = 0;
+            for (var key of ['years', 'months', 'weeks', 'days', 'hours', 'minutes', 'seconds', 'milliseconds', 'microseconds', 'nanoseconds']) {
+              Object.defineProperty(duration, key, {
+                get: function () { reads++; throw new Error('hidden getter observed'); }
+              });
+            }
+            var lowerUnit = false;
+            try { base.add({ days: 1 }); } catch (error) {
+              lowerUnit = error instanceof RangeError;
+            }
+            var minimumReceiver = false;
+            try { new Temporal.PlainYearMonth(-271821, 4).add(new Temporal.Duration()); }
+            catch (error) { minimumReceiver = error instanceof RangeError; }
+            [
+              base.add(duration).toString({ calendarName: 'always' }),
+              new Temporal.PlainYearMonth(2013, 6).subtract(duration).toString(),
+              new Temporal.PlainYearMonth(1970, 1).add('P3285488M').toString(),
+              new Temporal.PlainYearMonth(1970, 1).subtract('P3285488M').toString(),
+              new Temporal.PlainYearMonth(275760, 9).add({ months: -1 }).toString(),
+              new Temporal.PlainYearMonth(-271821, 5).subtract({ months: -1 }).toString(),
+              lowerUnit, minimumReceiver, reads
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "2013-06-01[u-ca=iso8601]|1994-11|+275760-09|-271821-05|+275760-08|-271821-06|true|true|0"
+        ))
+    );
+}
+
+#[test]
+fn temporal_plain_year_month_arithmetic_observes_order_and_method_realm() {
+    assert_eq!(
+        run(r#"
+            var order = [];
+            var fields = {};
+            for (var key of ['days', 'hours', 'microseconds', 'milliseconds', 'minutes', 'months', 'nanoseconds', 'seconds', 'weeks', 'years']) {
+              Object.defineProperty(fields, key, {
+                get: (function (name) { return function () {
+                  order.push('get ' + name);
+                  return { valueOf: function () { order.push('coerce ' + name); return 0; } };
+                }; })(key)
+              });
+            }
+            var options = { get overflow() {
+              order.push('get overflow');
+              return { toString: function () {
+                order.push('coerce overflow'); return 'constrain';
+              } };
+            } };
+            var value = new Temporal.PlainYearMonth(2000, 5);
+            value.add(fields, options);
+            var brandObserved = false;
+            try { Temporal.PlainYearMonth.prototype.add.call({}, {
+              get years() { brandObserved = true; return 1; }
+            }); } catch (error) {}
+            var optionsBeforeValidation = false;
+            try { value.subtract({ weeks: 1 }, {
+              get overflow() { optionsBeforeValidation = true; return 'reject'; }
+            }); } catch (error) {}
+
+            class Derived extends Temporal.PlainYearMonth {}
+            var derived = new Derived(2000, 5).add({ months: 1 });
+            var other = $262.createRealm().global;
+            var foreignSubtract = other.Temporal.PlainYearMonth.prototype.subtract;
+            var foreignResult = foreignSubtract.call(value, { months: 1 });
+            var foreignType = false;
+            var foreignRange = false;
+            try { foreignSubtract.call({}, { months: 1 }); } catch (error) {
+              foreignType = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            try { foreignSubtract.call(value, { days: 1 }); } catch (error) {
+              foreignRange = error instanceof other.RangeError && !(error instanceof RangeError);
+            }
+            var addConstructable = true;
+            var subtractConstructable = true;
+            try { new Temporal.PlainYearMonth.prototype.add({ months: 1 }); }
+            catch (error) { addConstructable = false; }
+            try { new Temporal.PlainYearMonth.prototype.subtract({ months: 1 }); }
+            catch (error) { subtractConstructable = false; }
+            [
+              order.join(','), brandObserved, optionsBeforeValidation,
+              Temporal.PlainYearMonth.prototype.add.name,
+              Temporal.PlainYearMonth.prototype.add.length,
+              Temporal.PlainYearMonth.prototype.subtract.name,
+              Temporal.PlainYearMonth.prototype.subtract.length,
+              derived.toString(), Object.getPrototypeOf(derived) === Temporal.PlainYearMonth.prototype,
+              !(derived instanceof Derived),
+              foreignResult.toString(),
+              Object.getPrototypeOf(foreignResult) === other.Temporal.PlainYearMonth.prototype,
+              foreignType, foreignRange, addConstructable, subtractConstructable
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "get days,coerce days,get hours,coerce hours,get microseconds,coerce microseconds,get milliseconds,coerce milliseconds,get minutes,coerce minutes,get months,coerce months,get nanoseconds,coerce nanoseconds,get seconds,coerce seconds,get weeks,coerce weeks,get years,coerce years,get overflow,coerce overflow|false|true|add|1|subtract|1|2000-06|true|true|2000-04|true|true|true|false|false"
+        ))
+    );
+}
+
+#[test]
 fn temporal_plain_time_with_merges_partial_fields_and_regulates_overflow() {
     assert_eq!(
         run(r#"

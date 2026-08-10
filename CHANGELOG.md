@@ -5,6 +5,27 @@
 ### Changed
 
 - Added Realm-local, non-constructable, length-1
+  `Temporal.PlainYearMonth.prototype.add` and `subtract`. Both methods brand
+  before observing the jointly rooted duration-like and options arguments,
+  reuse complete Duration conversion, negate only after conversion for
+  `subtract`, read and validate `overflow` before lower-unit rejection, and
+  perform checked ISO year/month arithmetic from canonical day 1. Results
+  always store reference day 1 and use the method Realm intrinsic prototype;
+  non-ISO records fail closed until calendar arithmetic exists. Pinned direct
+  Test262 coverage is **71 pass / 2 fail / 73**, where both failures depend
+  only on the separately missing `PlainYearMonth.prototype.equals`. All 22
+  former formatter blockers now pass, making that frozen surface **128/128**.
+  The installer reserves 173 maximum live pins across 174 allocations.
+
+  [Decision Log]
+  - 목적과 의도: PlainYearMonth year/month 산술을 conversion, observable order, range, Realm 및 sandbox resource 경계까지 구현하고 실제 direct directory를 숨김없이 계상한다.
+  - 기존 구현 및 제약 조건: Duration converter와 checked ISO date add는 있었지만 YearMonth public methods가 없었고 formatter 진단 22개가 absent method에서 멈췄다. non-ISO calendar backend와 YearMonth.equals는 아직 없다.
+  - 검토한 주요 대안: 22개 formatter fixture만 지원, month 반복 루프, public getter/constructor 왕복, 기존 exact Duration 및 ISO date helper를 조합한 complete method를 검토했다.
+  - 선택한 방식: receiver brand 뒤 duration/options를 함께 pin하고 complete Duration conversion, overflow conversion, lower-unit 검증, day-1 checked month-index arithmetic, method-Realm allocation을 순서대로 수행한다. 71개는 admit하고 equals 의존 2개는 exact blocker로 유지한다.
+  - 다른 대안 대신 이 방식을 선택한 이유: 22개 전용 구현은 direct 73개 계약을 숨기고 반복 루프는 최대 3,285,488개월 입력에 부적합하다. public 객체 왕복은 getter, subclass, reference day, Realm을 잘못 관찰한다.
+  - 장점, 단점 및 영향: maximum duration, endpoint month, canonical reference day, brand/order, GC/OOM/fuel, cross-Realm result/error와 full installer rollback이 재현된다. ISO overflow는 관찰·검증되지만 day-1 연산 결과에는 차이가 없고 non-ISO는 조용한 오계산 대신 거부된다.
+
+- Added Realm-local, non-constructable, length-1
   `Temporal.PlainMonthDay.prototype.with` and
   `Temporal.PlainYearMonth.prototype.with`. Both methods brand first, reject
   branded date/time inputs and observable `calendar`/`timeZone` fields, read

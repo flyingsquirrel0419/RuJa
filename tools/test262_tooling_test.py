@@ -18,6 +18,7 @@ import test262_temporal_calendar_siblings_from_diagnostic as temporal_sibling_fr
 import test262_temporal_calendar_siblings_formatter_surface_diagnostic as temporal_sibling_formatter_diagnostic
 import test262_temporal_calendar_siblings_to_string_diagnostic as temporal_sibling_to_string_diagnostic
 import test262_temporal_calendar_siblings_with_diagnostic as temporal_sibling_with_diagnostic
+import test262_temporal_plain_year_month_arithmetic_diagnostic as temporal_year_month_arithmetic_diagnostic
 import analyze_failures
 from test262_class_computed_field_admission import CLASS_COMPUTED_FIELD_FILES
 from test262_class_default_parameter_admission import CLASS_DEFAULT_PARAMETER_FILES
@@ -310,6 +311,19 @@ from test262_temporal_calendar_siblings_with_admission import (
     TEMPORAL_CALENDAR_SIBLINGS_WITH_FLAGS,
     TEMPORAL_CALENDAR_SIBLINGS_WITH_INCLUDES,
     TEMPORAL_CALENDAR_SIBLINGS_WITH_NEGATIVE,
+)
+from test262_temporal_plain_year_month_arithmetic_admission import (
+    TEMPORAL_PLAIN_YEAR_MONTH_ARITHMETIC_BLOCKERS,
+    TEMPORAL_PLAIN_YEAR_MONTH_ARITHMETIC_FEATURES,
+    TEMPORAL_PLAIN_YEAR_MONTH_ARITHMETIC_FILES,
+    TEMPORAL_PLAIN_YEAR_MONTH_ARITHMETIC_FLAGS,
+    TEMPORAL_PLAIN_YEAR_MONTH_ARITHMETIC_INCLUDES,
+    TEMPORAL_PLAIN_YEAR_MONTH_ARITHMETIC_NEGATIVE,
+    TEMPORAL_PLAIN_YEAR_MONTH_ARITHMETIC_SURFACE,
+    TEMPORAL_PLAIN_YEAR_MONTH_ARITHMETIC_SURFACE_FEATURES,
+    TEMPORAL_PLAIN_YEAR_MONTH_ARITHMETIC_SURFACE_FLAGS,
+    TEMPORAL_PLAIN_YEAR_MONTH_ARITHMETIC_SURFACE_INCLUDES,
+    TEMPORAL_PLAIN_YEAR_MONTH_ARITHMETIC_SURFACE_NEGATIVE,
 )
 from test262_temporal_plain_date_from_admission import (
     TEMPORAL_PLAIN_DATE_FROM_FEATURES,
@@ -7118,19 +7132,172 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
             finally:
                 temporal_sibling_with_diagnostic.test262_runner.TEST262 = original_root
 
+    def test_temporal_plain_year_month_arithmetic_surface_is_exact_live_and_shared(self):
+        files = TEMPORAL_PLAIN_YEAR_MONTH_ARITHMETIC_FILES
+        blockers = temporal_year_month_arithmetic_diagnostic.BLOCKERS
+        surface = temporal_year_month_arithmetic_diagnostic.SURFACE
+        self.assertEqual(blockers, TEMPORAL_PLAIN_YEAR_MONTH_ARITHMETIC_BLOCKERS)
+        self.assertEqual(surface, TEMPORAL_PLAIN_YEAR_MONTH_ARITHMETIC_SURFACE)
+        self.assertEqual(len(files), 71)
+        self.assertEqual(len(blockers), 2)
+        self.assertEqual(len(surface), 73)
+        self.assertTrue(files.isdisjoint(blockers))
+        for metadata_map in (
+            TEMPORAL_PLAIN_YEAR_MONTH_ARITHMETIC_FEATURES,
+            TEMPORAL_PLAIN_YEAR_MONTH_ARITHMETIC_INCLUDES,
+            TEMPORAL_PLAIN_YEAR_MONTH_ARITHMETIC_FLAGS,
+            TEMPORAL_PLAIN_YEAR_MONTH_ARITHMETIC_NEGATIVE,
+        ):
+            self.assertEqual(set(metadata_map), set(files))
+        for metadata_map in (
+            TEMPORAL_PLAIN_YEAR_MONTH_ARITHMETIC_SURFACE_FEATURES,
+            TEMPORAL_PLAIN_YEAR_MONTH_ARITHMETIC_SURFACE_INCLUDES,
+            TEMPORAL_PLAIN_YEAR_MONTH_ARITHMETIC_SURFACE_FLAGS,
+            TEMPORAL_PLAIN_YEAR_MONTH_ARITHMETIC_SURFACE_NEGATIVE,
+        ):
+            self.assertEqual(set(metadata_map), set(surface))
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        corpus_required = "TEST262" in os.environ
+        live_files = set()
+        try:
+            for method in ("add", "subtract"):
+                directory = (
+                    test_root
+                    / "built-ins/Temporal/PlainYearMonth/prototype"
+                    / method
+                )
+                if not directory.is_dir():
+                    if corpus_required:
+                        raise FileNotFoundError(directory)
+                    live_files = None
+                    break
+                live_files.update(
+                    path.relative_to(test_root).as_posix()
+                    for path in directory.glob("*.js")
+                    if "_FIXTURE" not in path.name
+                )
+        except OSError:
+            if corpus_required:
+                raise
+            live_files = None
+        if live_files is not None:
+            self.assertEqual(live_files, set(surface))
+            for relative in surface:
+                path = test_root / relative
+                metadata = test262_runner.parse_meta(path.read_text())
+                for key, expected in (
+                    ("features", TEMPORAL_PLAIN_YEAR_MONTH_ARITHMETIC_SURFACE_FEATURES[relative]),
+                    ("includes", TEMPORAL_PLAIN_YEAR_MONTH_ARITHMETIC_SURFACE_INCLUDES[relative]),
+                    ("flags", TEMPORAL_PLAIN_YEAR_MONTH_ARITHMETIC_SURFACE_FLAGS[relative]),
+                ):
+                    self.assertEqual(frozenset(metadata.get(key, [])), expected, relative)
+                self.assertEqual(
+                    metadata.get("negative"),
+                    TEMPORAL_PLAIN_YEAR_MONTH_ARITHMETIC_SURFACE_NEGATIVE[relative],
+                    relative,
+                )
+                for tool in (test262_runner, test262_analyze):
+                    if relative in files:
+                        self.assertTrue(tool.temporal_plain_year_month_arithmetic_path(path))
+                        self.assertEqual(
+                            tool.temporal_plain_year_month_arithmetic_features(path),
+                            TEMPORAL_PLAIN_YEAR_MONTH_ARITHMETIC_FEATURES[relative],
+                        )
+                        self.assertFalse(tool.should_skip(metadata, path), relative)
+                    else:
+                        self.assertFalse(tool.temporal_plain_year_month_arithmetic_path(path))
+                        self.assertEqual(
+                            tool.temporal_plain_year_month_arithmetic_features(path), frozenset()
+                        )
+                        self.assertTrue(tool.should_skip(metadata, path), relative)
+
+        tools_dir = Path(__file__).resolve().parent
+        for manifest in tools_dir.glob("test262_*_admission.txt"):
+            if manifest.name == "test262_temporal_plain_year_month_arithmetic_admission.txt":
+                continue
+            existing = {
+                line
+                for raw_line in manifest.read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            self.assertTrue(surface.isdisjoint(existing), manifest.name)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = root / "test/built-ins/Temporal/PlainYearMonth/prototype/add/future.js"
+            outside = root / "test/built-ins/Other/prototype/add/basic.js"
+            for tool in (test262_runner, test262_analyze):
+                self.assertFalse(tool.temporal_plain_year_month_arithmetic_path(None))
+                self.assertFalse(tool.temporal_plain_year_month_arithmetic_path(object()))
+                self.assertEqual(
+                    tool.temporal_plain_year_month_arithmetic_features(None), frozenset()
+                )
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, features in TEMPORAL_PLAIN_YEAR_MONTH_ARITHMETIC_FEATURES.items():
+                        path = root / "test" / relative
+                        self.assertTrue(tool.temporal_plain_year_month_arithmetic_path(path))
+                        self.assertEqual(
+                            tool.temporal_plain_year_month_arithmetic_features(path), features
+                        )
+                        self.assertFalse(tool.should_skip({"features": sorted(features)}, path))
+                    for path in (future, outside):
+                        self.assertFalse(tool.temporal_plain_year_month_arithmetic_path(path))
+                        self.assertEqual(
+                            tool.temporal_plain_year_month_arithmetic_features(path), frozenset()
+                        )
+                        self.assertTrue(tool.should_skip({"features": ["Temporal"]}, path))
+                finally:
+                    tool.TEST262 = original_root
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "test").mkdir()
+            original_root = temporal_year_month_arithmetic_diagnostic.test262_runner.TEST262
+            temporal_year_month_arithmetic_diagnostic.test262_runner.TEST262 = str(root)
+            arguments = sorted(surface)
+            try:
+                def expected_status(path):
+                    relative = path.relative_to(root / "test").as_posix()
+                    return "fail" if relative in blockers else "pass"
+
+                with patch.object(
+                    temporal_year_month_arithmetic_diagnostic.test262_runner,
+                    "run_test",
+                    side_effect=expected_status,
+                ):
+                    temporal_year_month_arithmetic_diagnostic.verify_expected_results(arguments)
+                    for invalid in (
+                        arguments[:-1],
+                        arguments[:-1] + [arguments[0]],
+                        arguments + ["built-ins/Temporal/Other/missing.js"],
+                    ):
+                        with self.assertRaisesRegex(RuntimeError, "exact frozen surface"):
+                            temporal_year_month_arithmetic_diagnostic.verify_expected_results(invalid)
+                with patch.object(
+                    temporal_year_month_arithmetic_diagnostic.test262_runner,
+                    "run_test",
+                    return_value="fail",
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "results drifted"):
+                        temporal_year_month_arithmetic_diagnostic.verify_expected_results(arguments)
+            finally:
+                temporal_year_month_arithmetic_diagnostic.test262_runner.TEST262 = original_root
+
     def test_temporal_calendar_siblings_formatter_surface_is_exact(self):
         passing = temporal_sibling_formatter_diagnostic.PASSING
-        blockers = temporal_sibling_formatter_diagnostic.BLOCKERS
         surface = temporal_sibling_formatter_diagnostic.SURFACE
         with_transitions = temporal_sibling_formatter_diagnostic.WITH_TRANSITIONS
-        self.assertEqual(len(passing), 106)
-        self.assertEqual(len(blockers), 22)
+        arithmetic_transitions = temporal_sibling_formatter_diagnostic.ARITHMETIC_TRANSITIONS
+        self.assertEqual(len(passing), 128)
         self.assertEqual(len(surface), 128)
         self.assertEqual(len(with_transitions), 13)
+        self.assertEqual(len(arithmetic_transitions), 22)
         self.assertTrue(with_transitions <= TEMPORAL_CALENDAR_SIBLINGS_WITH_FILES)
-        self.assertTrue(with_transitions.isdisjoint(blockers))
-        self.assertTrue(passing.isdisjoint(blockers))
-        self.assertEqual(surface, passing | blockers)
+        self.assertTrue(arithmetic_transitions <= TEMPORAL_PLAIN_YEAR_MONTH_ARITHMETIC_FILES)
+        self.assertEqual(surface, passing)
 
         test_root = Path(test262_runner.TEST262) / "test"
         corpus_required = "TEST262" in os.environ
@@ -7168,14 +7335,10 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
             temporal_sibling_formatter_diagnostic.test262_runner.TEST262 = str(root)
             arguments = sorted(surface)
             try:
-                def expected_status(path):
-                    relative = path.relative_to(root / "test").as_posix()
-                    return "fail" if relative in blockers else "pass"
-
                 with patch.object(
                     temporal_sibling_formatter_diagnostic.test262_runner,
                     "run_test",
-                    side_effect=expected_status,
+                    return_value="pass",
                 ):
                     temporal_sibling_formatter_diagnostic.verify_expected_results(arguments)
                     for invalid in (
@@ -7188,7 +7351,7 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                 with patch.object(
                     temporal_sibling_formatter_diagnostic.test262_runner,
                     "run_test",
-                    return_value="pass",
+                    return_value="fail",
                 ):
                     with self.assertRaisesRegex(RuntimeError, "results drifted"):
                         temporal_sibling_formatter_diagnostic.verify_expected_results(arguments)

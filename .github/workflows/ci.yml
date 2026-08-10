@@ -93,6 +93,13 @@ jobs:
             test/built-ins/Temporal/PlainTime
             test/built-ins/Temporal/PlainDate/prototype/toPlainDateTime
             test/built-ins/Temporal/PlainYearMonth
+      - name: Verify live Temporal.PlainYearMonth arithmetic tooling
+        working-directory: tools
+        run: >-
+          TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_year_month_arithmetic_surface_is_exact_live_and_shared
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_calendar_siblings_formatter_surface_is_exact
+          -v
       - name: Run exact Temporal.Duration.prototype.with admission
         run: |
           mapfile -t files < <(
@@ -216,6 +223,22 @@ jobs:
             "${files[@]}" | tee temporal_calendar_siblings_with_result.txt
           grep -q '^RATE=100.0 PASS=43 FAIL=0 SKIP=0 TOTAL=43 RAN=43$' \
             temporal_calendar_siblings_with_result.txt
+      - name: Run exact Temporal.PlainYearMonth arithmetic admission
+        run: |
+          mapfile -t admitted < <(grep -hEv '^(#|$)' \
+            tools/test262_temporal_plain_year_month_arithmetic_admission.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
+            "${admitted[@]}" | tee temporal_plain_year_month_arithmetic_result.txt
+          grep -q '^RATE=100.0 PASS=71 FAIL=0 SKIP=0 TOTAL=71 RAN=71$' \
+            temporal_plain_year_month_arithmetic_result.txt
+          mapfile -t complete < <(grep -hEv '^(#|$)' \
+            tools/test262_temporal_plain_year_month_arithmetic_admission.txt \
+            tools/test262_temporal_plain_year_month_arithmetic_blockers.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_plain_year_month_arithmetic_diagnostic.py \
+            "${complete[@]}" | tee temporal_plain_year_month_arithmetic_diagnostic.txt
+          grep -q '^RATE=97.3 PASS=71 FAIL=2 SKIP=0 TOTAL=73 RAN=73$' \
+            temporal_plain_year_month_arithmetic_diagnostic.txt
       - name: Diagnose complete Temporal calendar sibling formatter surface
         run: |
           mapfile -t files < <(grep -hEv '^(#|$)' \
@@ -223,11 +246,11 @@ jobs:
             tools/test262_temporal_calendar_siblings_core_formatter_transitions.txt \
             tools/test262_temporal_calendar_siblings_from_formatter_transitions.txt \
             tools/test262_temporal_calendar_siblings_with_formatter_transitions.txt \
-            tools/test262_temporal_calendar_siblings_formatter_downstream_blockers.txt)
+            tools/test262_temporal_plain_year_month_arithmetic_formatter_transitions.txt)
           TEST262="$GITHUB_WORKSPACE/test262" \
             python3 tools/test262_temporal_calendar_siblings_formatter_surface_diagnostic.py \
             "${files[@]}" | tee temporal_calendar_siblings_formatter_diagnostic.txt
-          grep -q '^RATE=82.8 PASS=106 FAIL=22 SKIP=0 TOTAL=128 RAN=128$' \
+          grep -q '^RATE=100.0 PASS=128 FAIL=0 SKIP=0 TOTAL=128 RAN=128$' \
             temporal_calendar_siblings_formatter_diagnostic.txt
       - name: Run exact Temporal.PlainTime admissions
         run: |

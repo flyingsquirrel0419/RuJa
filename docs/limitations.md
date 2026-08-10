@@ -67,9 +67,14 @@ The following resource limits are enforced:
   calendar annotation modes, and formats hidden reference year/day records
   without public property access. Realm-local `prototype.with` performs
   ordered partial ISO merge, canonical reference-year/day publication, and
-  constrain/reject overflow without public property access. Equality/comparison, JSON serialization,
+  constrain/reject overflow without public property access. PlainYearMonth
+  `add` and `subtract` convert complete Duration-like inputs, observe validated
+  overflow before rejecting nonzero lower units, perform checked ISO month
+  arithmetic from day 1, and return canonical method-Realm results. Two direct
+  arithmetic fixtures remain gated only because `PlainYearMonth.prototype.equals`
+  is absent. Equality/comparison, JSON serialization,
   date conversion,
-  arithmetic/difference, locale formatting, and non-ISO calendars remain
+  remaining arithmetic/difference, locale formatting, and non-ISO calendars remain
   unsupported.
   Realm-local `%Temporal.PlainTime%` supports six-field hidden-slot
   construction, subclassing, branded accessors, `@@toStringTag`, static
@@ -97,7 +102,8 @@ The following resource limits are enforced:
   minute-precision fixed offsets only. `startOfDay` rejects named zones until
   transition-aware midnight gap/overlap resolution exists. Named IANA time-zone transitions,
   the remaining ZonedDateTime string grammar, the remaining RFC 9557
-  grammar, remaining PlainMonthDay/PlainYearMonth methods beyond `with`, remaining duration
+  grammar, remaining PlainMonthDay/PlainYearMonth methods beyond the supported
+  PlainYearMonth `add`/`subtract`, remaining duration
   operations, and `Temporal.Now` methods remain unsupported.
 
 - **Execution fuel**: `Vm::set_fuel(Some(n))` bounds dispatched opcodes and

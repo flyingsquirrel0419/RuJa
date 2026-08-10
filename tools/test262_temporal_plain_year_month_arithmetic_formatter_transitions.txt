@@ -1,4 +1,4 @@
-# Formatter-dependent assertions still blocked by independently unimplemented add/subtract.
+# Formatter assertions unblocked by PlainYearMonth add/subtract.
 built-ins/Temporal/PlainYearMonth/prototype/add/argument-duration-max.js
 built-ins/Temporal/PlainYearMonth/prototype/add/argument-duration-object.js
 built-ins/Temporal/PlainYearMonth/prototype/add/argument-object.js

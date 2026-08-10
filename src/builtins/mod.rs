@@ -6291,7 +6291,7 @@ pub(crate) fn install_temporal_namespace_in_env(
     global: Option<&Value>,
     object_proto: Value,
 ) -> error::Result<Value> {
-    vm.try_reserve_gc_pins(171)?;
+    vm.try_reserve_gc_pins(173)?;
     let mut pin_count = 0;
     let result = (|| {
         let instant_prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
@@ -7274,6 +7274,21 @@ pub(crate) fn install_temporal_namespace_in_env(
             env,
         )?);
         pin_count += vm.pin(&plain_year_month_with);
+        let plain_year_month_add = Value::Object(vm.new_native_function_in_env_with_gc_retry(
+            "add",
+            temporal_plain_year_month_add,
+            1,
+            env,
+        )?);
+        pin_count += vm.pin(&plain_year_month_add);
+        let plain_year_month_subtract =
+            Value::Object(vm.new_native_function_in_env_with_gc_retry(
+                "subtract",
+                temporal_plain_year_month_subtract,
+                1,
+                env,
+            )?);
+        pin_count += vm.pin(&plain_year_month_subtract);
 
         let Value::Object(instant_constructor_index) = instant_constructor.clone() else {
             unreachable!()
@@ -7876,6 +7891,11 @@ pub(crate) fn install_temporal_namespace_in_env(
                     data_prop(plain_year_month_to_string),
                 );
                 props.insert(PropertyKey::from("with"), data_prop(plain_year_month_with));
+                props.insert(PropertyKey::from("add"), data_prop(plain_year_month_add));
+                props.insert(
+                    PropertyKey::from("subtract"),
+                    data_prop(plain_year_month_subtract),
+                );
                 let mut tag = data_prop(Value::String(Arc::from("Temporal.PlainYearMonth")));
                 tag.writable = false;
                 props.insert(
@@ -11792,6 +11812,73 @@ fn temporal_plain_year_month_with(
     let fields = result?;
     let realm = vm.native_callee_closure().unwrap_or(vm.global);
     create_temporal_plain_year_month_in_realm(vm, fields, calendar_identifier, realm)
+}
+
+fn temporal_plain_year_month_add_or_subtract(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+    subtract: bool,
+) -> error::Result<Value> {
+    let (receiver, calendar_identifier) = temporal_plain_year_month_slots(vm, this)?;
+    let duration_like = args.first().cloned().unwrap_or(Value::Undefined);
+    let options = args.get(1).cloned().unwrap_or(Value::Undefined);
+    vm.try_reserve_value_roots(&[duration_like.clone(), options.clone()])?;
+    let pins = vm.pin_many(&[duration_like.clone(), options.clone()]);
+    let result = (|| {
+        let duration = to_temporal_duration_fields(vm, &duration_like)?;
+        let mut values = temporal_duration_integer_values(duration)?;
+        if subtract {
+            for value in &mut values {
+                *value = value
+                    .checked_neg()
+                    .ok_or_else(|| Error::range("Temporal.Duration fields are out of range"))?;
+            }
+        }
+        let _overflow = temporal_from_overflow(vm, Some(&options))?;
+        if values[2..].iter().any(|value| *value != 0) {
+            return Err(Error::range(
+                "Temporal.PlainYearMonth arithmetic requires year and month units",
+            ));
+        }
+        if calendar_identifier.as_ref() != "iso8601" {
+            return Err(Error::range(
+                "Temporal.PlainYearMonth arithmetic requires the ISO 8601 calendar",
+            ));
+        }
+
+        let date = temporal_plain_date_fields([
+            BigInt::from(receiver.year),
+            BigInt::from(receiver.month),
+            BigInt::from(1),
+        ])
+        .ok_or_else(|| Error::range("Temporal.PlainYearMonth date is out of range"))?;
+        let epoch_day = temporal_duration_iso_date_add(date, values[0], values[1], 0, 0)?;
+        let (year, month, _) = temporal::civil_from_days(epoch_day)
+            .ok_or_else(|| Error::range("Temporal.PlainYearMonth result is out of range"))?;
+        temporal_plain_year_month_fields(BigInt::from(year), BigInt::from(month), BigInt::from(1))
+            .ok_or_else(|| Error::range("Temporal.PlainYearMonth result is out of range"))
+    })();
+    vm.unpin_many(pins);
+    let fields = result?;
+    let realm = vm.native_callee_closure().unwrap_or(vm.global);
+    create_temporal_plain_year_month_in_realm(vm, fields, calendar_identifier, realm)
+}
+
+fn temporal_plain_year_month_add(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    temporal_plain_year_month_add_or_subtract(vm, args, this, false)
+}
+
+fn temporal_plain_year_month_subtract(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    temporal_plain_year_month_add_or_subtract(vm, args, this, true)
 }
 
 fn to_temporal_plain_year_month(

@@ -27,20 +27,21 @@ CORE_TRANSITIONS = _read_manifest(
 WITH_TRANSITIONS = _read_manifest(
     "test262_temporal_calendar_siblings_with_formatter_transitions.txt"
 )
-BLOCKERS = _read_manifest(
-    "test262_temporal_calendar_siblings_formatter_downstream_blockers.txt"
+ARITHMETIC_TRANSITIONS = _read_manifest(
+    "test262_temporal_plain_year_month_arithmetic_formatter_transitions.txt"
 )
 PASSING = (
     TEMPORAL_CALENDAR_SIBLINGS_TO_STRING_FILES
     | CORE_TRANSITIONS
     | TEMPORAL_CALENDAR_SIBLINGS_FROM_FORMATTER_TRANSITIONS
     | WITH_TRANSITIONS
+    | ARITHMETIC_TRANSITIONS
 )
-SURFACE = PASSING | BLOCKERS
+SURFACE = PASSING
 _SHARED_SHOULD_SKIP = test262_runner.should_skip
 
-if len(PASSING) != 106 or len(BLOCKERS) != 22 or len(SURFACE) != 128:
-    raise RuntimeError("Temporal calendar sibling formatter surface must be 106 pass / 22 fail")
+if len(ARITHMETIC_TRANSITIONS) != 22 or len(SURFACE) != 128:
+    raise RuntimeError("Temporal calendar sibling formatter surface must be 128 pass")
 
 
 def _relative(path):
@@ -77,7 +78,7 @@ def verify_expected_results(arguments):
             "Temporal calendar sibling formatter diagnostic requires the exact frozen surface"
         )
     actual = {path: test262_runner.run_test(test_root / path) for path in SURFACE}
-    expected = {path: "fail" if path in BLOCKERS else "pass" for path in SURFACE}
+    expected = {path: "pass" for path in SURFACE}
     if actual != expected:
         raise RuntimeError(f"Temporal calendar sibling formatter results drifted: {actual}")
 

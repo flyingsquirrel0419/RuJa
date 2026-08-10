@@ -1,0 +1,3 @@
+# Arithmetic assertions blocked only by the independently missing equals method.
+built-ins/Temporal/PlainYearMonth/prototype/add/argument-propertybag-optional-properties.js
+built-ins/Temporal/PlainYearMonth/prototype/subtract/argument-propertybag-optional-properties.js

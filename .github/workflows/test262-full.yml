@@ -210,6 +210,12 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_calendar_siblings_with_manifest_is_exact_live_disjoint_and_shared
           -v
+      - name: Verify exact Temporal.PlainYearMonth arithmetic admission
+        working-directory: tools
+        run: >-
+          TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_year_month_arithmetic_surface_is_exact_live_and_shared
+          -v
       - name: Verify Temporal calendar sibling formatter surface
         working-directory: tools
         run: >-
@@ -1261,6 +1267,24 @@ jobs:
           cat temporal_calendar_siblings_with_result.txt
           grep -q '^RATE=100.0 PASS=43 FAIL=0 SKIP=0 TOTAL=43 RAN=43$' \
             temporal_calendar_siblings_with_result.txt
+      - name: Require exact Temporal.PlainYearMonth arithmetic boundary
+        run: |
+          mapfile -t admitted < <(grep -hEv '^(#|$)' \
+            tools/test262_temporal_plain_year_month_arithmetic_admission.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
+            "${admitted[@]}" > temporal_plain_year_month_arithmetic_result.txt 2>&1
+          cat temporal_plain_year_month_arithmetic_result.txt
+          grep -q '^RATE=100.0 PASS=71 FAIL=0 SKIP=0 TOTAL=71 RAN=71$' \
+            temporal_plain_year_month_arithmetic_result.txt
+          mapfile -t complete < <(grep -hEv '^(#|$)' \
+            tools/test262_temporal_plain_year_month_arithmetic_admission.txt \
+            tools/test262_temporal_plain_year_month_arithmetic_blockers.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_plain_year_month_arithmetic_diagnostic.py \
+            "${complete[@]}" > temporal_plain_year_month_arithmetic_diagnostic.txt 2>&1
+          cat temporal_plain_year_month_arithmetic_diagnostic.txt
+          grep -q '^RATE=97.3 PASS=71 FAIL=2 SKIP=0 TOTAL=73 RAN=73$' \
+            temporal_plain_year_month_arithmetic_diagnostic.txt
       - name: Diagnose complete Temporal calendar sibling formatter surface
         run: |
           mapfile -t files < <(grep -hEv '^(#|$)' \
@@ -1268,12 +1292,12 @@ jobs:
             tools/test262_temporal_calendar_siblings_core_formatter_transitions.txt \
             tools/test262_temporal_calendar_siblings_from_formatter_transitions.txt \
             tools/test262_temporal_calendar_siblings_with_formatter_transitions.txt \
-            tools/test262_temporal_calendar_siblings_formatter_downstream_blockers.txt)
+            tools/test262_temporal_plain_year_month_arithmetic_formatter_transitions.txt)
           TEST262="$GITHUB_WORKSPACE/test262" \
             python3 tools/test262_temporal_calendar_siblings_formatter_surface_diagnostic.py \
             "${files[@]}" > temporal_calendar_siblings_formatter_diagnostic.txt 2>&1
           cat temporal_calendar_siblings_formatter_diagnostic.txt
-          grep -q '^RATE=82.8 PASS=106 FAIL=22 SKIP=0 TOTAL=128 RAN=128$' \
+          grep -q '^RATE=100.0 PASS=128 FAIL=0 SKIP=0 TOTAL=128 RAN=128$' \
             temporal_calendar_siblings_formatter_diagnostic.txt
 
   temporal-plain-date-core:

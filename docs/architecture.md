@@ -5128,4 +5128,31 @@ installation uses 172 allocations and 171 maximum live pins.
 - 장점, 단점 및 영향: exact getter/options order, error precedence, huge-year leap overflow, method-Realm errors/results, GC/OOM/fuel 및 full installer rollback이 고정된다. non-ISO CalendarMergeFields와 arithmetic은 후속 calendar subsystem 책임이다.
 ```
 
+`Temporal.PlainYearMonth.prototype.add` and `subtract` share one native
+arithmetic path. Receiver branding happens before argument observation. The
+duration-like and options values are reserved and pinned together so duration
+getters cannot collect the still-unread options object. Complete Duration
+conversion and, for subtract, exact sign negation precede options validation;
+`overflow` conversion precedes rejection of nonzero weeks, days, or time.
+
+ISO arithmetic discards the receiver reference day, validates the receiver as
+a day-1 PlainDate, and uses the existing checked Euclidean month-index date
+adder. The result is converted directly to a canonical hidden YearMonth with
+reference day 1 and the method Realm prototype. `overflow` has no result
+effect for ISO day-1 year/month addition but remains fully observable and
+validated. Non-ISO hidden records fail closed because no calendar arithmetic
+backend exists. The methods occupy installer allocations 171 and 172;
+`Temporal.Now` and `%Temporal%` move to 173 and 174, with 173 maximum live
+pins.
+
+```text
+[Decision Log]
+- 목적과 의도: PlainYearMonth 산술을 existing exact Duration/date primitives에 연결하면서 hidden record, observable order, Realm 및 resource 불변식을 보존한다.
+- 기존 구현 및 제약 조건: Duration conversion과 ISO date add는 검증됐지만 public YearMonth methods가 없었다. receiver는 arbitrary reference day를 저장할 수 있고 minimum representable month의 day 1은 valid PlainDate 범위 밖이다.
+- 검토한 주요 대안: year/month f64 합산, 월별 반복, temporary PlainDate/YearMonth 객체, checked copied-record arithmetic을 검토했다.
+- 선택한 방식: jointly rooted arguments에서 Duration을 완전 변환하고 checked i128 배열로 만든 뒤 options/lower-unit 계약을 완료한다. canonical day 1 record와 Euclidean month index로 date를 한 번 계산하고 intrinsic allocator로 publish한다.
+- 다른 대안 대신 이 방식을 선택한 이유: f64와 반복은 exact maximum 입력 또는 성능을 훼손하고 temporary objects는 명세에 없는 getter, Realm, GC/OOM 면을 추가한다. copied records는 reference day와 subclass를 관찰하지 않는다.
+- 장점, 단점 및 영향: 3,285,488개월 경계, min/max endpoint, lower-unit/options precedence, cross-Realm result/error, abrupt identity, joint GC roots, OOM retry, fuel과 174-allocation rollback이 고정된다. non-ISO arithmetic과 equals는 별도 후속 경계다.
+```
+
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

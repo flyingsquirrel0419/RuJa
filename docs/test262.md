@@ -15087,9 +15087,9 @@ or result drift.
 Formatter-dependent downstream discovery is frozen separately. Direct files
 plus 11 former core blockers, 49 former factory blockers, 13 completed `with`
 transitions, and 22 independently blocked `add`/`subtract` files form an exact
-128-file surface. Its diagnostic reports **106 pass / 22 fail / 0 skip**.
-This distinguishes formatter and completed mutation transitions from
-unimplemented arithmetic methods without claiming those methods as supported.
+128-file surface. At the formatter/with checkpoint its diagnostic reported
+**106 pass / 22 fail / 0 skip**. The later arithmetic section below moves all
+22 into transitions and makes the same surface **128/0/0**.
 
 ```text
 [Decision Log]
@@ -15098,7 +15098,7 @@ unimplemented arithmetic methods without claiming those methods as supported.
 - 검토한 주요 대안: directory prefix admission, 128개 전체를 formatter pass로 계상, helper 호출 파일 제외, direct admission과 transition/blocker diagnostic 분리를 검토했다.
 - 선택한 방식: direct 33개만 method admission으로 열고 former blocker 60개는 owner admission으로 이동한다. deterministic helper/direct-call discovery의 128개 표면은 초기 93 pass와 35 fail identity를 별도 manifest로 고정하고 후속 owner가 transition을 이동한다.
 - 다른 대안 대신 이 방식을 선택한 이유: prefix는 future test를 자동 허용하고 128개 전체 계상은 다른 미구현 API를 formatter 결함 또는 지원으로 오분류한다. owner별 이동과 별도 진단만 구현 책임과 denominator를 함께 보존한다.
-- 장점, 단점 및 영향: exact direct 33/0, core 104/0, factory 123/0, dependency 106/22, metadata/corpus/future gating이 재현된다. with 13개는 후속 owner로 이동했고 남은 22개는 add/subtract 구현 때 다시 감사한다.
+- 장점, 단점 및 영향: exact direct 33/0, core 104/0, factory 123/0, 당시 dependency 106/22, metadata/corpus/future gating이 재현된다. with 13개와 이후 arithmetic 22개가 각 owner transition으로 이동해 현재 dependency는 128/0이다.
 ```
 
 ## Temporal PlainMonthDay/PlainYearMonth prototype.with
@@ -15113,9 +15113,9 @@ corpora, duplicate arguments, and result drift fail closed.
 Thirteen direct files also belong to the existing formatter-dependent surface
 because their assertions serialize the result. They move from the former
 35-file blocker set into a dedicated transition manifest. The complete
-128-file surface therefore remains unchanged while its result identity moves
-from **93/35** to **106/22**. The remaining 22 failures are exactly
-PlainYearMonth `add` and `subtract`.
+128-file surface therefore remains unchanged while its result identity moved
+from **93/35** to **106/22** at this checkpoint. The later PlainYearMonth
+arithmetic section moves those exact 22 to pass without changing the surface.
 
 ```text
 [Decision Log]
@@ -15124,5 +15124,32 @@ PlainYearMonth `add` and `subtract`.
 - 검토한 주요 대안: 두 directory prefix admission, formatter를 호출하지 않는 30개만 admission, 43개 exact admission과 13개 transition 분리를 검토했다.
 - 선택한 방식: live direct 43개 전체를 metadata와 함께 freeze하고 별도 diagnostic으로 43 pass를 강제한다. formatter surface에는 교집합 13개 transition만 이동한다.
 - 다른 대안 대신 이 방식을 선택한 이유: prefix는 future tests를 자동 허용하고 30개만 계상하면 complete implementation을 축소 보고한다. 전체 43개를 formatter surface에 더하면 그 진단의 128-file 의미가 변한다.
-- 장점, 단점 및 영향: direct 43/0, formatter 106/22, runner/analyzer parity, disjointness, corpus/future/result drift가 재현된다. add/subtract 22개는 명시적 후속 owner로 남는다.
+- 장점, 단점 및 영향: direct 43/0, 당시 formatter 106/22, runner/analyzer parity, disjointness, corpus/future/result drift가 재현된다. 후속 add/subtract owner가 22개를 전환해 현재 formatter는 128/0이다.
+```
+
+## Temporal PlainYearMonth prototype.add/subtract
+
+The pinned complete directories contain 73 files: 36 `add` and 37 `subtract`.
+Exact admission contains the 71 independently passing files. Forced complete
+execution reports **71 pass / 2 fail / 0 skip**; the two frozen failures call
+the separately unimplemented `PlainYearMonth.prototype.equals` only after
+both arithmetic results have been created. They are retained as explicit
+blockers instead of being hidden by the broad Temporal gate.
+
+All 22 arithmetic files in the formatter dependency surface now pass and move
+to a dedicated transition manifest. The same frozen 128-file formatter
+surface is therefore exact **128 pass / 0 fail / 0 skip**. Runner and analyzer
+share path-scoped feature removal for the 71 admitted files. Live metadata,
+directory identity, admission disjointness, future/outside paths, duplicate
+arguments, inaccessible corpus, and exact result drift fail closed in tooling
+and both CI workflows.
+
+```text
+[Decision Log]
+- 목적과 의도: PlainYearMonth add/subtract의 complete direct denominator와 formatter 전환을 exact supported accounting에 반영한다.
+- 기존 구현 및 제약 조건: formatter 진단은 22개만 후속 blocker로 추적했지만 pinned direct directory는 73개이며, 그중 2개는 산술 성공 뒤 missing equals에서 실패한다.
+- 검토한 주요 대안: 22개만 admission, 73개 전체를 산술 실패로 유지, absent equals stub, 71 admission과 2 exact blocker 및 22 formatter transition 분리를 검토했다.
+- 선택한 방식: 실제 method behavior를 독립 검증하는 71개 metadata를 freeze하고 complete diagnostic은 equals 의존 2개까지 강제한다. formatter surface의 교집합 22개는 전부 transition으로 이동한다.
+- 다른 대안 대신 이 방식을 선택한 이유: 22개 admission은 direct method 범위를 축소하고 73개 전체 admit은 실제 실패를 숨긴다. equals stub은 별도 brand/conversion 계약을 거짓 지원한다.
+- 장점, 단점 및 영향: direct 71/2/73, formatter 128/0/128, runner/analyzer parity와 corpus/future/result drift가 재현된다. 다음 narrow dependency는 두 blocker를 포함하는 real PlainYearMonth.equals다.
 ```
