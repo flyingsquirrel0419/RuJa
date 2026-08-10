@@ -162,6 +162,12 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_duration_value_of_manifest_is_exact_live_disjoint_and_shared
           -v
+      - name: Verify exact Temporal.Duration.prototype.toString admission
+        working-directory: tools
+        run: >-
+          TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_duration_to_string_manifest_is_exact_live_disjoint_and_shared
+          -v
       - name: Verify exact Temporal.PlainDate core admission
         working-directory: tools
         run: >-
@@ -906,7 +912,7 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
             "${files[@]}" > temporal_duration_from_result.txt 2>&1
           cat temporal_duration_from_result.txt
-          grep -q '^RATE=100.0 PASS=29 FAIL=0 SKIP=0 TOTAL=29 RAN=29$' \
+          grep -q '^RATE=100.0 PASS=30 FAIL=0 SKIP=0 TOTAL=30 RAN=30$' \
             temporal_duration_from_result.txt
       - name: Freeze Temporal.Duration.from blockers
         run: |
@@ -918,7 +924,7 @@ jobs:
             python3 tools/test262_temporal_duration_from_diagnostic.py \
             "${files[@]}" > temporal_duration_from_diagnostic.txt 2>&1
           cat temporal_duration_from_diagnostic.txt
-          grep -q '^RATE=93.5 PASS=29 FAIL=2 SKIP=0 TOTAL=31 RAN=31$' \
+          grep -q '^RATE=96.8 PASS=30 FAIL=1 SKIP=0 TOTAL=31 RAN=31$' \
             temporal_duration_from_diagnostic.txt
 
   temporal-duration-with:
@@ -1033,6 +1039,37 @@ jobs:
           cat temporal_duration_value_of_result.txt
           grep -q '^RATE=100.0 PASS=7 FAIL=0 SKIP=0 TOTAL=7 RAN=7$' \
             temporal_duration_value_of_result.txt
+
+  temporal-duration-to-string:
+    needs: [build, setup]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download RuJa binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ruja-release
+          path: target/release/
+      - run: chmod +x target/release/ruja
+      - name: Checkout pinned Temporal.Duration.prototype.toString tests
+        uses: actions/checkout@v4
+        with:
+          repository: tc39/test262
+          ref: ${{ env.TEST262_REV }}
+          path: test262
+          sparse-checkout: |
+            harness
+            test/built-ins/Temporal/Duration/prototype/toString
+      - name: Require exact Temporal.Duration.prototype.toString boundary
+        run: |
+          mapfile -t files < <(grep -hEv '^(#|$)' \
+            tools/test262_temporal_duration_to_string_admission.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_duration_to_string_diagnostic.py \
+            "${files[@]}" > temporal_duration_to_string_result.txt 2>&1
+          cat temporal_duration_to_string_result.txt
+          grep -q '^RATE=100.0 PASS=44 FAIL=0 SKIP=0 TOTAL=44 RAN=44$' \
+            temporal_duration_to_string_result.txt
 
   temporal-plain-date-core:
     needs: [build, setup]

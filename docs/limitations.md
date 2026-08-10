@@ -22,8 +22,11 @@ The following resource limits are enforced:
   updates, complete sign replacement, merged sign/range validation, and
   method-Realm results. `abs` and `negated` provide hidden-record unary sign
   transforms, while `valueOf` always throws to reject implicit primitive
-  coercion. Duration arithmetic, formatting, balancing, rounding, `compare`,
-  `total`, and the remaining methods are not implemented.
+  coercion. `toString` supports exact ISO formatting, all fractional precision
+  and time-smallest-unit options, all rounding modes, and time balancing up to
+  the receiver's original largest unit. Calendar-relative Duration arithmetic,
+  `compare`, `total`, `toJSON`, locale formatting, and the remaining methods
+  are not implemented.
   Realm-local `%Temporal.PlainDateTime%` supports
   hidden-slot construction, subclassing, 22 ISO/calendar accessors,
   `@@toStringTag`, always-throwing `valueOf`, and static `from` for branded

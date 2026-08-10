@@ -14810,13 +14810,11 @@ rejects malformed, outside, and future paths.
 At pinned Test262 revision
 `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the direct
 `Temporal.Duration.from` directory contains 31 files. The exact manifest
-admits **29 pass / 0 fail / 0 skip**. Forced execution of the complete
-directory is **29 pass / 2 fail / 0 skip**: `argument-duration-max.js`
+admits **30 pass / 0 fail / 0 skip**. Forced execution of the complete
+directory is **30 pass / 1 fail / 0 skip**: `argument-duration-max.js`
 converts its first case, passes `Duration.prototype.with`, and then reaches
-absent `Duration.prototype.total`,
-while
-`argument-duration-precision-exact-numerical-values.js` successfully creates
-its Duration and then reaches absent `Duration.prototype.toString`.
+absent `Duration.prototype.total`. The former precision blocker now reaches
+and passes the implemented `Duration.prototype.toString` assertion.
 
 The existing Duration hidden-slot core simultaneously moves
 `prototype/blank/basic.js` from its blocker complement into exact admission,
@@ -14834,7 +14832,7 @@ outside, future, or inaccessible corpus paths.
 - 검토한 주요 대안: Duration/from prefix 전체 허용, forced pass만 자동 수용, 후행 실패 두 파일도 from 지원으로 계상, exact admission과 explicit blocker complement를 검토했다.
 - 선택한 방식: 실제 통과한 29개 path와 live metadata만 exact manifest에 열고 후행 API 두 파일은 complete complement로 고정한다. core blank/basic은 재실행 후 admission으로 이동하고 max.js만 blocker에 남긴다.
 - 다른 대안 대신 이 방식을 선택한 이유: prefix는 future siblings를 자동 허용하고 process-level forced failure는 from의 intended assertion 도달 여부를 구분하지 않는다. explicit complement만 현재 구현 진전과 남은 API dependency를 동시에 보존한다.
-- 장점, 단점 및 영향: direct exact 29/0과 forced 29/2, core exact 77/0과 forced 77/1, metadata/corpus drift와 future gating이 재현된다. Duration.with 구현 후 maximum blocker는 total에서 실패하며 total/toString 구현 시 남은 blocker를 각각 다시 실측해야 한다.
+- 장점, 단점 및 영향: direct exact 30/0과 forced 30/1, core exact 77/0과 forced 77/1, metadata/corpus drift와 future gating이 재현된다. maximum blocker는 total에서만 실패하며 total 구현 시 다시 실측해야 한다.
 ```
 
 ## Temporal.Duration.prototype.with
@@ -14922,4 +14920,33 @@ incomplete method directory.
 - 선택한 방식: pinned 7-path manifest와 metadata map을 runner/analyzer가 공유하고 live-corpus/disjointness/future-path unittest 및 literal 7/0/0 CI gate를 둔다.
 - 다른 대안 대신 이 방식을 선택한 이유: core 편입은 hidden-slot 기반선의 책임을 흐리고 prefix는 future siblings를 검토 없이 허용한다. Instant와 경로는 대칭이지만 method ownership과 corpus drift는 독립적으로 추적해야 한다.
 - 장점, 단점 및 영향: complete 7/0/0, metadata identity, configured-corpus availability, future gating이 재현된다. Test262가 직접 구분하지 못하는 Realm과 non-observation은 Rust runtime/resource 테스트가 고정한다.
+```
+
+## Temporal.Duration.prototype.toString
+
+At pinned Test262 revision
+`9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the complete direct `toString`
+directory contains 44 files. Exact admission and forced diagnostic execution
+are both **44 pass / 0 fail / 0 skip**. The surface covers branding and
+built-in shape, exact large-value serialization, option order and coercion,
+auto/fixed precision, smallest-unit override, every exercised signed rounding
+direction, cross-unit carry, and post-round Duration range validation.
+
+The dedicated manifest freezes each path's live features, includes, flags,
+and negative metadata. Runner and analyzer share exact path membership;
+malformed, outside-root, inaccessible, absent configured corpus, and future
+sibling paths fail closed. Ordinary CI and a dedicated full-workflow job both
+require literal `PASS=44 FAIL=0 SKIP=0 TOTAL=44 RAN=44`. The downstream
+`Duration.from/argument-duration-precision-exact-numerical-values.js` file is
+now admitted, moving that complete directory to exact **30/0/0** and forced
+**30/1/0**; only the `total`-dependent maximum file remains blocked.
+
+```text
+[Decision Log]
+- 목적과 의도: Duration.toString의 complete direct surface와 downstream from 개선을 exact path identity 및 pinned live metadata로 지원 계상한다.
+- 기존 구현 및 제약 조건: broad Temporal gate가 44개를 모두 숨겼고 Duration.from precision 파일은 object 생성 성공 후 absent toString에서 실패해 별도 blocker였다.
+- 검토한 주요 대안: directory prefix admission, forced aggregate 자동 수용, Duration core 편입, method 전용 exact manifest와 diagnostic을 검토했다.
+- 선택한 방식: direct 44개를 독립 manifest로 고정하고 runner/analyzer exact helper, live complement/disjointness unittest, per-file diagnostic identity, ordinary/full literal count gate를 둔다. from precision 파일은 실제 재실행 후 admission으로 이동한다.
+- 다른 대안 대신 이 방식을 선택한 이유: prefix는 future siblings를 검토 없이 허용하고 aggregate pass는 요청 집합 누락을 숨길 수 있다. core 편입은 option/rounding serialization의 독립 책임을 흐린다.
+- 장점, 단점 및 영향: direct exact/forced 44/0/0, metadata/corpus drift, future gating, downstream from 30/1이 재현된다. calendar-relative total과 locale serialization은 지원 수치에 포함되지 않는다.
 ```

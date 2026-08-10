@@ -341,6 +341,38 @@ fn temporal_plain_time_to_string_precharges_option_strings() {
 }
 
 #[test]
+fn temporal_duration_to_string_precharges_option_strings() {
+    const BUDGET: i64 = 20_000;
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        globalThis.durationToStringFuel = new Temporal.Duration(1, 2, 3, 4, 5, 6, 7, 987, 650);
+        globalThis.durationOptionShort = { toString() { return 'trunc'; } };
+        globalThis.durationOptionLong = { toString() { return 'x'.repeat(512); } };
+        "#,
+    )
+    .expect("Duration.toString fuel fixtures should initialize");
+
+    for property in ["fractionalSecondDigits", "roundingMode", "smallestUnit"] {
+        vm.set_fuel(Some(BUDGET));
+        let _ = vm.run(&format!(
+            "try {{ durationToStringFuel.toString({{ {property}: durationOptionShort }}); }} catch (error) {{}}"
+        ));
+        let short_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+
+        vm.set_fuel(Some(BUDGET));
+        let _ = vm.run(&format!(
+            "try {{ durationToStringFuel.toString({{ {property}: durationOptionLong }}); }} catch (error) {{}}"
+        ));
+        let long_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+        assert!(
+            long_work >= short_work + 500,
+            "{property} conversion must charge the produced string"
+        );
+    }
+}
+
+#[test]
 fn temporal_plain_time_round_precharges_option_strings() {
     const BUDGET: i64 = 20_000;
     let mut vm = Vm::new().expect("failed to initialize VM");

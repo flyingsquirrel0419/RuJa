@@ -5,6 +5,26 @@
 ### Changed
 
 - Added Realm-local, non-constructable, length-0
+  `Temporal.Duration.prototype.toString`. It brands before options, reads
+  `fractionalSecondDigits`, `roundingMode`, and `smallestUnit` in normative
+  order, rounds signed time in exact integer nanoseconds, balances only to the
+  receiver's original largest unit with a second floor, and serializes the
+  hidden ten-field record without public accessors or temporary Temporal
+  objects. Rounded fields must remain exactly float64-representable and within
+  the Duration range. The pinned direct Test262 directory is exact **44/0/0**;
+  downstream `Duration.from` improves from **29/2** to **30/1**. Existing
+  allocation 142 remains `valueOf`; `toString` is 143, and the installer now
+  reserves 144 maximum live pins across 145 allocations.
+
+  [Decision Log]
+  - 목적과 의도: Duration의 명시적 ISO 직렬화를 옵션 관찰, exact rounding, range validation, Realm/resource 계약까지 완결한다.
+  - 기존 구현 및 제약 조건: hidden slots는 integral f64이지만 합산 nanoseconds는 safe integer 범위를 넘는다. Instant/PlainTime formatter는 재사용 가능한 precision/rounding enum을 제공하지만 Duration은 years/months/weeks를 보존하고 time carry를 original largest unit까지만 허용한다.
+  - 검토한 주요 대안: f64 합산, 임시 rounded Duration 생성, public accessors 또는 constructor 재사용, exact i128 record와 direct host String publication을 검토했다.
+  - 선택한 방식: slot integers를 exact i128로 복원하고 signed nanosecond 합을 round한 뒤 date-largest일 때만 24시간 carry를 days에 더한다. 결과 열 필드는 f64 exactness와 기존 normalized range를 재검증하고 formatter가 auto/fixed precision ISO 문자열을 직접 만든다.
+  - 다른 대안 대신 이 방식을 선택한 이유: f64 계산은 큰 second/subsecond 조합을 손상시키고 임시 Temporal 객체는 명세상 관찰 불가능한 GC/OOM 면을 만든다. public 경로는 getter/constructor/species를 잘못 관찰한다.
+  - 장점, 단점 및 영향: signed rounding 9 modes, precision override, day carry, maximum boundary, method-Realm errors, rooted option coercion, zero-result-object allocation과 exact 44-file admission이 고정된다. calendar-relative arithmetic, `total`, `toJSON`, locale formatting은 별도 단위다.
+
+- Added Realm-local, non-constructable, length-0
   `Temporal.Duration.prototype.valueOf`. Every call immediately throws a
   `TypeError` from the native method Realm without branding or otherwise
   observing the receiver, arguments, public accessors, constructors, or
@@ -12,8 +32,8 @@
   serialized Duration strings. At pinned Test262 revision
   `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the complete direct directory is
   exact **7/0/0**. Existing allocations 136 through 141 remain stable,
-  `valueOf` is allocation 142, and the installer reserves 143 maximum live
-  pins across 144 allocations.
+  `valueOf` remains allocation 142; after the later `toString` installation,
+  the installer reserves 144 maximum live pins across 145 allocations.
 
   [Decision Log]
   - 목적과 의도: Duration의 암시적 primitive coercion을 명세대로 금지하고 잘못된 문자열 사전식 비교 경로를 닫는다.

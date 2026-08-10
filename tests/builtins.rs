@@ -25408,6 +25408,98 @@ fn temporal_duration_value_of_always_throws_in_the_method_realm() {
 }
 
 #[test]
+fn temporal_duration_to_string_formats_rounds_and_balances_exactly() {
+    assert_eq!(
+        run(r#"
+            var exact = new Temporal.Duration(1, 2, 3, 4, 5, 6, 7, 987, 650);
+            var negative = new Temporal.Duration(0, 0, 0, 0, -5, -6, -7, -123, -987, -500);
+            var carry = new Temporal.Duration(1, 11, 0, 30, 23, 59, 59, 999, 999, 999);
+            var maximum = new Temporal.Duration(
+              0, 0, 0, 0, 0, 0, Number.MAX_SAFE_INTEGER, 0, 0, 999999999
+            );
+            [
+              exact.toString(),
+              Temporal.Duration.from({ milliseconds: 3500 }).toString(),
+              maximum.toString(),
+              exact.toString({ smallestUnit: 'microsecond', roundingMode: 'ceil' }),
+              negative.toString({ smallestUnit: 'microsecond', roundingMode: 'ceil' }),
+              negative.toString({ smallestUnit: 'microsecond', roundingMode: 'floor' }),
+              carry.toString({ fractionalSecondDigits: 8, roundingMode: 'expand' }),
+              new Temporal.Duration().toString({ fractionalSecondDigits: 2 })
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "P1Y2M3W4DT5H6M7.98765S|PT3.5S|PT9007199254740991.999999999S|P1Y2M3W4DT5H6M7.987650S|-PT5H6M7.123987S|-PT5H6M7.123988S|P1Y11M31DT0.00000000S|PT0.00S"
+        ))
+    );
+}
+
+#[test]
+fn temporal_duration_to_string_observes_options_in_order_and_uses_method_realm() {
+    assert_eq!(
+        run(r#"
+            var duration = new Temporal.Duration(1, 2, 3, 4, 5, 6, 7, 987, 650);
+            var log = [];
+            var options = {};
+            for (let pair of [
+              ['fractionalSecondDigits', 'auto'],
+              ['roundingMode', 'halfExpand'],
+              ['smallestUnit', 'microsecond']
+            ]) {
+              Object.defineProperty(options, pair[0], {
+                get: function () {
+                  log.push('get ' + pair[0]);
+                  return {
+                    toString: function () {
+                      log.push('toString ' + pair[0]);
+                      return pair[1];
+                    }
+                  };
+                }
+              });
+            }
+            var publicReads = 0;
+            Object.defineProperty(duration, 'seconds', {
+              get: function () { publicReads++; throw new Error('observed'); }
+            });
+            var formatted = duration.toString(options);
+            var other = $262.createRealm().global;
+            var foreign = other.Temporal.Duration.prototype.toString;
+            var foreignBrand;
+            var foreignOptions;
+            var brandObserved = false;
+            try {
+              foreign.call({}, {
+                get fractionalSecondDigits() { brandObserved = true; return 3; }
+              });
+            } catch (error) {
+              foreignBrand = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            try { foreign.call(duration, null); } catch (error) {
+              foreignOptions = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            var nonconstructable = false;
+            try { new Temporal.Duration.prototype.toString(); }
+            catch (error) { nonconstructable = error instanceof TypeError; }
+            [
+              formatted,
+              log.join(','),
+              publicReads,
+              foreignBrand,
+              foreignOptions,
+              brandObserved,
+              nonconstructable,
+              Temporal.Duration.prototype.toString.name,
+              Temporal.Duration.prototype.toString.length
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "P1Y2M3W4DT5H6M7.987650S|get fractionalSecondDigits,toString fractionalSecondDigits,get roundingMode,toString roundingMode,get smallestUnit,toString smallestUnit|0|true|true|false|true|toString|0"
+        ))
+    );
+}
+
+#[test]
 fn temporal_duration_rejects_non_integral_mixed_and_out_of_range_fields() {
     for source in [
         "Temporal.Duration()",

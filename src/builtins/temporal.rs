@@ -1173,6 +1173,27 @@ fn round_as_if_positive(value: i128, increment: i128, mode: InstantRoundingMode)
     Some(if choose_upper { upper } else { lower })
 }
 
+pub(crate) fn round_signed_to_increment(
+    value: i128,
+    increment: i128,
+    mode: InstantRoundingMode,
+) -> Option<i128> {
+    if increment <= 0 {
+        return None;
+    }
+    if value >= 0 {
+        return round_as_if_positive(value, increment, mode);
+    }
+    let unsigned_mode = match mode {
+        InstantRoundingMode::Ceil => InstantRoundingMode::Trunc,
+        InstantRoundingMode::Floor => InstantRoundingMode::Expand,
+        InstantRoundingMode::HalfCeil => InstantRoundingMode::HalfTrunc,
+        InstantRoundingMode::HalfFloor => InstantRoundingMode::HalfExpand,
+        other => other,
+    };
+    round_as_if_positive(value.checked_neg()?, increment, unsigned_mode)?.checked_neg()
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn round_plain_time(
     hour: u8,
@@ -1498,6 +1519,85 @@ pub(crate) fn format_plain_time(
     Some(output)
 }
 
+pub(crate) fn format_duration(fields: [i128; 10], precision: InstantPrecision) -> Option<String> {
+    let sign = fields
+        .iter()
+        .copied()
+        .find(|value| *value != 0)
+        .map_or(0, i128::signum);
+    let values = fields.map(i128::checked_abs);
+    let [Some(years), Some(months), Some(weeks), Some(days), Some(hours), Some(minutes), Some(seconds), Some(milliseconds), Some(microseconds), Some(nanoseconds)] =
+        values
+    else {
+        return None;
+    };
+    let seconds_nanoseconds = seconds
+        .checked_mul(NS_PER_SECOND)?
+        .checked_add(milliseconds.checked_mul(1_000_000)?)?
+        .checked_add(microseconds.checked_mul(1_000)?)?
+        .checked_add(nanoseconds)?;
+
+    let mut output = String::with_capacity(64);
+    if sign < 0 {
+        output.push('-');
+    }
+    output.push('P');
+    if years != 0 {
+        write!(output, "{years}Y").ok()?;
+    }
+    if months != 0 {
+        write!(output, "{months}M").ok()?;
+    }
+    if weeks != 0 {
+        write!(output, "{weeks}W").ok()?;
+    }
+    if days != 0 {
+        write!(output, "{days}D").ok()?;
+    }
+
+    let fixed_precision = !matches!(precision, InstantPrecision::Auto);
+    let date_is_zero = years == 0 && months == 0 && weeks == 0 && days == 0;
+    let has_time = hours != 0 || minutes != 0 || seconds_nanoseconds != 0;
+    if date_is_zero || has_time || fixed_precision {
+        output.push('T');
+        if hours != 0 {
+            write!(output, "{hours}H").ok()?;
+        }
+        if minutes != 0 {
+            write!(output, "{minutes}M").ok()?;
+        }
+        let emit_seconds = seconds_nanoseconds != 0
+            || (date_is_zero && hours == 0 && minutes == 0)
+            || fixed_precision;
+        if emit_seconds {
+            let whole_seconds = seconds_nanoseconds / NS_PER_SECOND;
+            let fraction = seconds_nanoseconds % NS_PER_SECOND;
+            write!(output, "{whole_seconds}").ok()?;
+            match precision {
+                InstantPrecision::Auto if fraction != 0 => {
+                    let digits = format!("{fraction:09}");
+                    output.push('.');
+                    output.push_str(digits.trim_end_matches('0'));
+                }
+                InstantPrecision::Digits(digits @ 1..=9) => {
+                    let divisor = 10_i128.pow(u32::from(9 - digits));
+                    write!(
+                        output,
+                        ".{:0width$}",
+                        fraction / divisor,
+                        width = usize::from(digits)
+                    )
+                    .ok()?;
+                }
+                InstantPrecision::Auto | InstantPrecision::Digits(0) => {}
+                InstantPrecision::Minute | InstantPrecision::Digits(_) => return None,
+            }
+            output.push('S');
+        }
+    }
+    Some(output)
+}
+
 fn write_offset(output: &mut String, offset_nanoseconds: i128) -> Option<()> {
     let sign = if offset_nanoseconds < 0 { '-' } else { '+' };
     let total_minutes = offset_nanoseconds.abs() / (60 * NS_PER_SECOND);
@@ -1609,12 +1709,13 @@ pub(crate) fn format_zoned_date_time(
 #[cfg(test)]
 mod tests {
     use super::{
-        add_plain_time, format_instant, format_plain_date, format_plain_time,
+        add_plain_time, format_duration, format_instant, format_plain_date, format_plain_time,
         parse_calendar_identifier, parse_duration_string, parse_instant_string,
         parse_offset_string, parse_plain_date_string, parse_plain_date_time_string,
         parse_plain_time_string, parse_time_zone_identifier, parse_time_zone_identifier_like,
         parse_time_zone_offset, parse_zoned_date_time_string, resolve_zoned_date_time_epoch,
-        AnnotationDisplay, InstantPrecision, InstantRoundingMode, ZonedDateTimeOffsetOption,
+        round_signed_to_increment, AnnotationDisplay, InstantPrecision, InstantRoundingMode,
+        ZonedDateTimeOffsetOption,
     };
     use num_bigint::BigInt;
 
@@ -2165,5 +2266,50 @@ mod tests {
             .as_deref(),
             Some("12:34:56.124")
         );
+    }
+
+    #[test]
+    fn formats_durations_with_exact_subseconds_and_precision() {
+        assert_eq!(
+            format_duration([1, 2, 3, 4, 5, 6, 7, 987, 650, 0], InstantPrecision::Auto,).as_deref(),
+            Some("P1Y2M3W4DT5H6M7.98765S")
+        );
+        assert_eq!(
+            format_duration(
+                [0, 0, 0, 0, 0, 0, 0, 9_007_199_254_740_991, 2_000, 0],
+                InstantPrecision::Auto,
+            )
+            .as_deref(),
+            Some("PT9007199254740.993S")
+        );
+        assert_eq!(
+            format_duration([3, 0, 0, 0, 0, 0, 0, 0, 0, 0], InstantPrecision::Digits(5)).as_deref(),
+            Some("P3YT0.00000S")
+        );
+        assert_eq!(
+            format_duration([0; 10], InstantPrecision::Auto).as_deref(),
+            Some("PT0S")
+        );
+    }
+
+    #[test]
+    fn rounds_signed_values_in_every_direction() {
+        for (mode, positive, negative) in [
+            (InstantRoundingMode::Ceil, 2, -1),
+            (InstantRoundingMode::Expand, 2, -2),
+            (InstantRoundingMode::Floor, 1, -2),
+            (InstantRoundingMode::Trunc, 1, -1),
+            (InstantRoundingMode::HalfCeil, 2, -1),
+            (InstantRoundingMode::HalfFloor, 1, -2),
+            (InstantRoundingMode::HalfExpand, 2, -2),
+            (InstantRoundingMode::HalfTrunc, 1, -1),
+            (InstantRoundingMode::HalfEven, 2, -2),
+        ] {
+            assert_eq!(round_signed_to_increment(15, 10, mode), Some(positive * 10));
+            assert_eq!(
+                round_signed_to_increment(-15, 10, mode),
+                Some(negative * 10)
+            );
+        }
     }
 }

@@ -6290,7 +6290,7 @@ pub(crate) fn install_temporal_namespace_in_env(
     global: Option<&Value>,
     object_proto: Value,
 ) -> error::Result<Value> {
-    vm.try_reserve_gc_pins(143)?;
+    vm.try_reserve_gc_pins(144)?;
     let mut pin_count = 0;
     let result = (|| {
         let instant_prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
@@ -7087,6 +7087,13 @@ pub(crate) fn install_temporal_namespace_in_env(
             env,
         )?);
         pin_count += vm.pin(&duration_value_of);
+        let duration_to_string = Value::Object(vm.new_native_function_in_env_with_gc_retry(
+            "toString",
+            temporal_duration_to_string,
+            0,
+            env,
+        )?);
+        pin_count += vm.pin(&duration_to_string);
 
         let Value::Object(instant_constructor_index) = instant_constructor.clone() else {
             unreachable!()
@@ -7216,6 +7223,7 @@ pub(crate) fn install_temporal_namespace_in_env(
             props.insert(PropertyKey::from("with"), data_prop(duration_with));
             props.insert(PropertyKey::from("negated"), data_prop(duration_negated));
             props.insert(PropertyKey::from("abs"), data_prop(duration_abs));
+            props.insert(PropertyKey::from("toString"), data_prop(duration_to_string));
             props.insert(PropertyKey::from("valueOf"), data_prop(duration_value_of));
             let mut tag = data_prop(Value::String(Arc::from("Temporal.Duration")));
             tag.writable = false;
@@ -8080,6 +8088,197 @@ fn temporal_duration_negated(
     this: Option<Value>,
 ) -> error::Result<Value> {
     temporal_duration_sign_transform(vm, this, TemporalDurationSignTransform::Negate)
+}
+
+fn temporal_duration_integer_values(fields: TemporalDurationFields) -> error::Result<[i128; 10]> {
+    let values = [
+        fields.years,
+        fields.months,
+        fields.weeks,
+        fields.days,
+        fields.hours,
+        fields.minutes,
+        fields.seconds,
+        fields.milliseconds,
+        fields.microseconds,
+        fields.nanoseconds,
+    ]
+    .map(|value| {
+        BigInt::from_f64(value)
+            .and_then(|integer| integer.to_i128())
+            .ok_or_else(|| Error::range("Invalid Temporal.Duration fields"))
+    });
+    let [years, months, weeks, days, hours, minutes, seconds, milliseconds, microseconds, nanoseconds] =
+        values;
+    Ok([
+        years?,
+        months?,
+        weeks?,
+        days?,
+        hours?,
+        minutes?,
+        seconds?,
+        milliseconds?,
+        microseconds?,
+        nanoseconds?,
+    ])
+}
+
+fn temporal_duration_fields_from_integer_values(
+    values: [i128; 10],
+) -> error::Result<TemporalDurationFields> {
+    let numbers = values.map(|value| {
+        let number = value
+            .to_f64()
+            .ok_or_else(|| Error::range("Invalid rounded Temporal.Duration"))?;
+        if BigInt::from_f64(number).as_ref() != Some(&BigInt::from(value)) {
+            return Err(Error::range("Invalid rounded Temporal.Duration"));
+        }
+        Ok(number)
+    });
+    let [years, months, weeks, days, hours, minutes, seconds, milliseconds, microseconds, nanoseconds] =
+        numbers;
+    let fields = TemporalDurationFields {
+        years: years?,
+        months: months?,
+        weeks: weeks?,
+        days: days?,
+        hours: hours?,
+        minutes: minutes?,
+        seconds: seconds?,
+        milliseconds: milliseconds?,
+        microseconds: microseconds?,
+        nanoseconds: nanoseconds?,
+    };
+    temporal_duration_is_valid(&fields)
+        .then_some(fields)
+        .ok_or_else(|| Error::range("Invalid rounded Temporal.Duration"))
+}
+
+fn temporal_duration_round_for_string(
+    fields: TemporalDurationFields,
+    increment: i128,
+    rounding_mode: temporal::InstantRoundingMode,
+) -> error::Result<TemporalDurationFields> {
+    let mut values = temporal_duration_integer_values(fields)?;
+    let largest = values.iter().position(|value| *value != 0).unwrap_or(9);
+    let rounded_largest = largest.min(6);
+    let total = temporal_duration_time_nanoseconds(fields)?;
+    let rounded = temporal::round_signed_to_increment(total, increment, rounding_mode)
+        .ok_or_else(|| Error::range("Temporal.Duration rounding failed"))?;
+
+    values[4..].fill(0);
+    let mut remainder = rounded;
+    if rounded_largest <= 3 {
+        let carried_days = remainder / 86_400_000_000_000_i128;
+        values[3] = values[3]
+            .checked_add(carried_days)
+            .ok_or_else(|| Error::range("Temporal.Duration rounding failed"))?;
+        remainder %= 86_400_000_000_000_i128;
+    }
+    for (index, unit) in [
+        (4, 3_600_000_000_000_i128),
+        (5, 60_000_000_000_i128),
+        (6, 1_000_000_000_i128),
+        (7, 1_000_000_i128),
+        (8, 1_000_i128),
+        (9, 1_i128),
+    ] {
+        if index >= rounded_largest.max(4) {
+            values[index] = remainder / unit;
+            remainder %= unit;
+        }
+    }
+    temporal_duration_fields_from_integer_values(values)
+}
+
+fn temporal_duration_precision_increment(
+    precision: temporal::InstantPrecision,
+) -> error::Result<i128> {
+    match precision {
+        temporal::InstantPrecision::Auto => Ok(1),
+        temporal::InstantPrecision::Digits(digits) if digits <= 9 => {
+            Ok(10_i128.pow(u32::from(9 - digits)))
+        }
+        temporal::InstantPrecision::Minute | temporal::InstantPrecision::Digits(_) => {
+            Err(Error::range("Invalid Temporal.Duration precision"))
+        }
+    }
+}
+
+fn temporal_duration_to_string(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let fields = temporal_duration_slots(vm, this)?;
+    let options = args.first().cloned().unwrap_or(Value::Undefined);
+    if !matches!(options, Value::Undefined | Value::Object(_)) {
+        return Err(Error::type_err(
+            "Temporal.Duration.prototype.toString options must be an object",
+        ));
+    }
+
+    vm.try_reserve_value_roots(std::slice::from_ref(&options))?;
+    let options_pin = vm.pin(&options);
+    let result = (|| {
+        let get_option = |vm: &mut Vm, name: &str| {
+            if options.is_undefined() {
+                Ok(Value::Undefined)
+            } else {
+                vm.get_property(&options, name)
+            }
+        };
+        let fractional_second_digits = match get_option(vm, "fractionalSecondDigits")? {
+            Value::Undefined => InstantFractionalSecondDigits::Auto,
+            Value::Number(number) => InstantFractionalSecondDigits::Number(number),
+            value => InstantFractionalSecondDigits::String(temporal_option_to_string(vm, &value)?),
+        };
+        let fractional_second_digits =
+            temporal_instant_fractional_second_digits(fractional_second_digits)?;
+        let rounding_mode_value = get_option(vm, "roundingMode")?;
+        let rounding_mode = if rounding_mode_value.is_undefined() {
+            None
+        } else {
+            Some(temporal_option_to_string(vm, &rounding_mode_value)?)
+        };
+        let rounding_mode = temporal_instant_rounding_mode(rounding_mode.as_deref())?;
+        let smallest_unit_value = get_option(vm, "smallestUnit")?;
+        let smallest_unit = if smallest_unit_value.is_undefined() {
+            None
+        } else {
+            Some(temporal_option_to_string(vm, &smallest_unit_value)?)
+        };
+        let smallest_unit = temporal_instant_smallest_unit(smallest_unit.as_deref())?;
+        let precision = match smallest_unit {
+            None => fractional_second_digits.map_or(
+                temporal::InstantPrecision::Auto,
+                temporal::InstantPrecision::Digits,
+            ),
+            Some(InstantSmallestUnit::Second) => temporal::InstantPrecision::Digits(0),
+            Some(InstantSmallestUnit::Millisecond) => temporal::InstantPrecision::Digits(3),
+            Some(InstantSmallestUnit::Microsecond) => temporal::InstantPrecision::Digits(6),
+            Some(InstantSmallestUnit::Nanosecond) => temporal::InstantPrecision::Digits(9),
+            Some(InstantSmallestUnit::DateOrHour | InstantSmallestUnit::Minute) => {
+                return Err(Error::range(
+                    "Invalid Temporal.Duration smallestUnit option",
+                ));
+            }
+        };
+        let increment = temporal_duration_precision_increment(precision)?;
+        let rounded = if increment == 1 {
+            fields
+        } else {
+            temporal_duration_round_for_string(fields, increment, rounding_mode)?
+        };
+        let integer_values = temporal_duration_integer_values(rounded)?;
+        temporal::format_duration(integer_values, precision)
+            .map(Arc::<str>::from)
+            .map(Value::String)
+            .ok_or_else(|| Error::range("Temporal.Duration string formatting failed"))
+    })();
+    vm.unpin_many(options_pin);
+    result
 }
 
 fn temporal_duration_value_of(

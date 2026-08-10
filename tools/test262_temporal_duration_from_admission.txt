@@ -1,5 +1,6 @@
 # Exact Temporal.Duration.from admission at Test262 9e61c12835c5e4a3bdba93850427e6742c4f64c4.
 built-ins/Temporal/Duration/from/argument-duration-out-of-range.js
+built-ins/Temporal/Duration/from/argument-duration-precision-exact-numerical-values.js
 built-ins/Temporal/Duration/from/argument-duration.js
 built-ins/Temporal/Duration/from/argument-existing-object.js
 built-ins/Temporal/Duration/from/argument-non-string.js

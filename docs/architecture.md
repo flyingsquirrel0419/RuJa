@@ -4841,8 +4841,9 @@ factory used by other native Duration results. This preserves all existing
 range invariants, always creates a fresh object, and ignores receiver subclass
 prototypes. `Duration.from`, PlainTime add/subtract, and Duration.with remain
 allocations 136 through 139. Negated and abs are 140 and 141; the installer
-then installs `Duration.prototype.valueOf` at 142 and reserves 143 maximum live
-pins across 144 allocations.
+then installs `Duration.prototype.valueOf` at 142 and
+`Duration.prototype.toString` at 143, reserving 144 maximum live pins across
+145 allocations.
 
 ```text
 [Decision Log]
@@ -4866,10 +4867,11 @@ therefore produces the foreign Realm's `TypeError`.
 
 The method is installed after the currently supported `with`, `negated`, and
 `abs` properties, preserving their established allocation ordinals. It is
-allocation 142; the complete Temporal installer reserves 143 maximum live pins
-across 144 allocations. Exact heap-cap tests allow only the required error
-object and verify no result allocation, while installer tests cover failure at
-the new function allocation and every batch boundary.
+allocation 142; the later `toString` is 143, and the complete Temporal
+installer reserves 144 maximum live pins across 145 allocations. Exact
+heap-cap tests allow only the required error object and verify no result
+allocation, while installer tests cover failure at each function allocation
+and every batch boundary.
 
 ```text
 [Decision Log]
@@ -4878,7 +4880,38 @@ the new function allocation and every batch boundary.
 - 검토한 주요 대안: receiver brand 후 throw, 공용 Object.prototype 유지, shared generic callback, Duration 전용 native callback을 검토했다.
 - 선택한 방식: receiver/arguments를 받되 사용하지 않는 Duration 전용 length-0 native callback을 method Realm에 설치하고 즉시 TypeError를 반환한다.
 - 다른 대안 대신 이 방식을 선택한 이유: brand 검사는 명세에 없는 관찰과 오류 precedence를 만들며 Object.prototype 경로는 coercion 차단 목적을 달성하지 못한다. 전용 callback은 진단 메시지와 ownership을 명확히 유지한다.
-- 장점, 단점 및 영향: receiver 종류와 인수에 무관한 method-Realm 오류, nonconstruction, zero-result allocation, installer rollback이 재현된다. 명시적 Duration 비교나 문자열화 기능은 추가하지 않는다.
+- 장점, 단점 및 영향: receiver 종류와 인수에 무관한 method-Realm 오류, nonconstruction, zero-result allocation, installer rollback이 재현된다. 이 메서드 자체는 명시적 Duration 비교나 문자열화 기능을 담당하지 않는다.
+```
+
+## Temporal Duration exact serialization
+
+`Temporal.Duration.prototype.toString` copies the branded ten-field hidden
+record before reading options. The options object remains pinned while
+`fractionalSecondDigits`, `roundingMode`, and `smallestUnit` getters and their
+string coercions re-enter JavaScript in specification order. An exact
+nanosecond path avoids unnecessary rebalance; coarser precision converts the
+six time fields to one signed `i128`, applies the selected rounding mode, and
+balances only through the original largest unit with `second` as the minimum.
+Only date-largest records carry complete 24-hour units into `days`, so years,
+months, and weeks remain literal without calendar or time-zone operations.
+
+Rounded integer fields are converted back to f64 only when the round trip is
+exact, then pass the existing mixed-sign and normalized-duration limit check.
+Serialization combines seconds and all three subsecond slots in integer space,
+trims auto precision or emits the requested fixed digits, and publishes an
+Arc-backed String primitive. No temporary Duration or result GC object exists.
+The existing `valueOf` ordinal remains 142; `toString` is allocation 143,
+`Temporal.Now` is 144, and `%Temporal%` is 145. The installer reserves 144
+maximum live pins across all 145 allocations.
+
+```text
+[Decision Log]
+- 목적과 의도: Duration ISO serialization을 large-value precision, signed rounding, bounded balancing, option re-entry와 installer atomicity까지 하나의 hidden-record 경계로 만든다.
+- 기존 구현 및 제약 조건: Duration fields는 exact integral f64이지만 합산 nanoseconds는 Number safe range를 넘는다. PlainTime의 rounding/precision 타입은 재사용 가능하나 Duration은 date fields를 calendar 없이 보존해야 한다.
+- 검토한 주요 대안: f64 time total, BigInt 전용 formatter, 임시 rounded Duration object, public accessor/constructor 경로, bounded i128 direct formatter를 검토했다.
+- 선택한 방식: validated slots를 i128로 복원하고 time total을 exact round/balance한 뒤 field별 f64 round-trip과 기존 Duration validator를 재사용한다. formatter는 hidden integers에서 Arc String을 직접 만든다.
+- 다른 대안 대신 이 방식을 선택한 이유: f64 total은 maximum second/subsecond 정밀도를 잃고 임시 객체는 불필요한 Realm/GC/OOM 실패면을 추가한다. public 경로는 getter, constructor, species를 관찰하며 BigInt만 유지하면 기존 compact record validation과 중복된다.
+- 장점, 단점 및 영향: nine signed rounding modes, auto/fixed precision, day-only carry, invalid rounded boundary, options rooting과 no-result-allocation이 재현된다. relativeTo/calendar balancing과 total은 이 경계에 포함되지 않는다.
 ```
 
 ## Temporal PlainTime arithmetic

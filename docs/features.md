@@ -370,7 +370,11 @@
   copied hidden slots without observing public state, normalize signed zero,
   and create fresh method-Realm results. `valueOf` immediately throws a
   method-Realm `TypeError` for every receiver and ignores all arguments,
-  preventing implicit primitive comparison
+  preventing implicit primitive comparison. `toString` formats the hidden
+  ten-field record as an ISO Duration, supports auto or 0-9 fractional digits,
+  second through nanosecond smallest units and every rounding mode, preserves
+  exact large subsecond combinations, and carries rounded time into days but
+  never into weeks, months, or years
 - **RegExp**: literals `/pattern/flags` with `test`, `exec`, `match`, `source`,
   `flags`, `d`-flag match indices, forward lookahead, backward lookbehind,
   legacy quantified lookahead, Unicode named captures/backreferences,
