@@ -174,6 +174,12 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_duration_to_json_manifest_is_exact_live_disjoint_and_shared
           -v
+      - name: Verify exact Temporal.Duration.prototype.total boundary
+        working-directory: tools
+        run: >-
+          TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_duration_total_manifest_is_exact_live_disjoint_and_shared
+          -v
       - name: Verify exact Temporal.PlainDate core admission
         working-directory: tools
         run: >-
@@ -876,7 +882,7 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
             "${files[@]}" > temporal_duration_core_result.txt 2>&1
           cat temporal_duration_core_result.txt
-          grep -q '^RATE=100.0 PASS=77 FAIL=0 SKIP=0 TOTAL=77 RAN=77$' \
+          grep -q '^RATE=100.0 PASS=78 FAIL=0 SKIP=0 TOTAL=78 RAN=78$' \
             temporal_duration_core_result.txt
       - name: Freeze Temporal.Duration core blockers
         run: |
@@ -888,7 +894,7 @@ jobs:
             python3 tools/test262_temporal_duration_core_diagnostic.py \
             "${files[@]}" > temporal_duration_core_diagnostic.txt 2>&1
           cat temporal_duration_core_diagnostic.txt
-          grep -q '^RATE=98.7 PASS=77 FAIL=1 SKIP=0 TOTAL=78 RAN=78$' \
+          grep -q '^RATE=100.0 PASS=78 FAIL=0 SKIP=0 TOTAL=78 RAN=78$' \
             temporal_duration_core_diagnostic.txt
 
   temporal-duration-from:
@@ -918,7 +924,7 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
             "${files[@]}" > temporal_duration_from_result.txt 2>&1
           cat temporal_duration_from_result.txt
-          grep -q '^RATE=100.0 PASS=30 FAIL=0 SKIP=0 TOTAL=30 RAN=30$' \
+          grep -q '^RATE=100.0 PASS=31 FAIL=0 SKIP=0 TOTAL=31 RAN=31$' \
             temporal_duration_from_result.txt
       - name: Freeze Temporal.Duration.from blockers
         run: |
@@ -930,7 +936,7 @@ jobs:
             python3 tools/test262_temporal_duration_from_diagnostic.py \
             "${files[@]}" > temporal_duration_from_diagnostic.txt 2>&1
           cat temporal_duration_from_diagnostic.txt
-          grep -q '^RATE=96.8 PASS=30 FAIL=1 SKIP=0 TOTAL=31 RAN=31$' \
+          grep -q '^RATE=100.0 PASS=31 FAIL=0 SKIP=0 TOTAL=31 RAN=31$' \
             temporal_duration_from_diagnostic.txt
 
   temporal-duration-with:
@@ -1107,6 +1113,46 @@ jobs:
           cat temporal_duration_to_json_result.txt
           grep -q '^RATE=100.0 PASS=12 FAIL=0 SKIP=0 TOTAL=12 RAN=12$' \
             temporal_duration_to_json_result.txt
+
+  temporal-duration-total:
+    needs: [build, setup]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download RuJa binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ruja-release
+          path: target/release/
+      - run: chmod +x target/release/ruja
+      - name: Checkout pinned Temporal.Duration.prototype.total tests
+        uses: actions/checkout@v4
+        with:
+          repository: tc39/test262
+          ref: ${{ env.TEST262_REV }}
+          path: test262
+          sparse-checkout: |
+            harness
+            test/built-ins/Temporal/Duration/prototype/total
+      - name: Require exact Temporal.Duration.prototype.total boundary
+        run: |
+          mapfile -t admitted < <(grep -hEv '^(#|$)' \
+            tools/test262_temporal_duration_total_admission.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
+            "${admitted[@]}" > temporal_duration_total_result.txt 2>&1
+          cat temporal_duration_total_result.txt
+          grep -q '^RATE=100.0 PASS=28 FAIL=0 SKIP=0 TOTAL=28 RAN=28$' \
+            temporal_duration_total_result.txt
+          mapfile -t complete < <(grep -hEv '^(#|$)' \
+            tools/test262_temporal_duration_total_admission.txt \
+            tools/test262_temporal_duration_total_false_positives.txt \
+            tools/test262_temporal_duration_total_blockers.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_duration_total_diagnostic.py \
+            "${complete[@]}" > temporal_duration_total_diagnostic.txt 2>&1
+          cat temporal_duration_total_diagnostic.txt
+          grep -q '^RATE=55.1 PASS=43 FAIL=35 SKIP=0 TOTAL=78 RAN=78$' \
+            temporal_duration_total_diagnostic.txt
 
   temporal-plain-date-core:
     needs: [build, setup]

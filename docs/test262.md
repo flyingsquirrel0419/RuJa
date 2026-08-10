@@ -14402,13 +14402,13 @@ reproduces exact `startOfDay` **9/0/0**.
 
 ## Temporal.Duration hidden-slot core
 
-`tools/test262_temporal_duration_core_admission.txt` freezes **77** exact
+`tools/test262_temporal_duration_core_admission.txt` freezes **78** exact
 paths covering the constructor root, prototype metadata, and all ten field,
-`sign`, and independently runnable `blank` accessor tests. The dedicated CI job requires **77 pass / 0
-fail / 0 skip**. The paired blocker manifest completes a frozen 78-file core
-surface: `max.js` reaches the unimplemented `Duration.prototype.total`.
+`sign`, and independently runnable `blank` accessor tests. The dedicated CI
+job requires **78 pass / 0 fail / 0 skip**. The paired blocker manifest is now
+empty: `max.js` reaches and passes fixed-unit `Duration.prototype.total`.
 `prototype/blank/basic.js` entered admission when `Duration.from` was added.
-Forced diagnostics therefore require **77 pass / 1 fail / 0 skip**.
+Forced diagnostics therefore require **78 pass / 0 fail / 0 skip**.
 
 The same unit unlocks nine previously frozen ZonedDateTime wrong-type paths,
 including the constructor core's `calendar-wrong-type.js`.
@@ -14422,16 +14422,17 @@ pinned revision before admission; future Duration siblings remain gated.
 - 목적과 의도: Duration constructor/hidden accessor core의 실제 지원 범위와 그 도입으로 해제된 기존 Temporal 의존 경계를 exact accounting에 반영한다.
 - 기존 구현 및 제약 조건: broad Temporal gate는 Duration 540개 전체를 skip하며, core 후보 중 `max.js`는 constructor/accessor 검증 뒤 아직 없는 `total`을 호출한다. `prototype/blank/basic.js`의 이전 `from` 의존은 Duration.from 구현으로 해제됐다. 기존 ZonedDateTime blocker 9개는 wrong-type fixture로 Duration을 생성한다.
 - 검토한 주요 대안: Duration prefix 전체 admission, constructor root만 허용, 의존 API를 stub 처리, 실제 통과한 77개와 one-file complement를 분리하고 기존 blocker를 재실측하는 방식을 검토했다.
-- 선택한 방식: constructor 직접 자식, prototype metadata, 열두 accessor directory의 78개를 core surface로 동결하고 77개 admission/1개 blocker로 나눈다. runner/analyzer feature map, live disjointness, exact/forced CI를 공유하며 기존 manifest에서 통과한 경로를 이동한다.
+- 선택한 방식: constructor 직접 자식, prototype metadata, 열두 accessor directory의 78개를 core surface로 동결했다. 초기 77 admission/1 blocker에서 fixed-unit total 구현 후 78 admission/0 blocker로 이동했고 runner/analyzer feature map, live disjointness, exact/forced CI를 공유한다.
 - 다른 대안 대신 이 방식을 선택한 이유: prefix는 수백 개 미구현 arithmetic/string API를 거짓 지원하고 stub은 real Duration brand를 증명하지 않는다. 명시적 complement와 재실측만이 구현 효과와 남은 의존성을 동시에 보여 준다.
-- 장점, 단점 및 영향: exact 77/0/0과 forced 77/1 및 ZonedDateTime 개선 경계가 재현된다. `Duration.total` 구현 시 남은 blocker를 다시 측정해야 하며 새 sibling은 자동 입장하지 않는다.
+- 장점, 단점 및 영향: 초기 exact 77/0/0과 forced 77/1 경계 및 ZonedDateTime 개선이 기록된다. 후속 fixed-unit total 구현 뒤 current core는 exact/forced 78/0/0이며 새 sibling은 자동 입장하지 않는다.
 ```
 
 Initial implementation commit `dc926dd` was confirmed by ordinary CI
 `31100834541` (**3/3**) and full Test262 CI `31100834476` (**63/63**). After
 `Duration.from` admitted `prototype/blank/basic.js`, full CI `31338280840`
-reproduced the current Duration core exact **77/0/0** and forced
-**77/1/0-skip** boundaries.
+reproduced the then-current Duration core exact **77/0/0** and forced
+**77/1/0-skip** boundaries. The later fixed-unit total unit closes both at
+**78/0/0**.
 
 ## Temporal.PlainDateTime hidden-slot core
 
@@ -14810,17 +14811,16 @@ rejects malformed, outside, and future paths.
 At pinned Test262 revision
 `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the direct
 `Temporal.Duration.from` directory contains 31 files. The exact manifest
-admits **30 pass / 0 fail / 0 skip**. Forced execution of the complete
-directory is **30 pass / 1 fail / 0 skip**: `argument-duration-max.js`
-converts its first case, passes `Duration.prototype.with`, and then reaches
-absent `Duration.prototype.total`. The former precision blocker now reaches
-and passes the implemented `Duration.prototype.toString` assertion.
+admits **31 pass / 0 fail / 0 skip**. Forced execution of the complete
+directory is also **31 pass / 0 fail / 0 skip**. The former maximum blocker
+now passes `Duration.prototype.with` and the no-relative fixed-unit
+`Duration.prototype.total`; the former precision blocker passes `toString`.
 
 The existing Duration hidden-slot core simultaneously moves
 `prototype/blank/basic.js` from its blocker complement into exact admission,
 because its intended assertion now reaches `Duration.from`. Core accounting is
-therefore exact **77/0/0** and forced **77/1/0**; `max.js` remains blocked by
-`Duration.prototype.total`. Shared runner/analyzer manifests freeze every
+therefore exact and forced **78/0/0**; no core blocker remains. Shared
+runner/analyzer manifests freeze every
 path's features, includes, flags, and negative metadata. Dedicated diagnostics
 verify exact path identities before aggregate rates, and reject malformed,
 outside, future, or inaccessible corpus paths.
@@ -14830,9 +14830,9 @@ outside, future, or inaccessible corpus paths.
 - 목적과 의도: Duration.from의 complete direct directory와 기존 Duration core dependency 이동을 실제 intended assertion 도달 기준으로 계상한다.
 - 기존 구현 및 제약 조건: broad Temporal feature gate가 31개 direct 파일을 모두 숨겼고 core blank/basic도 from 부재로 실패했다. direct 두 파일은 from 성공 후 아직 없는 with/total 또는 toString을 호출한다.
 - 검토한 주요 대안: Duration/from prefix 전체 허용, forced pass만 자동 수용, 후행 실패 두 파일도 from 지원으로 계상, exact admission과 explicit blocker complement를 검토했다.
-- 선택한 방식: 실제 통과한 29개 path와 live metadata만 exact manifest에 열고 후행 API 두 파일은 complete complement로 고정한다. core blank/basic은 재실행 후 admission으로 이동하고 max.js만 blocker에 남긴다.
-- 다른 대안 대신 이 방식을 선택한 이유: prefix는 future siblings를 자동 허용하고 process-level forced failure는 from의 intended assertion 도달 여부를 구분하지 않는다. explicit complement만 현재 구현 진전과 남은 API dependency를 동시에 보존한다.
-- 장점, 단점 및 영향: direct exact 30/0과 forced 30/1, core exact 77/0과 forced 77/1, metadata/corpus drift와 future gating이 재현된다. maximum blocker는 total에서만 실패하며 total 구현 시 다시 실측해야 한다.
+- 선택한 방식: 최초 실제 통과 path만 열고 후행 API 파일을 complement로 고정했다. toString과 fixed-unit total 구현 뒤 두 파일을 재실행해 complete 31-file admission으로 이동하고 blocker manifest를 비웠다.
+- 다른 대안 대신 이 방식을 선택한 이유: prefix는 future siblings를 자동 허용하고 process-level forced failure는 from의 intended assertion 도달 여부를 구분하지 않는다. explicit complement와 구현 후 재실행만 현재 진전과 남은 dependency를 정확히 보존한다.
+- 장점, 단점 및 영향: direct exact/forced 31/0과 core exact/forced 78/0, metadata/corpus drift와 future gating이 재현된다. calendar-relative total은 별도 direct complement에 남는다.
 ```
 
 ## Temporal.Duration.prototype.with
@@ -14853,17 +14853,18 @@ sparse checkout.
 
 `Duration.from/argument-duration-max.js` is intentionally not admitted as a
 `with` test. Forced `Duration.from` execution proves that its `with` calls now
-complete and that the file's remaining failure is the downstream absent
-`Duration.prototype.total` dependency.
+complete. The later fixed-unit `Duration.prototype.total` implementation lets
+the file reach and pass its intended assertion, moving the complete direct
+`Duration.from` directory to exact and forced **31/0/0**.
 
 ```text
 [Decision Log]
 - 목적과 의도: Duration.prototype.with의 complete direct surface와 downstream Duration.from 개선을 path identity 및 live metadata로 고정한다.
 - 기존 구현 및 제약 조건: broad Temporal feature gate가 direct 22개를 모두 숨겼고 Duration.from maximum 파일은 with와 total을 연속 호출해 process-level failure만으로 두 API를 구분할 수 없었다.
 - 검토한 주요 대안: directory prefix 허용, forced aggregate만 기록, Duration.from downstream 파일을 with admission에 포함, exact direct manifest와 별도 downstream 진단을 검토했다.
-- 선택한 방식: direct 22개만 exact manifest로 admission하고 diagnostic도 같은 complete set을 강제한다. Duration.from complete diagnostic은 기존 blocker identity를 유지하되 실패 지점이 total로 이동했음을 문서화한다.
+- 선택한 방식: direct 22개만 exact manifest로 admission하고 diagnostic도 같은 complete set을 강제한다. Duration.from complete diagnostic은 downstream 상태를 별도로 재현하며, 후속 fixed-unit total 구현 뒤 maximum 파일을 admission으로 이동했다.
 - 다른 대안 대신 이 방식을 선택한 이유: prefix는 future siblings를 자동 허용하고 aggregate failure는 intended assertion 도달을 증명하지 못한다. downstream 파일 admission은 total 부재를 with 실패로 오계상한다.
-- 장점, 단점 및 영향: direct exact/forced 22/0/0, metadata drift, future gating, configured-corpus failure가 재현된다. total 구현 시 Duration.from blocker 한 건만 재측정하면 된다.
+- 장점, 단점 및 영향: direct exact/forced 22/0/0, metadata drift, future gating, configured-corpus failure가 재현된다. downstream Duration.from은 후속 fixed-unit total 구현 뒤 exact/forced 31/0/0이며 with의 direct ownership은 그대로 분리된다.
 ```
 
 ## Temporal.Duration.prototype.abs and negated
@@ -14938,8 +14939,8 @@ malformed, outside-root, inaccessible, absent configured corpus, and future
 sibling paths fail closed. Ordinary CI and a dedicated full-workflow job both
 require literal `PASS=44 FAIL=0 SKIP=0 TOTAL=44 RAN=44`. The downstream
 `Duration.from/argument-duration-precision-exact-numerical-values.js` file is
-now admitted, moving that complete directory to exact **30/0/0** and forced
-**30/1/0**; only the `total`-dependent maximum file remains blocked.
+now admitted; the later fixed-unit total unit moves the complete directory to
+exact and forced **31/0/0**, with no blocker remaining.
 
 ```text
 [Decision Log]
@@ -14948,7 +14949,7 @@ now admitted, moving that complete directory to exact **30/0/0** and forced
 - 검토한 주요 대안: directory prefix admission, forced aggregate 자동 수용, Duration core 편입, method 전용 exact manifest와 diagnostic을 검토했다.
 - 선택한 방식: direct 44개를 독립 manifest로 고정하고 runner/analyzer exact helper, live complement/disjointness unittest, per-file diagnostic identity, ordinary/full literal count gate를 둔다. from precision 파일은 실제 재실행 후 admission으로 이동한다.
 - 다른 대안 대신 이 방식을 선택한 이유: prefix는 future siblings를 검토 없이 허용하고 aggregate pass는 요청 집합 누락을 숨길 수 있다. core 편입은 option/rounding serialization의 독립 책임을 흐린다.
-- 장점, 단점 및 영향: direct exact/forced 44/0/0, metadata/corpus drift, future gating, downstream from 30/1이 재현된다. calendar-relative total과 locale serialization은 지원 수치에 포함되지 않는다.
+- 장점, 단점 및 영향: direct exact/forced 44/0/0, metadata/corpus drift, future gating이 재현된다. downstream from은 후속 fixed-unit total 뒤 31/0이며 calendar-relative total과 locale serialization은 이 admission에 포함되지 않는다.
 ```
 
 ## Temporal.Duration.prototype.toJSON
@@ -14979,5 +14980,35 @@ formatting surface.
 - 검토한 주요 대안: toString manifest 편입, directory prefix 허용, forced aggregate 자동 수용, 전용 exact manifest와 diagnostic을 검토했다.
 - 선택한 방식: pinned 12-path manifest와 live metadata map을 runner/analyzer가 공유하고 live complement/disjointness/future-path unittest 및 ordinary/full literal count gate를 둔다.
 - 다른 대안 대신 이 방식을 선택한 이유: toString 편입은 options 없는 JSON 계약을 흐리고 prefix는 future siblings를 검토 없이 허용한다. aggregate pass는 요청 파일 누락과 inherited false positive를 숨길 수 있다.
-- 장점, 단점 및 영향: complete exact/forced 12/0/0, metadata/corpus drift, future gating과 method별 ownership이 재현된다. total, compare, locale formatting은 admission되지 않는다.
+- 장점, 단점 및 영향: complete exact/forced 12/0/0, metadata/corpus drift, future gating과 method별 ownership이 재현된다. fixed-unit total은 후속 독립 admission이며 compare와 locale formatting은 admission되지 않는다.
+```
+
+## Temporal.Duration.prototype.total fixed-unit boundary
+
+At pinned Test262 revision
+`9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the complete direct `total`
+directory contains 78 files. Exact admission is **28 pass / 0 fail / 50
+skip** and covers the complete no-`relativeTo` fixed day-through-nanosecond
+branch, built-in shape, option order/coercion, calendar-unit rejection, exact
+large rational rounding, and String shorthand isolation. Forced execution is
+**43 pass / 35 fail / 0 skip**. Fifteen of those passes are unsupported
+`relativeTo` tests that stop at an earlier matching error and remain in a
+separate false-positive manifest; they are not counted as support.
+
+The former downstream blockers now reach their intended assertions:
+`Temporal.Duration.from` is exact/forced **31/0/0**, and the Duration hidden-
+slot core is exact/forced **78/0/0**. Runner and analyzer admit only the 28
+owned direct paths. Three disjoint manifests freeze the complete live
+directory, metadata, 15 false-positive identities, and 35 real blocker
+identities. Ordinary and dedicated full CI require literal exact and forced
+counts.
+
+```text
+[Decision Log]
+- 목적과 의도: total의 독립 no-relative fixed-unit spec branch를 정확히 지원 계상하면서 calendar-relative 미지원과 error-only false positive를 숨기지 않는다.
+- 기존 구현 및 제약 조건: direct 78개는 fixed arithmetic과 relativeTo conversion, ISO calendar, ZonedDateTime, named-zone/DST를 혼합한다. IANA transition provider와 calendar sibling types가 아직 없다.
+- 검토한 주요 대안: 78-file prefix admission, forced 43 pass 전부 admission, total 파일을 admission하지 않고 downstream만 이동, exact branch manifest와 false-positive/blocker complement를 검토했다.
+- 선택한 방식: intended assertion까지 도달한 28개만 admission하고, matching earlier error 15개와 actual failure 35개를 별도 manifest로 고정한다. downstream maximum 두 파일은 재실행 후 admission으로 이동한다.
+- 다른 대안 대신 이 방식을 선택한 이유: prefix와 aggregate pass는 relativeTo 지원을 과장하고 downstream만 이동하면 실제 direct 지원을 누락한다. 세 집합 분리만 구현 진전과 남은 범위를 동시에 증명한다.
+- 장점, 단점 및 영향: exact 28/0/50, forced 43/35/0, core 78/0, from 31/0, live metadata/disjointness/future/corpus failure가 재현된다. 35 calendar-relative failures와 15 false positives가 다음 감사 범위다.
 ```

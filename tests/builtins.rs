@@ -25556,6 +25556,111 @@ fn temporal_duration_to_json_brands_and_uses_method_realm() {
 }
 
 #[test]
+fn temporal_duration_total_converts_fixed_units_with_exact_number_rounding() {
+    assert_eq!(
+        run(r#"
+            var max = new Temporal.Duration(
+              0, 0, 0, 104249991374, 7, 36, 31, 999, 999, 999
+            );
+            var exact = new Temporal.Duration(0, 0, 0, 5, 5, 5, 5, 5, 5, 5);
+            var subseconds = new Temporal.Duration(
+              0, 0, 0, 0, 0, 0, 0, 999, 999999, 999999999
+            );
+            [
+              new Temporal.Duration(0, 0, 0, 0, -60).total('days'),
+              subseconds.total('seconds'),
+              new Temporal.Duration(0, 0, 0, 0, 4000, 0, 0, 0, 0, 1)
+                .total({ unit: 'hours' }),
+              exact.total('nanoseconds'),
+              max.total('seconds'),
+              new Temporal.Duration().total('microseconds'),
+              Temporal.Duration.prototype.total.name,
+              Temporal.Duration.prototype.total.length
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "-2.5|2.998998999|4000.0000000000005|450305005005005|9007199254740992|0|total|1"
+        ))
+    );
+}
+
+#[test]
+fn temporal_duration_total_observes_options_in_order_and_uses_hidden_slots() {
+    assert_eq!(
+        run(r#"
+            var duration = new Temporal.Duration(0, 0, 0, 1);
+            var log = [];
+            var options = {};
+            Object.defineProperty(options, 'relativeTo', {
+              get: function () { log.push('relativeTo'); return undefined; }
+            });
+            Object.defineProperty(options, 'unit', {
+              get: function () {
+                log.push('unit');
+                return { toString: function () { log.push('unit.toString'); return 'hours'; } };
+              }
+            });
+            Object.defineProperty(duration, 'days', {
+              get: function () { throw new Error('public getter observed'); }
+            });
+            Object.defineProperty(Object.prototype, 'relativeTo', {
+              get: function () { throw new Error('prototype observed'); }, configurable: true
+            });
+            var objectResult = duration.total(options);
+            var shorthandResult;
+            try { shorthandResult = duration.total('hours'); }
+            finally { delete Object.prototype.relativeTo; }
+            [objectResult, shorthandResult, log.join(',')].join('|');
+        "#),
+        Value::String(Arc::from("24|24|relativeTo,unit,unit.toString"))
+    );
+}
+
+#[test]
+fn temporal_duration_total_validates_brand_options_units_and_realm() {
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var method = other.Temporal.Duration.prototype.total;
+            var duration = new Temporal.Duration(0, 0, 0, 1);
+            var results = [];
+            try { method.call({}, { get relativeTo() { throw new Error('observed'); } }); }
+            catch (error) { results.push(error instanceof other.TypeError && !(error instanceof TypeError)); }
+            for (var pair of [
+              [function () { return duration.total(); }, TypeError],
+              [function () { return duration.total(null); }, TypeError],
+              [function () { return duration.total({}); }, RangeError],
+              [function () { return duration.total('era'); }, RangeError],
+              [function () { return new Temporal.Duration(1).total('seconds'); }, RangeError],
+              [function () { return duration.total('years'); }, RangeError],
+              [function () { return duration.total({ relativeTo: '2000-01-01', unit: 'hours' }); }, RangeError],
+              [function () { return new Temporal.Duration.prototype.total(); }, TypeError]
+            ]) {
+              try { pair[0](); results.push(false); }
+              catch (error) { results.push(error instanceof pair[1]); }
+            }
+            var marker = {};
+            try {
+              duration.total({
+                get relativeTo() { throw marker; },
+                get unit() { throw new Error('unit observed'); }
+              });
+            } catch (error) { results.push(error === marker); }
+            try {
+              duration.total({
+                relativeTo: undefined,
+                unit: { toString: function () { throw marker; } }
+              });
+            } catch (error) { results.push(error === marker); }
+            results.join('|');
+        "#),
+        Value::String(Arc::from(
+            "true|true|true|true|true|true|true|true|true|true|true"
+        ))
+    );
+}
+
+#[test]
 fn temporal_duration_rejects_non_integral_mixed_and_out_of_range_fields() {
     for source in [
         "Temporal.Duration()",

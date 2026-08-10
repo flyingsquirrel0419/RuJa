@@ -105,9 +105,9 @@ TEMPORAL_DURATION_FROM_BLOCKER_NEGATIVE = {
     for path in TEMPORAL_DURATION_FROM_BLOCKERS
 }
 
-if len(TEMPORAL_DURATION_FROM_FILES) != 30:
-    raise RuntimeError("Temporal.Duration.from admission must contain 30 files")
-if len(TEMPORAL_DURATION_FROM_BLOCKERS) != 1:
-    raise RuntimeError("Temporal.Duration.from blockers must contain 1 file")
+if len(TEMPORAL_DURATION_FROM_FILES) != 31:
+    raise RuntimeError("Temporal.Duration.from admission must contain 31 files")
+if TEMPORAL_DURATION_FROM_BLOCKERS:
+    raise RuntimeError("Temporal.Duration.from blockers must be empty")
 if len(TEMPORAL_DURATION_FROM_ALL_FILES) != 31:
     raise RuntimeError("Temporal.Duration.from surface must contain 31 files")

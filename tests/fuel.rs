@@ -373,6 +373,34 @@ fn temporal_duration_to_string_precharges_option_strings() {
 }
 
 #[test]
+fn temporal_duration_total_precharges_unit_strings() {
+    const BUDGET: i64 = 20_000;
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        globalThis.durationTotalFuel = new Temporal.Duration(0, 0, 0, 1);
+        globalThis.durationTotalUnitShort = { toString() { return 'hour'; } };
+        globalThis.durationTotalUnitLong = { toString() { return 'x'.repeat(512); } };
+        "#,
+    )
+    .expect("Duration.total fuel fixtures should initialize");
+
+    vm.set_fuel(Some(BUDGET));
+    let _ = vm
+        .run("try { durationTotalFuel.total({ unit: durationTotalUnitShort }); } catch (error) {}");
+    let short_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+
+    vm.set_fuel(Some(BUDGET));
+    let _ = vm
+        .run("try { durationTotalFuel.total({ unit: durationTotalUnitLong }); } catch (error) {}");
+    let long_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+    assert!(
+        long_work >= short_work + 500,
+        "Duration.total unit conversion must charge the produced string"
+    );
+}
+
+#[test]
 fn temporal_plain_time_round_precharges_option_strings() {
     const BUDGET: i64 = 20_000;
     let mut vm = Vm::new().expect("failed to initialize VM");

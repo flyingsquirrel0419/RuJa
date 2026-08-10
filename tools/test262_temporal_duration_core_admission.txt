@@ -12,6 +12,7 @@ built-ins/Temporal/Duration/invalid-type.js
 built-ins/Temporal/Duration/large-number.js
 built-ins/Temporal/Duration/length.js
 built-ins/Temporal/Duration/lower-limit.js
+built-ins/Temporal/Duration/max.js
 built-ins/Temporal/Duration/microseconds-undefined.js
 built-ins/Temporal/Duration/milliseconds-undefined.js
 built-ins/Temporal/Duration/minutes-undefined.js

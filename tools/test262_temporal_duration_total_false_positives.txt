@@ -1,0 +1,16 @@
+# Unsupported relativeTo cases that currently pass only through an earlier matching error.
+built-ins/Temporal/Duration/prototype/total/relativeto-argument-propertybag-calendar-invalid-iso-string.js
+built-ins/Temporal/Duration/prototype/total/relativeto-argument-string-calendar-invalid-iso-string.js
+built-ins/Temporal/Duration/prototype/total/relativeto-duration-out-of-range-added-to-relative-date.js
+built-ins/Temporal/Duration/prototype/total/relativeto-no-fractional-minutes-hours.js
+built-ins/Temporal/Duration/prototype/total/relativeto-plaindate-add24hourdaystonormalizedtimeduration-out-of-range.js
+built-ins/Temporal/Duration/prototype/total/relativeto-plaindate-large-time-component-out-of-range.js
+built-ins/Temporal/Duration/prototype/total/relativeto-propertybag-timezone-string-year-zero.js
+built-ins/Temporal/Duration/prototype/total/relativeto-string-invalid.js
+built-ins/Temporal/Duration/prototype/total/relativeto-string-wrong-offset.js
+built-ins/Temporal/Duration/prototype/total/relativeto-zoneddatetime-large-time-component-out-of-range.js
+built-ins/Temporal/Duration/prototype/total/throws-if-date-time-invalid-with-plaindate-relative.js
+built-ins/Temporal/Duration/prototype/total/throws-if-date-time-invalid-with-zoneddatetime-relative.js
+built-ins/Temporal/Duration/prototype/total/throws-if-target-nanoseconds-outside-valid-limits.js
+built-ins/Temporal/Duration/prototype/total/throws-on-wrong-offset-for-zoneddatetime-relativeto.js
+built-ins/Temporal/Duration/prototype/total/year-zero.js

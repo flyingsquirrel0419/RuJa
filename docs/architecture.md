@@ -4843,7 +4843,8 @@ prototypes. `Duration.from`, PlainTime add/subtract, and Duration.with remain
 allocations 136 through 139. Negated and abs are 140 and 141; the installer
 then installs `Duration.prototype.valueOf` at 142,
 `Duration.prototype.toString` at 143, and `Duration.prototype.toJSON` at 144,
-reserving 145 maximum live pins across 146 allocations.
+followed by `Duration.prototype.total` at 145. The complete installer reserves
+146 maximum live pins across 147 allocations.
 
 ```text
 [Decision Log]
@@ -4868,8 +4869,8 @@ therefore produces the foreign Realm's `TypeError`.
 The method is installed after the currently supported `with`, `negated`, and
 `abs` properties, preserving their established allocation ordinals. It is
 allocation 142; the later `toString` and `toJSON` are 143 and 144, and the
-complete Temporal installer reserves 145 maximum live pins across 146
-allocations. Exact heap-cap tests allow only the required error object and
+later `total` is 145. The complete Temporal installer reserves 146 maximum
+live pins across 147 allocations. Exact heap-cap tests allow only the required error object and
 verify no result allocation, while installer tests cover failure at each
 function allocation and every batch boundary.
 
@@ -4901,8 +4902,9 @@ Serialization combines seconds and all three subsecond slots in integer space,
 trims auto precision or emits the requested fixed digits, and publishes an
 Arc-backed String primitive. No temporary Duration or result GC object exists.
 The existing `valueOf` ordinal remains 142; `toString` is allocation 143 and
-`toJSON` is 144. `Temporal.Now` is 145 and `%Temporal%` is 146. The installer
-reserves 145 maximum live pins across all 146 allocations.
+`toJSON` is 144; the later `total` is 145. `Temporal.Now` is 146 and
+`%Temporal%` is 147. The installer reserves 146 maximum live pins across all
+147 allocations.
 
 ```text
 [Decision Log]
@@ -4928,7 +4930,34 @@ Temporal object, method-local root, or result GC object.
 - 검토한 주요 대안: public toString 호출, toString native callback 재사용, formatter 복제, hidden-record auto formatter 직접 호출을 검토했다.
 - 선택한 방식: copied slots를 exact i128 field array로 바꾸고 `InstantPrecision::Auto` formatter 결과를 Arc String primitive로 직접 publish한다.
 - 다른 대안 대신 이 방식을 선택한 이유: public 호출은 override를 관찰하고 callback 재사용은 ignored argument를 options로 오해한다. 복제 formatter는 precision과 range 경계를 drift시킨다.
-- 장점, 단점 및 영향: JSON.stringify key/Proxy argument 비관찰, hidden getter와 overridden toString 비관찰, maximum output, method-Realm brand error, allocation 144 rollback과 146-object installer atomicity가 재현된다. locale JSON 표현이나 total semantics는 추가하지 않는다.
+- 장점, 단점 및 영향: JSON.stringify key/Proxy argument 비관찰, hidden getter와 overridden toString 비관찰, maximum output, method-Realm brand error, allocation 144 rollback이 재현된다. 이 JSON 경계 자체는 locale 또는 total semantics를 추가하지 않으며, 후속 total 설치 뒤 complete installer는 147 objects다.
+```
+
+## Temporal Duration fixed-unit total
+
+`Temporal.Duration.prototype.total` consumes the copied hidden record without
+public accessors. String shorthand is handled directly, so it cannot observe
+polluted `Object.prototype.relativeTo`; object options remain rooted while
+`relativeTo` is read before the required `unit` and while unit string coercion
+can re-enter JavaScript or collect. Calendar units and records containing
+years, months, or weeks require a future relative calendar implementation.
+
+For the independent no-relative branch, all ten integral f64 slots are
+restored exactly to i128. Days and six time fields are combined with checked
+integer nanosecond arithmetic. A `Ratio<BigInt>` divides by the requested
+fixed unit and converts once to f64, avoiding intermediate Number rounding at
+large magnitudes and repeating fractions. The primitive Number result creates
+no GC object. `total` is allocation 145, `Temporal.Now` is 146, `%Temporal%`
+is 147, and the installer reserves 146 maximum live pins.
+
+```text
+[Decision Log]
+- 목적과 의도: spec의 no-relative TotalTimeDuration 분기를 maximum/subsecond exactness와 sandbox resource 계약까지 독립 완결한다.
+- 기존 구현 및 제약 조건: Duration validity는 normalized day/time 범위를 보장하지만 Number 합산은 safe integer를 넘고 hour/day 나눗셈은 반복 이진 분수를 만든다. relativeTo 분기는 CalendarDateAdd, ZonedDateTime difference, IANA transition semantics가 필요하다.
+- 검토한 주요 대안: direct f64 합산/나눗셈, decimal String roundtrip, temporary Duration/BigInt JS objects, exact host Ratio와 primitive Number publication을 검토했다.
+- 선택한 방식: checked i128로 normalized nanoseconds를 만들고 Ratio<BigInt>의 exact rational을 한 번만 f64로 변환한다. relativeTo/calendar 분기는 오류로 분리하고 Test262 complement에서 추적한다.
+- 다른 대안 대신 이 방식을 선택한 이유: f64 중간값은 precision-exact tests를 깨고 JS 임시 객체는 명세에 없는 Realm/GC/OOM 면을 추가한다. partial relativeTo 계산은 DST/calendar 결과를 조용히 오염시킨다.
+- 장점, 단점 및 영향: negative/day balancing, all seven fixed units, exact maximum, option order/coercion, fuel/root/allocation 경계가 고정된다. full total 78개 중 relative/calendar/zoned 50개는 admission되지 않는다.
 ```
 
 ## Temporal PlainTime arithmetic

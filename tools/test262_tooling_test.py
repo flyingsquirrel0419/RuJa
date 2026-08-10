@@ -187,6 +187,17 @@ from test262_temporal_duration_to_json_admission import (
     TEMPORAL_DURATION_TO_JSON_INCLUDES,
     TEMPORAL_DURATION_TO_JSON_NEGATIVE,
 )
+from test262_temporal_duration_total_admission import (
+    TEMPORAL_DURATION_TOTAL_ALL_FEATURES,
+    TEMPORAL_DURATION_TOTAL_ALL_FILES,
+    TEMPORAL_DURATION_TOTAL_ALL_FLAGS,
+    TEMPORAL_DURATION_TOTAL_ALL_INCLUDES,
+    TEMPORAL_DURATION_TOTAL_ALL_NEGATIVE,
+    TEMPORAL_DURATION_TOTAL_BLOCKERS,
+    TEMPORAL_DURATION_TOTAL_FALSE_POSITIVES,
+    TEMPORAL_DURATION_TOTAL_FEATURES,
+    TEMPORAL_DURATION_TOTAL_FILES,
+)
 from test262_temporal_duration_unary_admission import (
     TEMPORAL_DURATION_ABS_FEATURES,
     TEMPORAL_DURATION_ABS_FILES,
@@ -4438,8 +4449,8 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
             ).read_text().splitlines()
             if (line := raw_line.strip()) and not line.startswith("#")
         }
-        self.assertEqual(len(files), 77)
-        self.assertEqual(len(blockers), 1)
+        self.assertEqual(len(files), 78)
+        self.assertEqual(len(blockers), 0)
         self.assertEqual(set(features_by_file), set(files))
         self.assertTrue(files.isdisjoint(blockers))
 
@@ -4542,13 +4553,8 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
         admitted = TEMPORAL_DURATION_FROM_FILES
         blockers = TEMPORAL_DURATION_FROM_BLOCKERS
         all_files = TEMPORAL_DURATION_FROM_ALL_FILES
-        self.assertEqual((len(admitted), len(blockers), len(all_files)), (30, 1, 31))
-        self.assertEqual(
-            blockers,
-            {
-                "built-ins/Temporal/Duration/from/argument-duration-max.js",
-            },
-        )
+        self.assertEqual((len(admitted), len(blockers), len(all_files)), (31, 0, 31))
+        self.assertEqual(blockers, frozenset())
         self.assertTrue(admitted.isdisjoint(blockers))
         self.assertEqual(admitted | blockers, all_files)
         self.assertEqual(set(TEMPORAL_DURATION_FROM_FEATURES), admitted)
@@ -5329,6 +5335,141 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                         self.assertFalse(tool.temporal_duration_to_json_path(future))
                         self.assertEqual(
                             tool.temporal_duration_to_json_features(future), frozenset()
+                        )
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_temporal_duration_total_manifest_is_exact_live_disjoint_and_shared(self):
+        admitted = TEMPORAL_DURATION_TOTAL_FILES
+        false_positives = TEMPORAL_DURATION_TOTAL_FALSE_POSITIVES
+        blockers = TEMPORAL_DURATION_TOTAL_BLOCKERS
+        all_files = TEMPORAL_DURATION_TOTAL_ALL_FILES
+        self.assertEqual(
+            (len(admitted), len(false_positives), len(blockers), len(all_files)),
+            (28, 15, 35, 78),
+        )
+        self.assertFalse(admitted & false_positives)
+        self.assertFalse(admitted & blockers)
+        self.assertFalse(false_positives & blockers)
+        self.assertEqual(admitted | false_positives | blockers, all_files)
+        self.assertEqual(set(TEMPORAL_DURATION_TOTAL_FEATURES), admitted)
+        self.assertEqual(set(TEMPORAL_DURATION_TOTAL_ALL_FEATURES), all_files)
+        self.assertEqual(set(TEMPORAL_DURATION_TOTAL_ALL_INCLUDES), all_files)
+        self.assertEqual(set(TEMPORAL_DURATION_TOTAL_ALL_FLAGS), all_files)
+        self.assertEqual(set(TEMPORAL_DURATION_TOTAL_ALL_NEGATIVE), all_files)
+
+        tools_dir = Path(__file__).resolve().parent
+        for manifest in tools_dir.glob("test262_*_admission.txt"):
+            if manifest.name == "test262_temporal_duration_total_admission.txt":
+                continue
+            existing = {
+                line
+                for raw_line in manifest.read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            self.assertTrue(admitted.isdisjoint(existing), manifest.name)
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        method_dir = test_root / "built-ins/Temporal/Duration/prototype/total"
+        corpus_required = "TEST262" in os.environ
+
+        def live_files():
+            try:
+                if not method_dir.is_dir():
+                    if corpus_required:
+                        raise FileNotFoundError(method_dir)
+                    return None
+                return {
+                    path.relative_to(test_root).as_posix()
+                    for path in method_dir.glob("*.js")
+                    if "_FIXTURE" not in path.name
+                }
+            except OSError:
+                if corpus_required:
+                    raise
+                return None
+
+        live = live_files()
+        if live is not None:
+            self.assertEqual(live, all_files)
+            for relative in all_files:
+                path = test_root / relative
+                metadata = test262_runner.parse_meta(path.read_text())
+                self.assertEqual(
+                    frozenset(metadata.get("features", [])),
+                    TEMPORAL_DURATION_TOTAL_ALL_FEATURES[relative],
+                    relative,
+                )
+                self.assertEqual(
+                    frozenset(metadata.get("includes", [])),
+                    TEMPORAL_DURATION_TOTAL_ALL_INCLUDES[relative],
+                    relative,
+                )
+                self.assertEqual(
+                    frozenset(metadata.get("flags", [])),
+                    TEMPORAL_DURATION_TOTAL_ALL_FLAGS[relative],
+                    relative,
+                )
+                self.assertEqual(
+                    metadata.get("negative"),
+                    TEMPORAL_DURATION_TOTAL_ALL_NEGATIVE[relative],
+                    relative,
+                )
+                for tool in (test262_runner, test262_analyze):
+                    if relative in admitted:
+                        self.assertTrue(tool.temporal_duration_total_path(path), relative)
+                        self.assertEqual(
+                            tool.temporal_duration_total_features(path),
+                            TEMPORAL_DURATION_TOTAL_FEATURES[relative],
+                        )
+                        self.assertFalse(tool.should_skip(metadata, path), relative)
+                    else:
+                        self.assertFalse(tool.temporal_duration_total_path(path), relative)
+                        self.assertEqual(
+                            tool.temporal_duration_total_features(path), frozenset()
+                        )
+                        self.assertTrue(tool.should_skip(metadata, path), relative)
+
+        with patch("pathlib.Path.is_dir", side_effect=PermissionError):
+            if corpus_required:
+                with self.assertRaises(PermissionError):
+                    live_files()
+            else:
+                self.assertIsNone(live_files())
+        with patch("pathlib.Path.is_dir", return_value=False):
+            if corpus_required:
+                with self.assertRaises(FileNotFoundError):
+                    live_files()
+            else:
+                self.assertIsNone(live_files())
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = root / "test/built-ins/Temporal/Duration/prototype/total/future.js"
+            malformed = future.with_name("total.js.bak")
+            outside = root / "test/built-ins/Temporal/Duration/total/basic.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative in admitted:
+                        path = root / "test" / relative
+                        self.assertTrue(tool.temporal_duration_total_path(path), relative)
+                        self.assertEqual(
+                            tool.temporal_duration_total_features(path),
+                            TEMPORAL_DURATION_TOTAL_FEATURES[relative],
+                        )
+                    for path in (future, malformed, outside, None, object()):
+                        self.assertFalse(tool.temporal_duration_total_path(path))
+                        self.assertEqual(
+                            tool.temporal_duration_total_features(path), frozenset()
+                        )
+                    for path in (future, malformed, outside):
+                        self.assertTrue(tool.should_skip({"features": ["Temporal"]}, path))
+                    with patch("pathlib.Path.resolve", side_effect=PermissionError):
+                        self.assertFalse(tool.temporal_duration_total_path(future))
+                        self.assertEqual(
+                            tool.temporal_duration_total_features(future), frozenset()
                         )
                 finally:
                     tool.TEST262 = original_root

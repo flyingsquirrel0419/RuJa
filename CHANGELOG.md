@@ -4,6 +4,26 @@
 
 ### Changed
 
+- Added Realm-local, non-constructable, length-1
+  `Temporal.Duration.prototype.total` for the specification's no-`relativeTo`
+  fixed-unit branch. It reads `relativeTo` before `unit`, accepts singular and
+  plural day-through-nanosecond units, rejects calendar-bearing durations and
+  calendar target units without `relativeTo`, and converts the exact hidden
+  record through `Ratio<BigInt>` before one correctly rounded Number result.
+  The pinned direct directory is exact **28 pass / 0 fail / 50 skip**; forced
+  execution is **43/35/0**, with 15 earlier-error false positives kept outside
+  admission. Duration core and `Duration.from` close at **78/0/0** and
+  **31/0/0**. `total` is allocation 145; the installer reserves 146 maximum
+  live pins across 147 allocations.
+
+  [Decision Log]
+  - 목적과 의도: calendar/time-zone 의존성이 없는 `TotalTimeDuration` 분기를 exact Number, option order, Realm/resource 계약까지 완결하고 마지막 Duration.from maximum blocker를 제거한다.
+  - 기존 구현 및 제약 조건: validated Duration slots와 exact integer conversion은 존재하지만 direct total 78개는 ISO calendar-relative, ZonedDateTime, named-zone/DST까지 포함한다. 엔진에는 IANA transition provider와 PlainMonthDay/PlainYearMonth가 아직 없다.
+  - 검토한 주요 대안: f64 field 합산, 전체 78개를 오류 false positive까지 admission, relativeTo를 무시한 고정-unit 계산, full calendar/zoned 구현을 한 변경에 포함, spec의 독립 no-relative branch 구현을 검토했다.
+  - 선택한 방식: brand 후 String shorthand 또는 rooted options를 처리하고 `relativeTo`, `unit` 순으로 관찰한다. no-relative fixed-unit만 checked i128 nanoseconds와 exact Ratio로 계산하며 나머지는 명시 RangeError 경계 및 exact complement로 남긴다.
+  - 다른 대안 대신 이 방식을 선택한 이유: f64 합산은 large/subsecond 정밀도 테스트를 깨고 relativeTo 무시는 calendar fields와 DST를 잘못 계산한다. 오류 종류만 맞는 파일을 admission하면 intended assertion 도달을 거짓 계상한다.
+  - 장점, 단점 및 영향: exact rational rounding, maximum Duration.from, hidden getter 비관찰, unit coercion fuel, GC-root/OOM rollback, no-result-object allocation이 재현된다. calendar-relative 35 failures와 15 false positives는 후속 구현 전까지 지원으로 세지 않는다.
+
 - Added Realm-local, non-constructable, length-0
   `Temporal.Duration.prototype.toJSON`. It brands the receiver, ignores every
   argument, and serializes the copied ten-field hidden record with automatic

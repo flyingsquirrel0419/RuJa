@@ -6290,7 +6290,7 @@ pub(crate) fn install_temporal_namespace_in_env(
     global: Option<&Value>,
     object_proto: Value,
 ) -> error::Result<Value> {
-    vm.try_reserve_gc_pins(145)?;
+    vm.try_reserve_gc_pins(146)?;
     let mut pin_count = 0;
     let result = (|| {
         let instant_prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
@@ -7101,6 +7101,13 @@ pub(crate) fn install_temporal_namespace_in_env(
             env,
         )?);
         pin_count += vm.pin(&duration_to_json);
+        let duration_total = Value::Object(vm.new_native_function_in_env_with_gc_retry(
+            "total",
+            temporal_duration_total,
+            1,
+            env,
+        )?);
+        pin_count += vm.pin(&duration_total);
 
         let Value::Object(instant_constructor_index) = instant_constructor.clone() else {
             unreachable!()
@@ -7230,6 +7237,7 @@ pub(crate) fn install_temporal_namespace_in_env(
             props.insert(PropertyKey::from("with"), data_prop(duration_with));
             props.insert(PropertyKey::from("negated"), data_prop(duration_negated));
             props.insert(PropertyKey::from("abs"), data_prop(duration_abs));
+            props.insert(PropertyKey::from("total"), data_prop(duration_total));
             props.insert(PropertyKey::from("toString"), data_prop(duration_to_string));
             props.insert(PropertyKey::from("toJSON"), data_prop(duration_to_json));
             props.insert(PropertyKey::from("valueOf"), data_prop(duration_value_of));
@@ -8300,6 +8308,138 @@ fn temporal_duration_to_json(
         .map(Arc::<str>::from)
         .map(Value::String)
         .ok_or_else(|| Error::range("Temporal.Duration JSON formatting failed"))
+}
+
+#[derive(Clone, Copy)]
+enum TemporalDurationTotalUnit {
+    Year,
+    Month,
+    Week,
+    Day,
+    Hour,
+    Minute,
+    Second,
+    Millisecond,
+    Microsecond,
+    Nanosecond,
+}
+
+impl TemporalDurationTotalUnit {
+    fn parse(value: &str) -> error::Result<Self> {
+        Ok(match value {
+            "year" | "years" => Self::Year,
+            "month" | "months" => Self::Month,
+            "week" | "weeks" => Self::Week,
+            "day" | "days" => Self::Day,
+            "hour" | "hours" => Self::Hour,
+            "minute" | "minutes" => Self::Minute,
+            "second" | "seconds" => Self::Second,
+            "millisecond" | "milliseconds" => Self::Millisecond,
+            "microsecond" | "microseconds" => Self::Microsecond,
+            "nanosecond" | "nanoseconds" => Self::Nanosecond,
+            _ => return Err(Error::range("Invalid Temporal total unit option")),
+        })
+    }
+
+    fn is_calendar(self) -> bool {
+        matches!(self, Self::Year | Self::Month | Self::Week)
+    }
+
+    fn nanoseconds(self) -> Option<i128> {
+        Some(match self {
+            Self::Day => 86_400_000_000_000,
+            Self::Hour => 3_600_000_000_000,
+            Self::Minute => 60_000_000_000,
+            Self::Second => 1_000_000_000,
+            Self::Millisecond => 1_000_000,
+            Self::Microsecond => 1_000,
+            Self::Nanosecond => 1,
+            Self::Year | Self::Month | Self::Week => return None,
+        })
+    }
+}
+
+fn temporal_duration_total_without_relative_to(
+    fields: TemporalDurationFields,
+    unit: TemporalDurationTotalUnit,
+) -> error::Result<f64> {
+    let values = temporal_duration_integer_values(fields)?;
+    if values[..3].iter().any(|value| *value != 0) || unit.is_calendar() {
+        return Err(Error::range(
+            "Temporal.Duration calendar units require relativeTo",
+        ));
+    }
+    let total_nanoseconds = values[3]
+        .checked_mul(86_400_000_000_000)
+        .and_then(|value| value.checked_add(values[4].checked_mul(3_600_000_000_000)?))
+        .and_then(|value| value.checked_add(values[5].checked_mul(60_000_000_000)?))
+        .and_then(|value| value.checked_add(values[6].checked_mul(1_000_000_000)?))
+        .and_then(|value| value.checked_add(values[7].checked_mul(1_000_000)?))
+        .and_then(|value| value.checked_add(values[8].checked_mul(1_000)?))
+        .and_then(|value| value.checked_add(values[9]))
+        .ok_or_else(|| Error::range("Temporal.Duration total is out of range"))?;
+    let divisor = unit
+        .nanoseconds()
+        .ok_or_else(|| Error::range("Temporal.Duration calendar units require relativeTo"))?;
+    Ratio::new(BigInt::from(total_nanoseconds), BigInt::from(divisor))
+        .to_f64()
+        .ok_or_else(|| Error::range("Temporal.Duration total is out of range"))
+}
+
+fn temporal_duration_total(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let fields = temporal_duration_slots(vm, this)?;
+    let total_of = args.first().cloned().unwrap_or(Value::Undefined);
+    if total_of.is_undefined() {
+        return Err(Error::type_err(
+            "Temporal.Duration.prototype.total requires an argument",
+        ));
+    }
+
+    let (relative_to, unit) = match &total_of {
+        Value::String(unit) => (Value::Undefined, TemporalDurationTotalUnit::parse(unit)?),
+        Value::Object(_) => {
+            vm.try_reserve_value_roots(std::slice::from_ref(&total_of))?;
+            let options_pin = vm.pin(&total_of);
+            let result = (|| {
+                let relative_to = vm.get_property(&total_of, "relativeTo")?;
+                vm.try_reserve_value_roots(std::slice::from_ref(&relative_to))?;
+                let relative_pin = vm.pin(&relative_to);
+                let unit_result = (|| {
+                    let unit = vm.get_property(&total_of, "unit")?;
+                    if unit.is_undefined() {
+                        return Err(Error::range(
+                            "Temporal.Duration.prototype.total requires a unit",
+                        ));
+                    }
+                    let unit = temporal_option_to_string(vm, &unit)?;
+                    Ok((
+                        relative_to.clone(),
+                        TemporalDurationTotalUnit::parse(&unit)?,
+                    ))
+                })();
+                vm.unpin_many(relative_pin);
+                unit_result
+            })();
+            vm.unpin_many(options_pin);
+            result?
+        }
+        _ => {
+            return Err(Error::type_err(
+                "Temporal.Duration.prototype.total argument must be a String or object",
+            ));
+        }
+    };
+
+    if !relative_to.is_undefined() {
+        return Err(Error::range(
+            "Temporal.Duration relativeTo totals are not implemented",
+        ));
+    }
+    temporal_duration_total_without_relative_to(fields, unit).map(Value::Number)
 }
 
 fn temporal_duration_value_of(

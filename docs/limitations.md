@@ -26,8 +26,11 @@ The following resource limits are enforced:
   and time-smallest-unit options, all rounding modes, and time balancing up to
   the receiver's original largest unit. `toJSON` performs argument-free exact
   automatic-precision serialization directly from hidden slots.
-  Calendar-relative Duration arithmetic, `compare`, `total`, locale
-  formatting, and the remaining methods are not implemented.
+  `total` supports only the no-`relativeTo` fixed day-through-nanosecond
+  branch; calendar-bearing durations, calendar target units, and every
+  defined `relativeTo` remain unsupported. Calendar-relative Duration
+  arithmetic, `compare`, locale formatting, and the remaining methods are not
+  implemented.
   Realm-local `%Temporal.PlainDateTime%` supports
   hidden-slot construction, subclassing, 22 ISO/calendar accessors,
   `@@toStringTag`, always-throwing `valueOf`, and static `from` for branded
