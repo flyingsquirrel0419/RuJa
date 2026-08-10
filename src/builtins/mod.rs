@@ -6290,7 +6290,7 @@ pub(crate) fn install_temporal_namespace_in_env(
     global: Option<&Value>,
     object_proto: Value,
 ) -> error::Result<Value> {
-    vm.try_reserve_gc_pins(144)?;
+    vm.try_reserve_gc_pins(145)?;
     let mut pin_count = 0;
     let result = (|| {
         let instant_prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
@@ -7094,6 +7094,13 @@ pub(crate) fn install_temporal_namespace_in_env(
             env,
         )?);
         pin_count += vm.pin(&duration_to_string);
+        let duration_to_json = Value::Object(vm.new_native_function_in_env_with_gc_retry(
+            "toJSON",
+            temporal_duration_to_json,
+            0,
+            env,
+        )?);
+        pin_count += vm.pin(&duration_to_json);
 
         let Value::Object(instant_constructor_index) = instant_constructor.clone() else {
             unreachable!()
@@ -7224,6 +7231,7 @@ pub(crate) fn install_temporal_namespace_in_env(
             props.insert(PropertyKey::from("negated"), data_prop(duration_negated));
             props.insert(PropertyKey::from("abs"), data_prop(duration_abs));
             props.insert(PropertyKey::from("toString"), data_prop(duration_to_string));
+            props.insert(PropertyKey::from("toJSON"), data_prop(duration_to_json));
             props.insert(PropertyKey::from("valueOf"), data_prop(duration_value_of));
             let mut tag = data_prop(Value::String(Arc::from("Temporal.Duration")));
             tag.writable = false;
@@ -8279,6 +8287,19 @@ fn temporal_duration_to_string(
     })();
     vm.unpin_many(options_pin);
     result
+}
+
+fn temporal_duration_to_json(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let fields = temporal_duration_slots(vm, this)?;
+    let integer_values = temporal_duration_integer_values(fields)?;
+    temporal::format_duration(integer_values, temporal::InstantPrecision::Auto)
+        .map(Arc::<str>::from)
+        .map(Value::String)
+        .ok_or_else(|| Error::range("Temporal.Duration JSON formatting failed"))
 }
 
 fn temporal_duration_value_of(

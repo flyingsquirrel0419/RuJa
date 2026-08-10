@@ -168,6 +168,12 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_duration_to_string_manifest_is_exact_live_disjoint_and_shared
           -v
+      - name: Verify exact Temporal.Duration.prototype.toJSON admission
+        working-directory: tools
+        run: >-
+          TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_duration_to_json_manifest_is_exact_live_disjoint_and_shared
+          -v
       - name: Verify exact Temporal.PlainDate core admission
         working-directory: tools
         run: >-
@@ -1070,6 +1076,37 @@ jobs:
           cat temporal_duration_to_string_result.txt
           grep -q '^RATE=100.0 PASS=44 FAIL=0 SKIP=0 TOTAL=44 RAN=44$' \
             temporal_duration_to_string_result.txt
+
+  temporal-duration-to-json:
+    needs: [build, setup]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download RuJa binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ruja-release
+          path: target/release/
+      - run: chmod +x target/release/ruja
+      - name: Checkout pinned Temporal.Duration.prototype.toJSON tests
+        uses: actions/checkout@v4
+        with:
+          repository: tc39/test262
+          ref: ${{ env.TEST262_REV }}
+          path: test262
+          sparse-checkout: |
+            harness
+            test/built-ins/Temporal/Duration/prototype/toJSON
+      - name: Require exact Temporal.Duration.prototype.toJSON boundary
+        run: |
+          mapfile -t files < <(grep -hEv '^(#|$)' \
+            tools/test262_temporal_duration_to_json_admission.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_duration_to_json_diagnostic.py \
+            "${files[@]}" > temporal_duration_to_json_result.txt 2>&1
+          cat temporal_duration_to_json_result.txt
+          grep -q '^RATE=100.0 PASS=12 FAIL=0 SKIP=0 TOTAL=12 RAN=12$' \
+            temporal_duration_to_json_result.txt
 
   temporal-plain-date-core:
     needs: [build, setup]

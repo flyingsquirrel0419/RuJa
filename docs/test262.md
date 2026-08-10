@@ -14950,3 +14950,34 @@ now admitted, moving that complete directory to exact **30/0/0** and forced
 - 다른 대안 대신 이 방식을 선택한 이유: prefix는 future siblings를 검토 없이 허용하고 aggregate pass는 요청 집합 누락을 숨길 수 있다. core 편입은 option/rounding serialization의 독립 책임을 흐린다.
 - 장점, 단점 및 영향: direct exact/forced 44/0/0, metadata/corpus drift, future gating, downstream from 30/1이 재현된다. calendar-relative total과 locale serialization은 지원 수치에 포함되지 않는다.
 ```
+
+## Temporal.Duration.prototype.toJSON
+
+At pinned Test262 revision
+`9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the complete direct `toJSON`
+directory contains 12 files. Exact admission and forced diagnostic execution
+are both **12 pass / 0 fail / 0 skip**. The surface covers branding and
+built-in shape, blank and signed records, exact maximum/subsecond formatting,
+large/small unit combinations, ignored options, and nonconstruction.
+
+The dedicated manifest freezes every path's features, includes, flags, and
+negative metadata. Runner and analyzer share exact path identity; malformed,
+outside-root, inaccessible, absent configured corpus, and future sibling paths
+fail closed. Ordinary CI and a dedicated full-workflow job require literal
+`PASS=12 FAIL=0 SKIP=0 TOTAL=12 RAN=12`, preventing aggregate success from
+hiding an incomplete directory. Runtime tests separately freeze method-Realm
+errors, `JSON.stringify`, ignored Proxy arguments, hidden getter and overridden
+`toString` non-observation, and no-result-object allocation.
+No pinned downstream file becomes newly admissible: the only non-direct caller
+first requires the unsupported `Intl.DurationFormat` and Duration locale
+formatting surface.
+
+```text
+[Decision Log]
+- 목적과 의도: Duration.toJSON complete direct surface를 toString option/rounding admission과 분리해 exact supported accounting에 반영한다.
+- 기존 구현 및 제약 조건: broad Temporal gate가 12개를 모두 skip했고 toString formatter 지원만으로는 own toJSON shape, ignored argument, branding을 증명하지 못했다.
+- 검토한 주요 대안: toString manifest 편입, directory prefix 허용, forced aggregate 자동 수용, 전용 exact manifest와 diagnostic을 검토했다.
+- 선택한 방식: pinned 12-path manifest와 live metadata map을 runner/analyzer가 공유하고 live complement/disjointness/future-path unittest 및 ordinary/full literal count gate를 둔다.
+- 다른 대안 대신 이 방식을 선택한 이유: toString 편입은 options 없는 JSON 계약을 흐리고 prefix는 future siblings를 검토 없이 허용한다. aggregate pass는 요청 파일 누락과 inherited false positive를 숨길 수 있다.
+- 장점, 단점 및 영향: complete exact/forced 12/0/0, metadata/corpus drift, future gating과 method별 ownership이 재현된다. total, compare, locale formatting은 admission되지 않는다.
+```

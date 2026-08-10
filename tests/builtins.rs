@@ -25500,6 +25500,62 @@ fn temporal_duration_to_string_observes_options_in_order_and_uses_method_realm()
 }
 
 #[test]
+fn temporal_duration_to_json_formats_hidden_record_and_ignores_arguments() {
+    assert_eq!(
+        run(r#"
+            var duration = new Temporal.Duration(1, 2, 3, 4, 5, 6, 7, 987, 650);
+            var reads = 0;
+            Object.defineProperty(duration, 'seconds', {
+              get: function () { reads++; throw new Error('observed'); }
+            });
+            Object.defineProperty(duration, 'toString', {
+              value: function () { reads++; throw new Error('observed'); }
+            });
+            var argument = new Proxy({}, {
+              get: function () { reads++; throw new Error('observed'); }
+            });
+            var maximum = new Temporal.Duration(
+              0, 0, 0, 0, 0, 0, Number.MAX_SAFE_INTEGER, 0, 0, 999999999
+            );
+            [
+              duration.toJSON(argument),
+              JSON.stringify(duration),
+              maximum.toJSON(),
+              new Temporal.Duration(0, 0, 0, 0, 0, 0, 0, 999, 999999, 999999999).toJSON(),
+              reads,
+              Temporal.Duration.prototype.toJSON.name,
+              Temporal.Duration.prototype.toJSON.length
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "P1Y2M3W4DT5H6M7.98765S|\"P1Y2M3W4DT5H6M7.98765S\"|PT9007199254740991.999999999S|PT2.998998999S|0|toJSON|0"
+        ))
+    );
+}
+
+#[test]
+fn temporal_duration_to_json_brands_and_uses_method_realm() {
+    assert_eq!(
+        run(r#"
+            var duration = new Temporal.Duration(1);
+            var other = $262.createRealm().global;
+            var foreign = other.Temporal.Duration.prototype.toJSON;
+            var localResult = foreign.call(duration);
+            var foreignError = false;
+            try { foreign.call({}); }
+            catch (error) {
+              foreignError = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            var nonconstructable = false;
+            try { new Temporal.Duration.prototype.toJSON(); }
+            catch (error) { nonconstructable = error instanceof TypeError; }
+            [localResult, foreignError, nonconstructable].join('|');
+        "#),
+        Value::String(Arc::from("P1Y|true|true"))
+    );
+}
+
+#[test]
 fn temporal_duration_rejects_non_integral_mixed_and_out_of_range_fields() {
     for source in [
         "Temporal.Duration()",

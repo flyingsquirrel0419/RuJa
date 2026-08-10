@@ -4841,9 +4841,9 @@ factory used by other native Duration results. This preserves all existing
 range invariants, always creates a fresh object, and ignores receiver subclass
 prototypes. `Duration.from`, PlainTime add/subtract, and Duration.with remain
 allocations 136 through 139. Negated and abs are 140 and 141; the installer
-then installs `Duration.prototype.valueOf` at 142 and
-`Duration.prototype.toString` at 143, reserving 144 maximum live pins across
-145 allocations.
+then installs `Duration.prototype.valueOf` at 142,
+`Duration.prototype.toString` at 143, and `Duration.prototype.toJSON` at 144,
+reserving 145 maximum live pins across 146 allocations.
 
 ```text
 [Decision Log]
@@ -4867,11 +4867,11 @@ therefore produces the foreign Realm's `TypeError`.
 
 The method is installed after the currently supported `with`, `negated`, and
 `abs` properties, preserving their established allocation ordinals. It is
-allocation 142; the later `toString` is 143, and the complete Temporal
-installer reserves 144 maximum live pins across 145 allocations. Exact
-heap-cap tests allow only the required error object and verify no result
-allocation, while installer tests cover failure at each function allocation
-and every batch boundary.
+allocation 142; the later `toString` and `toJSON` are 143 and 144, and the
+complete Temporal installer reserves 145 maximum live pins across 146
+allocations. Exact heap-cap tests allow only the required error object and
+verify no result allocation, while installer tests cover failure at each
+function allocation and every batch boundary.
 
 ```text
 [Decision Log]
@@ -4900,9 +4900,9 @@ exact, then pass the existing mixed-sign and normalized-duration limit check.
 Serialization combines seconds and all three subsecond slots in integer space,
 trims auto precision or emits the requested fixed digits, and publishes an
 Arc-backed String primitive. No temporary Duration or result GC object exists.
-The existing `valueOf` ordinal remains 142; `toString` is allocation 143,
-`Temporal.Now` is 144, and `%Temporal%` is 145. The installer reserves 144
-maximum live pins across all 145 allocations.
+The existing `valueOf` ordinal remains 142; `toString` is allocation 143 and
+`toJSON` is 144. `Temporal.Now` is 145 and `%Temporal%` is 146. The installer
+reserves 145 maximum live pins across all 146 allocations.
 
 ```text
 [Decision Log]
@@ -4912,6 +4912,23 @@ maximum live pins across all 145 allocations.
 - 선택한 방식: validated slots를 i128로 복원하고 time total을 exact round/balance한 뒤 field별 f64 round-trip과 기존 Duration validator를 재사용한다. formatter는 hidden integers에서 Arc String을 직접 만든다.
 - 다른 대안 대신 이 방식을 선택한 이유: f64 total은 maximum second/subsecond 정밀도를 잃고 임시 객체는 불필요한 Realm/GC/OOM 실패면을 추가한다. public 경로는 getter, constructor, species를 관찰하며 BigInt만 유지하면 기존 compact record validation과 중복된다.
 - 장점, 단점 및 영향: nine signed rounding modes, auto/fixed precision, day-only carry, invalid rounded boundary, options rooting과 no-result-allocation이 재현된다. relativeTo/calendar balancing과 total은 이 경계에 포함되지 않는다.
+```
+
+`Temporal.Duration.prototype.toJSON` is a separate length-0 native boundary.
+It brands and copies the receiver record, ignores every argument including the
+key supplied by `JSON.stringify`, converts the validated slot integers, and
+calls the same formatter at automatic precision. It never invokes the public
+`toString` property and introduces no options, coercion, calendar, temporary
+Temporal object, method-local root, or result GC object.
+
+```text
+[Decision Log]
+- 목적과 의도: automatic Duration JSON serialization을 observable toString/options 경로 없이 exact formatter와 연결한다.
+- 기존 구현 및 제약 조건: shared formatter는 maximum field와 combined subsecond exactness를 해결하지만 toString callback은 options getter/coercion과 rounding을 포함한다. toJSON 명세는 brand 후 auto serialization만 요구한다.
+- 검토한 주요 대안: public toString 호출, toString native callback 재사용, formatter 복제, hidden-record auto formatter 직접 호출을 검토했다.
+- 선택한 방식: copied slots를 exact i128 field array로 바꾸고 `InstantPrecision::Auto` formatter 결과를 Arc String primitive로 직접 publish한다.
+- 다른 대안 대신 이 방식을 선택한 이유: public 호출은 override를 관찰하고 callback 재사용은 ignored argument를 options로 오해한다. 복제 formatter는 precision과 range 경계를 drift시킨다.
+- 장점, 단점 및 영향: JSON.stringify key/Proxy argument 비관찰, hidden getter와 overridden toString 비관찰, maximum output, method-Realm brand error, allocation 144 rollback과 146-object installer atomicity가 재현된다. locale JSON 표현이나 total semantics는 추가하지 않는다.
 ```
 
 ## Temporal PlainTime arithmetic

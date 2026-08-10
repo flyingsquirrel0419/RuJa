@@ -374,7 +374,9 @@
   ten-field record as an ISO Duration, supports auto or 0-9 fractional digits,
   second through nanosecond smallest units and every rounding mode, preserves
   exact large subsecond combinations, and carries rounded time into days but
-  never into weeks, months, or years
+  never into weeks, months, or years. `toJSON` ignores all arguments and
+  serializes the same hidden record at automatic precision without invoking
+  an observable `toString`
 - **RegExp**: literals `/pattern/flags` with `test`, `exec`, `match`, `source`,
   `flags`, `d`-flag match indices, forward lookahead, backward lookbehind,
   legacy quantified lookahead, Unicode named captures/backreferences,

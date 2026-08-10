@@ -87,6 +87,7 @@ jobs:
             test/built-ins/Temporal/Duration/prototype/with
             test/built-ins/Temporal/Duration/prototype/valueOf
             test/built-ins/Temporal/Duration/prototype/toString
+            test/built-ins/Temporal/Duration/prototype/toJSON
             test/built-ins/Temporal/PlainTime
             test/built-ins/Temporal/PlainDate/prototype/toPlainDateTime
       - name: Run exact Temporal.Duration.prototype.with admission
@@ -134,6 +135,17 @@ jobs:
             "${files[@]}" | tee temporal_duration_to_string_result.txt
           grep -q '^RATE=100.0 PASS=44 FAIL=0 SKIP=0 TOTAL=44 RAN=44$' \
             temporal_duration_to_string_result.txt
+      - name: Run exact Temporal.Duration.prototype.toJSON admission
+        run: |
+          mapfile -t files < <(
+            grep -hEv '^(#|$)' \
+              tools/test262_temporal_duration_to_json_admission.txt
+          )
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_duration_to_json_diagnostic.py \
+            "${files[@]}" | tee temporal_duration_to_json_result.txt
+          grep -q '^RATE=100.0 PASS=12 FAIL=0 SKIP=0 TOTAL=12 RAN=12$' \
+            temporal_duration_to_json_result.txt
       - name: Run exact Temporal.PlainTime admissions
         run: |
           mapfile -t files < <(

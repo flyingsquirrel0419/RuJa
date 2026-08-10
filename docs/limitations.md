@@ -24,9 +24,10 @@ The following resource limits are enforced:
   transforms, while `valueOf` always throws to reject implicit primitive
   coercion. `toString` supports exact ISO formatting, all fractional precision
   and time-smallest-unit options, all rounding modes, and time balancing up to
-  the receiver's original largest unit. Calendar-relative Duration arithmetic,
-  `compare`, `total`, `toJSON`, locale formatting, and the remaining methods
-  are not implemented.
+  the receiver's original largest unit. `toJSON` performs argument-free exact
+  automatic-precision serialization directly from hidden slots.
+  Calendar-relative Duration arithmetic, `compare`, `total`, locale
+  formatting, and the remaining methods are not implemented.
   Realm-local `%Temporal.PlainDateTime%` supports
   hidden-slot construction, subclassing, 22 ISO/calendar accessors,
   `@@toStringTag`, always-throwing `valueOf`, and static `from` for branded

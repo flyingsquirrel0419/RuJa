@@ -1,0 +1,13 @@
+# Exact Temporal.Duration.prototype.toJSON admission at Test262 9e61c12835c5e4a3bdba93850427e6742c4f64c4.
+built-ins/Temporal/Duration/prototype/toJSON/balance-subseconds.js
+built-ins/Temporal/Duration/prototype/toJSON/basic.js
+built-ins/Temporal/Duration/prototype/toJSON/branding.js
+built-ins/Temporal/Duration/prototype/toJSON/builtin.js
+built-ins/Temporal/Duration/prototype/toJSON/large-with-small-units.js
+built-ins/Temporal/Duration/prototype/toJSON/length.js
+built-ins/Temporal/Duration/prototype/toJSON/max-value.js
+built-ins/Temporal/Duration/prototype/toJSON/name.js
+built-ins/Temporal/Duration/prototype/toJSON/negative-components.js
+built-ins/Temporal/Duration/prototype/toJSON/not-a-constructor.js
+built-ins/Temporal/Duration/prototype/toJSON/options.js
+built-ins/Temporal/Duration/prototype/toJSON/prop-desc.js

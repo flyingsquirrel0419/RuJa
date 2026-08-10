@@ -5,6 +5,23 @@
 ### Changed
 
 - Added Realm-local, non-constructable, length-0
+  `Temporal.Duration.prototype.toJSON`. It brands the receiver, ignores every
+  argument, and serializes the copied ten-field hidden record with automatic
+  precision through the exact Duration formatter. It does not read public
+  accessors or delegate to an overridden `toString`. The pinned complete
+  direct Test262 directory is exact **12/0/0**. Existing `valueOf` and
+  `toString` ordinals remain 142 and 143; `toJSON` is allocation 144, and the
+  installer reserves 145 maximum live pins across 146 allocations.
+
+  [Decision Log]
+  - 목적과 의도: JSON serialization을 explicit toString 옵션 경로와 분리해 brand, ignored arguments, hidden-record exactness, Realm/resource 계약을 완결한다.
+  - 기존 구현 및 제약 조건: exact Duration formatter와 toString은 존재하지만 toJSON은 options를 받지 않고 observable `this.toString` 호출도 허용하지 않는다. JSON.stringify는 key 인수를 전달하므로 인수 비관찰이 별도 계약이다.
+  - 검토한 주요 대안: `this.toString()` 호출, native toString callback 재호출, formatter 복제, hidden slots에서 auto formatter 직접 호출을 검토했다.
+  - 선택한 방식: receiver slots를 brand/copy하고 exact integer fields로 복원한 뒤 공용 formatter의 Auto precision을 직접 호출해 host String primitive를 반환한다.
+  - 다른 대안 대신 이 방식을 선택한 이유: property 호출은 overridden toString과 Proxy/public state를 잘못 관찰하고 native callback 재호출은 명세에 없는 options/root 경로를 만든다. formatter 복제는 maximum/subsecond exactness를 drift시킨다.
+  - 장점, 단점 및 영향: JSON.stringify, ignored Proxy/key argument, overridden toString 비관찰, maximum/subsecond output, method-Realm errors, no-result-object allocation과 exact 12-file admission이 고정된다. total, compare, locale formatting은 별도 단위다.
+
+- Added Realm-local, non-constructable, length-0
   `Temporal.Duration.prototype.toString`. It brands before options, reads
   `fractionalSecondDigits`, `roundingMode`, and `smallestUnit` in normative
   order, rounds signed time in exact integer nanoseconds, balances only to the
@@ -14,7 +31,8 @@
   the Duration range. The pinned direct Test262 directory is exact **44/0/0**;
   downstream `Duration.from` improves from **29/2** to **30/1**. Existing
   allocation 142 remains `valueOf`; `toString` is 143, and the installer now
-  reserves 144 maximum live pins across 145 allocations.
+  reserves 145 maximum live pins across 146 allocations after the later
+  `toJSON` installation.
 
   [Decision Log]
   - 목적과 의도: Duration의 명시적 ISO 직렬화를 옵션 관찰, exact rounding, range validation, Realm/resource 계약까지 완결한다.
@@ -32,8 +50,9 @@
   serialized Duration strings. At pinned Test262 revision
   `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the complete direct directory is
   exact **7/0/0**. Existing allocations 136 through 141 remain stable,
-  `valueOf` remains allocation 142; after the later `toString` installation,
-  the installer reserves 144 maximum live pins across 145 allocations.
+  `valueOf` remains allocation 142; after the later `toString` and `toJSON`
+  installations, the installer reserves 145 maximum live pins across 146
+  allocations.
 
   [Decision Log]
   - 목적과 의도: Duration의 암시적 primitive coercion을 명세대로 금지하고 잘못된 문자열 사전식 비교 경로를 닫는다.
