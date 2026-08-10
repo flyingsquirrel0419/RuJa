@@ -25585,6 +25585,45 @@ fn temporal_duration_total_converts_fixed_units_with_exact_number_rounding() {
 }
 
 #[test]
+fn temporal_duration_total_resolves_plain_and_fixed_offset_relative_dates() {
+    assert_eq!(
+        run(r#"
+            var twoYears = new Temporal.Duration(0, 11, 0, 396);
+            var negativeTwoYears = twoYears.negated();
+            var fortyDays = new Temporal.Duration(0, 0, 0, 40);
+            var almostWeek = new Temporal.Duration(0, 0, 0, 6, 20);
+            var leapWindow = new Temporal.Duration(1, 0, 0, 0, 1);
+            var monthWindow = new Temporal.Duration(0, 1, 0, 0, 10);
+            var plain = new Temporal.PlainDate(2020, 2, 1);
+            var plainDateTime = new Temporal.PlainDateTime(2020, 2, 1, 23);
+            var fixed = new Temporal.ZonedDateTime(1_000_000_000_000_000_000n, '+04:30');
+            Object.defineProperty(plain, 'year', {
+              get: function () { throw new Error('public getter observed'); }
+            });
+            [
+              twoYears.total({ unit: 'years', relativeTo: new Temporal.PlainDate(2017, 1, 1) }),
+              negativeTwoYears.total({ unit: 'years', relativeTo: new Temporal.PlainDate(2019, 1, 1) }),
+              new Temporal.Duration(1).total({ unit: 'days', relativeTo: new Temporal.PlainDate(2020, 1, 1) }),
+              new Temporal.Duration(0, 1).total({ unit: 'days', relativeTo: new Temporal.PlainDate(2020, 1, 31) }),
+              fortyDays.total({ unit: 'months', relativeTo: plain }).toPrecision(16),
+              almostWeek.total({ unit: 'weeks', relativeTo: plain }),
+              leapWindow.total({ unit: 'years', relativeTo: new Temporal.PlainDate(2020, 2, 29) }),
+              monthWindow.total({ unit: 'months', relativeTo: new Temporal.PlainDate(2020, 1, 31) }),
+              new Temporal.Duration(1, 0, 0, 0, 24).total({ unit: 'days', relativeTo: plainDateTime }),
+              new Temporal.Duration(0, 0, 1, 0, 1).total({ unit: 'days', relativeTo: fixed }),
+              new Temporal.Duration(1, 0, 0, 0, 24).total({
+                unit: 'days', relativeTo: { year: 2000, month: 1, day: 1 }
+              }),
+              new Temporal.Duration().total({ unit: 'months', relativeTo: '+275760-09-13' })
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "2|-2|366|29|1.354838709677419|0.9761904761904762|1.0001141552511414|1.0134408602150538|367|7.041666666666667|367|0"
+        ))
+    );
+}
+
+#[test]
 fn temporal_duration_total_observes_options_in_order_and_uses_hidden_slots() {
     assert_eq!(
         run(r#"
@@ -25631,9 +25670,10 @@ fn temporal_duration_total_validates_brand_options_units_and_realm() {
               [function () { return duration.total(null); }, TypeError],
               [function () { return duration.total({}); }, RangeError],
               [function () { return duration.total('era'); }, RangeError],
+              [function () { return duration.total({ relativeTo: '2000-01-01[America/New_York]', unit: 'hours' }); }, RangeError],
               [function () { return new Temporal.Duration(1).total('seconds'); }, RangeError],
               [function () { return duration.total('years'); }, RangeError],
-              [function () { return duration.total({ relativeTo: '2000-01-01', unit: 'hours' }); }, RangeError],
+              [function () { return duration.total({ relativeTo: 'invalid', unit: 'hours' }); }, RangeError],
               [function () { return new Temporal.Duration.prototype.total(); }, TypeError]
             ]) {
               try { pair[0](); results.push(false); }
@@ -25655,7 +25695,7 @@ fn temporal_duration_total_validates_brand_options_units_and_realm() {
             results.join('|');
         "#),
         Value::String(Arc::from(
-            "true|true|true|true|true|true|true|true|true|true|true"
+            "true|true|true|true|true|true|true|true|true|true|true|true"
         ))
     );
 }

@@ -616,6 +616,10 @@ pub(crate) fn parse_zoned_date_time_string(source: &str) -> Option<ParsedZonedDa
     })
 }
 
+pub(crate) fn has_time_zone_annotation(source: &str) -> bool {
+    parse_date_time(source, true).is_some_and(|parsed| parsed.time_zone_annotation.is_some())
+}
+
 pub(crate) struct ParsedPlainDateTime {
     pub fields: IsoDateTimeFields,
     pub calendar_identifier: Arc<str>,
@@ -711,18 +715,6 @@ pub(crate) fn resolve_fixed_offset_epoch(
         return Some(local_nanoseconds);
     }
     let annotation_offset = i128::from(time_zone_offset_minutes) * 60 * NS_PER_SECOND;
-    if source_offset_nanoseconds.is_some()
-        && matches!(
-            offset_option,
-            ZonedDateTimeOffsetOption::Prefer | ZonedDateTimeOffsetOption::Reject
-        )
-        && local_nanoseconds
-            .div_euclid(SECONDS_PER_DAY * NS_PER_SECOND)
-            .unsigned_abs()
-            > 100_000_000
-    {
-        return None;
-    }
     let selected_offset = match (source_offset_nanoseconds, offset_option) {
         (None, _) | (_, ZonedDateTimeOffsetOption::Ignore) => annotation_offset,
         (Some(source), ZonedDateTimeOffsetOption::Use) => source,
@@ -740,7 +732,24 @@ pub(crate) fn resolve_fixed_offset_epoch(
             source
         }
     };
-    local_nanoseconds.checked_sub(selected_offset)
+    let epoch_nanoseconds = local_nanoseconds.checked_sub(selected_offset)?;
+    if source_offset_nanoseconds.is_some()
+        && matches!(
+            offset_option,
+            ZonedDateTimeOffsetOption::Prefer | ZonedDateTimeOffsetOption::Reject
+        )
+    {
+        let day_nanoseconds = SECONDS_PER_DAY * NS_PER_SECOND;
+        let minimum = -100_000_000_i128 * day_nanoseconds;
+        let maximum_local = 99_999_999_i128 * day_nanoseconds;
+        let instant_limit = 100_000_000_i128 * day_nanoseconds;
+        if local_nanoseconds < minimum
+            || (local_nanoseconds > maximum_local && epoch_nanoseconds != instant_limit)
+        {
+            return None;
+        }
+    }
+    Some(epoch_nanoseconds)
 }
 
 pub(crate) fn resolve_zoned_date_time_epoch(
@@ -1307,7 +1316,7 @@ pub(crate) fn add_plain_time(
     ))
 }
 
-fn civil_from_days(days: i128) -> Option<(i128, i128, i128)> {
+pub(crate) fn civil_from_days(days: i128) -> Option<(i128, i128, i128)> {
     let shifted = days.checked_add(719_468)?;
     let era = if shifted >= 0 {
         shifted

@@ -14832,7 +14832,7 @@ outside, future, or inaccessible corpus paths.
 - 검토한 주요 대안: Duration/from prefix 전체 허용, forced pass만 자동 수용, 후행 실패 두 파일도 from 지원으로 계상, exact admission과 explicit blocker complement를 검토했다.
 - 선택한 방식: 최초 실제 통과 path만 열고 후행 API 파일을 complement로 고정했다. toString과 fixed-unit total 구현 뒤 두 파일을 재실행해 complete 31-file admission으로 이동하고 blocker manifest를 비웠다.
 - 다른 대안 대신 이 방식을 선택한 이유: prefix는 future siblings를 자동 허용하고 process-level forced failure는 from의 intended assertion 도달 여부를 구분하지 않는다. explicit complement와 구현 후 재실행만 현재 진전과 남은 dependency를 정확히 보존한다.
-- 장점, 단점 및 영향: direct exact/forced 31/0과 core exact/forced 78/0, metadata/corpus drift와 future gating이 재현된다. calendar-relative total은 별도 direct complement에 남는다.
+- 장점, 단점 및 영향: direct exact/forced 31/0과 core exact/forced 78/0, metadata/corpus drift와 future gating이 재현된다. 후속 relative total 구현 뒤 direct total complement에는 external calendar-sibling fixture 한 건만 남는다.
 ```
 
 ## Temporal.Duration.prototype.with
@@ -14983,32 +14983,38 @@ formatting surface.
 - 장점, 단점 및 영향: complete exact/forced 12/0/0, metadata/corpus drift, future gating과 method별 ownership이 재현된다. fixed-unit total은 후속 독립 admission이며 compare와 locale formatting은 admission되지 않는다.
 ```
 
-## Temporal.Duration.prototype.total fixed-unit boundary
+## Temporal.Duration.prototype.total relative boundary
 
 At pinned Test262 revision
 `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the complete direct `total`
-directory contains 78 files. Exact admission is **28 pass / 0 fail / 50
-skip** and covers the complete no-`relativeTo` fixed day-through-nanosecond
-branch, built-in shape, option order/coercion, calendar-unit rejection, exact
-large rational rounding, and String shorthand isolation. Forced execution is
-**43 pass / 35 fail / 0 skip**. Fifteen of those passes are unsupported
-`relativeTo` tests that stop at an earlier matching error and remain in a
-separate false-positive manifest; they are not counted as support.
+directory contains 78 files. The complete supported boundary is **77 pass / 0
+fail / 1 skip**; the exact 77-path admission is **77/0/0**, and forced complete
+execution is **77 pass / 1 fail / 0 skip**. Admission covers the
+no-relative fixed branch plus ISO PlainDate/PlainDateTime and UTC/fixed-offset
+ZonedDateTime relative totals for all ten units, branded fast paths, complete
+property-bag order/coercion, plain/zoned strings, signed calendar fractions,
+zero early return, offset matching, leap seconds, and every exercised date,
+date-time, and target-epoch limit. No earlier-error false positive remains.
+
+The sole blocker, `calendar-temporal-object.js`, constructs missing
+`Temporal.PlainMonthDay` and `Temporal.PlainYearMonth` fixtures before its
+callback can invoke `total`. It remains an explicit external-fixture blocker;
+stubbing those constructors or counting its unreachable assertion would
+overstate both sibling and total support.
 
 The former downstream blockers now reach their intended assertions:
 `Temporal.Duration.from` is exact/forced **31/0/0**, and the Duration hidden-
-slot core is exact/forced **78/0/0**. Runner and analyzer admit only the 28
+slot core is exact/forced **78/0/0**. Runner and analyzer admit only the 77
 owned direct paths. Three disjoint manifests freeze the complete live
-directory, metadata, 15 false-positive identities, and 35 real blocker
-identities. Ordinary and dedicated full CI require literal exact and forced
-counts.
+directory, metadata, empty false-positive set, and one external blocker.
+Ordinary and dedicated full CI require literal exact and forced counts.
 
 ```text
 [Decision Log]
-- 목적과 의도: total의 독립 no-relative fixed-unit spec branch를 정확히 지원 계상하면서 calendar-relative 미지원과 error-only false positive를 숨기지 않는다.
-- 기존 구현 및 제약 조건: direct 78개는 fixed arithmetic과 relativeTo conversion, ISO calendar, ZonedDateTime, named-zone/DST를 혼합한다. IANA transition provider와 calendar sibling types가 아직 없다.
-- 검토한 주요 대안: 78-file prefix admission, forced 43 pass 전부 admission, total 파일을 admission하지 않고 downstream만 이동, exact branch manifest와 false-positive/blocker complement를 검토했다.
-- 선택한 방식: intended assertion까지 도달한 28개만 admission하고, matching earlier error 15개와 actual failure 35개를 별도 manifest로 고정한다. downstream maximum 두 파일은 재실행 후 admission으로 이동한다.
-- 다른 대안 대신 이 방식을 선택한 이유: prefix와 aggregate pass는 relativeTo 지원을 과장하고 downstream만 이동하면 실제 direct 지원을 누락한다. 세 집합 분리만 구현 진전과 남은 범위를 동시에 증명한다.
-- 장점, 단점 및 영향: exact 28/0/50, forced 43/35/0, core 78/0, from 31/0, live metadata/disjointness/future/corpus failure가 재현된다. 35 calendar-relative failures와 15 false positives가 다음 감사 범위다.
+- 목적과 의도: total의 complete direct surface를 intended assertion 도달 기준으로 계상하고 total 외부 sibling fixture를 분리한다.
+- 기존 구현 및 제약 조건: 초기 fixed branch는 28 admission, 15 earlier-error false positive, 35 blocker였다. relativeTo conversion과 ISO/fixed-offset arithmetic 구현 후 77개가 실제 assertion까지 통과하지만 한 파일은 absent calendar sibling construction에서 먼저 실패한다.
+- 검토한 주요 대안: 78-file prefix admission, unreachable callback도 total support로 계상, blocker 파일 삭제, exact admission과 one-file complement를 검토했다.
+- 선택한 방식: 재실행으로 증명된 77개만 admission하고 false-positive manifest를 비운다. fixture 실패 1개는 complete directory identity와 metadata를 유지한 채 blocker로 남긴다.
+- 다른 대안 대신 이 방식을 선택한 이유: prefix는 future sibling과 unreachable assertion을 거짓 허용하고 blocker 삭제는 complete denominator를 숨긴다. exact complement만 total 구현과 missing PlainMonthDay/PlainYearMonth 책임을 구분한다.
+- 장점, 단점 및 영향: exact 77/0/1, forced 77/1/0, core 78/0, from 31/0, live metadata/disjointness/future/corpus failure가 재현된다. total 내부 relativeTo blocker는 없고 external calendar sibling fixture만 남는다.
 ```

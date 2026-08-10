@@ -4933,14 +4933,15 @@ Temporal object, method-local root, or result GC object.
 - 장점, 단점 및 영향: JSON.stringify key/Proxy argument 비관찰, hidden getter와 overridden toString 비관찰, maximum output, method-Realm brand error, allocation 144 rollback이 재현된다. 이 JSON 경계 자체는 locale 또는 total semantics를 추가하지 않으며, 후속 total 설치 뒤 complete installer는 147 objects다.
 ```
 
-## Temporal Duration fixed-unit total
+## Temporal Duration relative total
 
 `Temporal.Duration.prototype.total` consumes the copied hidden record without
 public accessors. String shorthand is handled directly, so it cannot observe
 polluted `Object.prototype.relativeTo`; object options remain rooted while
-`relativeTo` is read before the required `unit` and while unit string coercion
-can re-enter JavaScript or collect. Calendar units and records containing
-years, months, or weeks require a future relative calendar implementation.
+`relativeTo` is fully converted before the required `unit`. A copied
+Plain/Zoned relative record unifies branded PlainDate, PlainDateTime, and
+ZonedDateTime fast paths with the complete ordered property-bag reader and the
+audited plain/zoned string parsers. No temporary Temporal result is allocated.
 
 For the independent no-relative branch, all ten integral f64 slots are
 restored exactly to i128. Days and six time fields are combined with checked
@@ -4950,14 +4951,24 @@ large magnitudes and repeating fractions. The primitive Number result creates
 no GC object. `total` is allocation 145, `Temporal.Now` is 146, `%Temporal%`
 is 147, and the installer reserves 146 maximum live pins.
 
+With a relative record, constrained ISO year/month addition preserves the
+starting day where possible, then adds weeks, days, and exact time
+nanoseconds. Year and month totals locate the signed whole-unit boundary and
+the adjacent boundary around the destination; one exact `Ratio<BigInt>`
+combines the whole count and fractional progress. Weeks and fixed units divide
+the exact elapsed nanoseconds directly. Plain date-time limits and zoned target
+epoch limits are checked before publication. UTC and fixed offsets use this
+deterministic path; named zones remain closed because no transition provider
+exists.
+
 ```text
 [Decision Log]
-- 목적과 의도: spec의 no-relative TotalTimeDuration 분기를 maximum/subsecond exactness와 sandbox resource 계약까지 독립 완결한다.
-- 기존 구현 및 제약 조건: Duration validity는 normalized day/time 범위를 보장하지만 Number 합산은 safe integer를 넘고 hour/day 나눗셈은 반복 이진 분수를 만든다. relativeTo 분기는 CalendarDateAdd, ZonedDateTime difference, IANA transition semantics가 필요하다.
-- 검토한 주요 대안: direct f64 합산/나눗셈, decimal String roundtrip, temporary Duration/BigInt JS objects, exact host Ratio와 primitive Number publication을 검토했다.
-- 선택한 방식: checked i128로 normalized nanoseconds를 만들고 Ratio<BigInt>의 exact rational을 한 번만 f64로 변환한다. relativeTo/calendar 분기는 오류로 분리하고 Test262 complement에서 추적한다.
-- 다른 대안 대신 이 방식을 선택한 이유: f64 중간값은 precision-exact tests를 깨고 JS 임시 객체는 명세에 없는 Realm/GC/OOM 면을 추가한다. partial relativeTo 계산은 DST/calendar 결과를 조용히 오염시킨다.
-- 장점, 단점 및 영향: negative/day balancing, all seven fixed units, exact maximum, option order/coercion, fuel/root/allocation 경계가 고정된다. full total 78개 중 relative/calendar/zoned 50개는 admission되지 않는다.
+- 목적과 의도: no-relative fixed total과 ISO/fixed-offset relative total을 하나의 exact hidden-record 경계로 완결한다.
+- 기존 구현 및 제약 조건: Duration slots와 parser/property readers는 있었지만 통합 RelativeTo record, ISO DateAdd, calendar-unit fraction, target range helper가 없었다. IANA transition provider와 일부 calendar sibling constructors도 없다.
+- 검토한 주요 대안: direct f64 합산, branded PlainDate 전용 분기, ZonedDateTime.from 임시 객체, copied relative record와 pure checked arithmetic을 검토했다.
+- 선택한 방식: relativeTo를 unit보다 먼저 copied Plain/Zoned record로 변환한다. constrained ISO date add와 checked i128 destination을 만든 뒤 one-shot Ratio<BigInt>로 fixed/calendar 결과를 publish한다.
+- 다른 대안 대신 이 방식을 선택한 이유: f64 중간값은 precision-exact tests를 깨고 임시 JS 객체는 명세에 없는 Realm/GC/OOM 면을 추가한다. 입력별 ad hoc 분기는 property order, offset, zero/range semantics를 drift시킨다.
+- 장점, 단점 및 영향: all units, signed month/year nudge, leap/end-of-month, property/string conversion, zero/range/offset errors, no-result-allocation이 재현된다. direct 78개 중 77개가 통과하며 나머지 1개는 total 호출 전에 absent PlainMonthDay/PlainYearMonth fixture에서 중단한다. named-IANA totals는 transition provider 전까지 거부된다.
 ```
 
 ## Temporal PlainTime arithmetic

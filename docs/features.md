@@ -42,9 +42,11 @@
   property bags, and ISO Duration strings, with exact mixed-sign and
   normalized-range validation. Prototype `with` performs ordered partial
   updates, `abs`/`negated` transform hidden signs, `valueOf` always throws to
-  reject implicit primitive coercion, and `total` exactly converts
-  no-`relativeTo` durations without years/months/weeks into fixed day-through-
-  nanosecond Number totals.
+  reject implicit primitive coercion, and `total` exactly converts every unit
+  relative to ISO PlainDate/PlainDateTime or UTC/fixed-offset ZonedDateTime
+  inputs supplied through hidden slots, ordered property bags, or audited
+  strings. Calendar year/month fractions and all day/time totals retain exact
+  rational arithmetic until the final Number conversion.
   Realm-local `Temporal.PlainDateTime` supports hidden-slot construction,
   subclassing, calendar ID, all ISO date/time and derived calendar accessors,
   always-throwing `valueOf`, static `from` conversion for branded values, ISO
@@ -72,7 +74,7 @@
   conversion currently accepts ISO calendars with UTC or minute-precision
   fixed offsets. Remaining PlainDate and PlainDateTime methods,
   arithmetic/formatting and conversion methods, calendar-relative and zoned
-  Duration arithmetic,
+  Duration operations beyond the supported `total` boundary,
   calendar sibling types, named IANA timezone
   transitions, the remaining RFC 9557 grammar, and `Temporal.Now` methods
   remain outside the supported boundary.

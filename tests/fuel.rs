@@ -381,6 +381,8 @@ fn temporal_duration_total_precharges_unit_strings() {
         globalThis.durationTotalFuel = new Temporal.Duration(0, 0, 0, 1);
         globalThis.durationTotalUnitShort = { toString() { return 'hour'; } };
         globalThis.durationTotalUnitLong = { toString() { return 'x'.repeat(512); } };
+        globalThis.durationTotalRelativeShort = 'x';
+        globalThis.durationTotalRelativeLong = 'x'.repeat(512);
         "#,
     )
     .expect("Duration.total fuel fixtures should initialize");
@@ -397,6 +399,18 @@ fn temporal_duration_total_precharges_unit_strings() {
     assert!(
         long_work >= short_work + 500,
         "Duration.total unit conversion must charge the produced string"
+    );
+
+    vm.set_fuel(Some(BUDGET));
+    let _ = vm.run("try { durationTotalFuel.total({ unit: 'day', relativeTo: durationTotalRelativeShort }); } catch (error) {}");
+    let short_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+
+    vm.set_fuel(Some(BUDGET));
+    let _ = vm.run("try { durationTotalFuel.total({ unit: 'day', relativeTo: durationTotalRelativeLong }); } catch (error) {}");
+    let long_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+    assert!(
+        long_work >= short_work + 500,
+        "Duration.total relativeTo parsing must charge source bytes"
     );
 }
 

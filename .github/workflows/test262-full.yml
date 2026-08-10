@@ -1141,7 +1141,7 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
             "${admitted[@]}" > temporal_duration_total_result.txt 2>&1
           cat temporal_duration_total_result.txt
-          grep -q '^RATE=100.0 PASS=28 FAIL=0 SKIP=0 TOTAL=28 RAN=28$' \
+          grep -q '^RATE=100.0 PASS=77 FAIL=0 SKIP=0 TOTAL=77 RAN=77$' \
             temporal_duration_total_result.txt
           mapfile -t complete < <(grep -hEv '^(#|$)' \
             tools/test262_temporal_duration_total_admission.txt \
@@ -1151,7 +1151,7 @@ jobs:
             python3 tools/test262_temporal_duration_total_diagnostic.py \
             "${complete[@]}" > temporal_duration_total_diagnostic.txt 2>&1
           cat temporal_duration_total_diagnostic.txt
-          grep -q '^RATE=55.1 PASS=43 FAIL=35 SKIP=0 TOTAL=78 RAN=78$' \
+          grep -q '^RATE=98.7 PASS=77 FAIL=1 SKIP=0 TOTAL=78 RAN=78$' \
             temporal_duration_total_diagnostic.txt
 
   temporal-plain-date-core:

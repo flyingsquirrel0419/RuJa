@@ -8359,6 +8359,411 @@ impl TemporalDurationTotalUnit {
     }
 }
 
+enum TemporalDurationRelativeTo {
+    Plain {
+        date: TemporalPlainDateFields,
+        calendar_identifier: Arc<str>,
+    },
+    Zoned {
+        epoch_nanoseconds: Arc<BigInt>,
+        time_zone: TemporalTimeZone,
+        calendar_identifier: Arc<str>,
+    },
+}
+
+fn temporal_duration_plain_date_from_property_fields(
+    fields: &TemporalZonedDateTimePropertyFields,
+) -> error::Result<TemporalPlainDateFields> {
+    let year = fields
+        .year
+        .as_ref()
+        .ok_or_else(|| Error::type_err("Temporal property bag requires year"))?
+        .to_i128()
+        .ok_or_else(|| Error::range("Temporal year is out of range"))?;
+    if fields.month.is_none() && fields.month_code.is_none() {
+        return Err(Error::type_err(
+            "Temporal property bag requires month or monthCode",
+        ));
+    }
+    let mut month = fields
+        .month
+        .clone()
+        .unwrap_or_else(|| BigInt::from(fields.month_code.unwrap().0));
+    if let Some((month_code, leap)) = fields.month_code {
+        if leap || !(1..=12).contains(&month_code) {
+            return Err(Error::range("Invalid monthCode for ISO 8601 calendar"));
+        }
+        if fields
+            .month
+            .as_ref()
+            .is_some_and(|value| value != &BigInt::from(month_code))
+        {
+            return Err(Error::range("month and monthCode do not agree"));
+        }
+        month = BigInt::from(month_code);
+    }
+    if month <= BigInt::zero() {
+        return Err(Error::range("Temporal month is out of range"));
+    }
+    let month = month
+        .min(BigInt::from(12))
+        .to_i128()
+        .ok_or_else(|| Error::range("Temporal month is out of range"))?;
+    let day = fields
+        .day
+        .as_ref()
+        .ok_or_else(|| Error::type_err("Temporal property bag requires day"))?;
+    if day <= &BigInt::zero() {
+        return Err(Error::range("Temporal day is out of range"));
+    }
+    let maximum_day = temporal::days_in_month(year, month)
+        .ok_or_else(|| Error::range("Temporal month is out of range"))?;
+    let day = day
+        .min(&BigInt::from(maximum_day))
+        .to_i128()
+        .ok_or_else(|| Error::range("Temporal day is out of range"))?;
+    temporal_plain_date_fields([BigInt::from(year), BigInt::from(month), BigInt::from(day)])
+        .ok_or_else(|| Error::range("Temporal relativeTo date is out of range"))
+}
+
+fn temporal_duration_relative_to(
+    vm: &mut Vm,
+    value: &Value,
+) -> error::Result<Option<TemporalDurationRelativeTo>> {
+    if value.is_undefined() {
+        return Ok(None);
+    }
+    if let Some((date, calendar_identifier)) = temporal_plain_date_slots_if_present(vm, value) {
+        return Ok(Some(TemporalDurationRelativeTo::Plain {
+            date,
+            calendar_identifier,
+        }));
+    }
+    if let Some((date_time, calendar_identifier)) =
+        temporal_plain_date_time_slots_if_present(vm, value)
+    {
+        return Ok(Some(TemporalDurationRelativeTo::Plain {
+            date: TemporalPlainDateFields {
+                year: date_time.year,
+                month: date_time.month,
+                day: date_time.day,
+            },
+            calendar_identifier,
+        }));
+    }
+    if let Some((epoch_nanoseconds, time_zone, calendar_identifier)) =
+        temporal_zoned_date_time_slots_if_present(vm, value)
+    {
+        return Ok(Some(TemporalDurationRelativeTo::Zoned {
+            epoch_nanoseconds,
+            time_zone,
+            calendar_identifier,
+        }));
+    }
+    if matches!(value, Value::Object(_)) {
+        let fields = temporal_zoned_date_time_property_fields(vm, value)?;
+        if fields.time_zone.is_some() {
+            let (epoch_nanoseconds, time_zone, calendar_identifier) =
+                temporal_zoned_date_time_from_property_fields(
+                    fields,
+                    TemporalZonedDateTimeFromOptions {
+                        offset: temporal::ZonedDateTimeOffsetOption::Reject,
+                        overflow: TemporalOverflow::Constrain,
+                    },
+                )?;
+            return Ok(Some(TemporalDurationRelativeTo::Zoned {
+                epoch_nanoseconds,
+                time_zone,
+                calendar_identifier,
+            }));
+        }
+        let date = temporal_duration_plain_date_from_property_fields(&fields)?;
+        return Ok(Some(TemporalDurationRelativeTo::Plain {
+            date,
+            calendar_identifier: fields.calendar_identifier,
+        }));
+    }
+    let Value::String(source) = value else {
+        return Err(Error::type_err(
+            "Temporal relativeTo must be a String or object",
+        ));
+    };
+    vm.consume_fuel_units(source.len().min(i64::MAX as usize) as i64)?;
+    if let Some(parsed) = temporal::parse_zoned_date_time_string(source) {
+        let epoch_nanoseconds = temporal::resolve_zoned_date_time_epoch(
+            &parsed,
+            temporal::ZonedDateTimeOffsetOption::Reject,
+        )
+        .ok_or_else(|| Error::range("Temporal relativeTo offset does not match"))?;
+        if epoch_nanoseconds.abs() > temporal_instant_limit_nanoseconds() {
+            return Err(Error::range("Temporal relativeTo is out of range"));
+        }
+        return Ok(Some(TemporalDurationRelativeTo::Zoned {
+            epoch_nanoseconds: Arc::new(epoch_nanoseconds),
+            time_zone: temporal_time_zone_from_identifier(
+                parsed.time_zone_identifier,
+                parsed.offset_minutes,
+            ),
+            calendar_identifier: parsed.calendar_identifier,
+        }));
+    }
+    if temporal::has_time_zone_annotation(source) {
+        return Err(Error::range("Named Temporal time zones are not available"));
+    }
+    let parsed = temporal::parse_plain_date_string(source)
+        .ok_or_else(|| Error::range("Invalid Temporal relativeTo string"))?;
+    let date = temporal_plain_date_fields([
+        BigInt::from(parsed.year),
+        BigInt::from(parsed.month),
+        BigInt::from(parsed.day),
+    ])
+    .ok_or_else(|| Error::range("Temporal relativeTo is out of range"))?;
+    Ok(Some(TemporalDurationRelativeTo::Plain {
+        date,
+        calendar_identifier: parsed.calendar_identifier,
+    }))
+}
+
+const TEMPORAL_DURATION_DAY_NANOSECONDS: i128 = 86_400_000_000_000;
+
+fn temporal_duration_iso_date_add(
+    date: TemporalPlainDateFields,
+    years: i128,
+    months: i128,
+    weeks: i128,
+    days: i128,
+) -> error::Result<i128> {
+    let month_index = i128::from(date.year)
+        .checked_mul(12)
+        .and_then(|value| value.checked_add(i128::from(date.month) - 1))
+        .and_then(|value| value.checked_add(years.checked_mul(12)?))
+        .and_then(|value| value.checked_add(months))
+        .ok_or_else(|| Error::range("Temporal relative date is out of range"))?;
+    let year = month_index.div_euclid(12);
+    let month = month_index.rem_euclid(12) + 1;
+    let day = i128::from(date.day).min(
+        temporal::days_in_month(year, month)
+            .ok_or_else(|| Error::range("Temporal relative date is out of range"))?,
+    );
+    let epoch_day = temporal::days_from_civil(year, month, day)
+        .and_then(|value| value.checked_add(weeks.checked_mul(7)?))
+        .and_then(|value| value.checked_add(days))
+        .ok_or_else(|| Error::range("Temporal relative date is out of range"))?;
+    let (year, month, day) = temporal::civil_from_days(epoch_day)
+        .ok_or_else(|| Error::range("Temporal relative date is out of range"))?;
+    temporal_plain_date_fields([BigInt::from(year), BigInt::from(month), BigInt::from(day)])
+        .ok_or_else(|| Error::range("Temporal relative date is out of range"))?;
+    Ok(epoch_day)
+}
+
+fn temporal_duration_calendar_boundary_nanoseconds(
+    date: TemporalPlainDateFields,
+    unit: TemporalDurationTotalUnit,
+    count: i128,
+) -> error::Result<i128> {
+    let (years, months) = match unit {
+        TemporalDurationTotalUnit::Year => (count, 0),
+        TemporalDurationTotalUnit::Month => (0, count),
+        _ => return Err(Error::internal("Invalid Temporal calendar boundary unit")),
+    };
+    temporal_duration_iso_date_add(date, years, months, 0, 0)?
+        .checked_mul(TEMPORAL_DURATION_DAY_NANOSECONDS)
+        .ok_or_else(|| Error::range("Temporal relative date is out of range"))
+}
+
+fn temporal_duration_total_calendar_unit(
+    date: TemporalPlainDateFields,
+    destination_nanoseconds: i128,
+    unit: TemporalDurationTotalUnit,
+) -> error::Result<f64> {
+    let start_day = temporal::days_from_civil(
+        i128::from(date.year),
+        i128::from(date.month),
+        i128::from(date.day),
+    )
+    .ok_or_else(|| Error::internal("Invalid Temporal relative date"))?;
+    let start_nanoseconds = start_day
+        .checked_mul(TEMPORAL_DURATION_DAY_NANOSECONDS)
+        .ok_or_else(|| Error::range("Temporal relative date is out of range"))?;
+    let direction = match destination_nanoseconds.cmp(&start_nanoseconds) {
+        std::cmp::Ordering::Less => -1_i128,
+        std::cmp::Ordering::Equal => return Ok(0.0),
+        std::cmp::Ordering::Greater => 1_i128,
+    };
+    let destination_day = destination_nanoseconds.div_euclid(TEMPORAL_DURATION_DAY_NANOSECONDS);
+    let (destination_year, destination_month, _) = temporal::civil_from_days(destination_day)
+        .ok_or_else(|| Error::range("Temporal destination is out of range"))?;
+    let mut whole = match unit {
+        TemporalDurationTotalUnit::Year => destination_year - i128::from(date.year),
+        TemporalDurationTotalUnit::Month => destination_year
+            .checked_mul(12)
+            .and_then(|value| value.checked_add(destination_month - 1))
+            .and_then(|value| {
+                value.checked_sub(i128::from(date.year) * 12 + (i128::from(date.month) - 1))
+            })
+            .ok_or_else(|| Error::range("Temporal total is out of range"))?,
+        _ => return Err(Error::internal("Invalid Temporal calendar total unit")),
+    };
+    loop {
+        let boundary = temporal_duration_calendar_boundary_nanoseconds(date, unit, whole)?;
+        let overshot = if direction > 0 {
+            boundary > destination_nanoseconds
+        } else {
+            boundary < destination_nanoseconds
+        };
+        if !overshot {
+            break;
+        }
+        whole = whole
+            .checked_sub(direction)
+            .ok_or_else(|| Error::range("Temporal total is out of range"))?;
+    }
+    loop {
+        let candidate = whole
+            .checked_add(direction)
+            .ok_or_else(|| Error::range("Temporal total is out of range"))?;
+        let boundary = temporal_duration_calendar_boundary_nanoseconds(date, unit, candidate)?;
+        let fits = if direction > 0 {
+            boundary <= destination_nanoseconds
+        } else {
+            boundary >= destination_nanoseconds
+        };
+        if !fits {
+            break;
+        }
+        whole = candidate;
+    }
+    let boundary = temporal_duration_calendar_boundary_nanoseconds(date, unit, whole)?;
+    let next = temporal_duration_calendar_boundary_nanoseconds(
+        date,
+        unit,
+        whole
+            .checked_add(direction)
+            .ok_or_else(|| Error::range("Temporal total is out of range"))?,
+    )?;
+    let span = next
+        .checked_sub(boundary)
+        .and_then(i128::checked_abs)
+        .ok_or_else(|| Error::range("Temporal total is out of range"))?;
+    let progress = destination_nanoseconds
+        .checked_sub(boundary)
+        .and_then(i128::checked_abs)
+        .ok_or_else(|| Error::range("Temporal total is out of range"))?;
+    let numerator =
+        BigInt::from(whole) * BigInt::from(span) + BigInt::from(direction) * BigInt::from(progress);
+    Ratio::new(numerator, BigInt::from(span))
+        .to_f64()
+        .ok_or_else(|| Error::range("Temporal total is out of range"))
+}
+
+fn temporal_duration_total_with_relative_to(
+    fields: TemporalDurationFields,
+    unit: TemporalDurationTotalUnit,
+    relative_to: TemporalDurationRelativeTo,
+) -> error::Result<f64> {
+    let values = temporal_duration_integer_values(fields)?;
+    if values.iter().all(|value| *value == 0) {
+        return Ok(0.0);
+    }
+    let (date, zoned_epoch_nanoseconds, plain_relative) = match relative_to {
+        TemporalDurationRelativeTo::Plain {
+            date,
+            calendar_identifier,
+        } => {
+            if calendar_identifier.as_ref() != "iso8601" {
+                return Err(Error::range("Non-ISO Temporal calendars are not available"));
+            }
+            (date, None, true)
+        }
+        TemporalDurationRelativeTo::Zoned {
+            epoch_nanoseconds,
+            time_zone,
+            calendar_identifier,
+        } => {
+            if calendar_identifier.as_ref() != "iso8601" {
+                return Err(Error::range("Non-ISO Temporal calendars are not available"));
+            }
+            if matches!(time_zone.kind, TemporalTimeZoneKind::Named(_)) {
+                return Err(Error::range("Named Temporal time zones are not available"));
+            }
+            (
+                temporal_zoned_date_time_plain_date_fields(&epoch_nanoseconds, &time_zone)?,
+                Some(epoch_nanoseconds),
+                false,
+            )
+        }
+    };
+    let start_day = temporal::days_from_civil(
+        i128::from(date.year),
+        i128::from(date.month),
+        i128::from(date.day),
+    )
+    .ok_or_else(|| Error::internal("Invalid Temporal relative date"))?;
+    let start_nanoseconds = start_day
+        .checked_mul(TEMPORAL_DURATION_DAY_NANOSECONDS)
+        .ok_or_else(|| Error::range("Temporal relative date is out of range"))?;
+    let minimum_plain_nanoseconds = temporal::days_from_civil(-271_821, 4, 20)
+        .and_then(|value| value.checked_mul(TEMPORAL_DURATION_DAY_NANOSECONDS))
+        .ok_or_else(|| Error::internal("Invalid Temporal minimum date"))?;
+    let maximum_plain_nanoseconds = temporal::days_from_civil(275_760, 9, 14)
+        .and_then(|value| value.checked_mul(TEMPORAL_DURATION_DAY_NANOSECONDS))
+        .ok_or_else(|| Error::internal("Invalid Temporal maximum date"))?;
+    if plain_relative
+        && !(minimum_plain_nanoseconds..maximum_plain_nanoseconds).contains(&start_nanoseconds)
+    {
+        return Err(Error::range("Temporal relative date-time is out of range"));
+    }
+    let end_day = temporal_duration_iso_date_add(date, values[0], values[1], values[2], values[3])?;
+    let time_nanoseconds = temporal_duration_time_nanoseconds(fields)?;
+    let destination_nanoseconds = end_day
+        .checked_mul(TEMPORAL_DURATION_DAY_NANOSECONDS)
+        .and_then(|value| value.checked_add(time_nanoseconds))
+        .ok_or_else(|| Error::range("Temporal destination is out of range"))?;
+    if plain_relative
+        && !(minimum_plain_nanoseconds..maximum_plain_nanoseconds)
+            .contains(&destination_nanoseconds)
+    {
+        return Err(Error::range("Temporal destination is out of range"));
+    }
+    let destination = temporal::iso_date_time(&BigInt::from(destination_nanoseconds), 0)
+        .ok_or_else(|| Error::range("Temporal destination is out of range"))?;
+    temporal_plain_date_time_fields_from_iso(temporal::IsoDateTimeFields {
+        year: destination.year,
+        month: destination.month,
+        day: destination.day,
+        hour: destination.hour,
+        minute: destination.minute,
+        second: destination.second,
+        millisecond: destination.millisecond,
+        microsecond: destination.microsecond,
+        nanosecond: destination.nanosecond,
+    })?;
+    let total_nanoseconds = destination_nanoseconds
+        .checked_sub(start_nanoseconds)
+        .ok_or_else(|| Error::range("Temporal total is out of range"))?;
+    if let Some(epoch_nanoseconds) = zoned_epoch_nanoseconds {
+        let target = epoch_nanoseconds.as_ref() + BigInt::from(total_nanoseconds);
+        if target.abs() > temporal_instant_limit_nanoseconds() {
+            return Err(Error::range("Temporal target epoch is out of range"));
+        }
+    }
+    if matches!(
+        unit,
+        TemporalDurationTotalUnit::Year | TemporalDurationTotalUnit::Month
+    ) {
+        return temporal_duration_total_calendar_unit(date, destination_nanoseconds, unit);
+    }
+    let divisor = match unit {
+        TemporalDurationTotalUnit::Week => TEMPORAL_DURATION_DAY_NANOSECONDS * 7,
+        _ => unit
+            .nanoseconds()
+            .ok_or_else(|| Error::internal("Invalid Temporal total unit"))?,
+    };
+    Ratio::new(BigInt::from(total_nanoseconds), BigInt::from(divisor))
+        .to_f64()
+        .ok_or_else(|| Error::range("Temporal total is out of range"))
+}
+
 fn temporal_duration_total_without_relative_to(
     fields: TemporalDurationFields,
     unit: TemporalDurationTotalUnit,
@@ -8400,7 +8805,7 @@ fn temporal_duration_total(
     }
 
     let (relative_to, unit) = match &total_of {
-        Value::String(unit) => (Value::Undefined, TemporalDurationTotalUnit::parse(unit)?),
+        Value::String(unit) => (None, TemporalDurationTotalUnit::parse(unit)?),
         Value::Object(_) => {
             vm.try_reserve_value_roots(std::slice::from_ref(&total_of))?;
             let options_pin = vm.pin(&total_of);
@@ -8409,6 +8814,7 @@ fn temporal_duration_total(
                 vm.try_reserve_value_roots(std::slice::from_ref(&relative_to))?;
                 let relative_pin = vm.pin(&relative_to);
                 let unit_result = (|| {
+                    let relative_to = temporal_duration_relative_to(vm, &relative_to)?;
                     let unit = vm.get_property(&total_of, "unit")?;
                     if unit.is_undefined() {
                         return Err(Error::range(
@@ -8416,10 +8822,7 @@ fn temporal_duration_total(
                         ));
                     }
                     let unit = temporal_option_to_string(vm, &unit)?;
-                    Ok((
-                        relative_to.clone(),
-                        TemporalDurationTotalUnit::parse(&unit)?,
-                    ))
+                    Ok((relative_to, TemporalDurationTotalUnit::parse(&unit)?))
                 })();
                 vm.unpin_many(relative_pin);
                 unit_result
@@ -8434,10 +8837,9 @@ fn temporal_duration_total(
         }
     };
 
-    if !relative_to.is_undefined() {
-        return Err(Error::range(
-            "Temporal.Duration relativeTo totals are not implemented",
-        ));
+    if let Some(relative_to) = relative_to {
+        return temporal_duration_total_with_relative_to(fields, unit, relative_to)
+            .map(Value::Number);
     }
     temporal_duration_total_without_relative_to(fields, unit).map(Value::Number)
 }
@@ -9601,7 +10003,7 @@ struct TemporalZonedDateTimePropertyFields {
     microsecond: BigInt,
     nanosecond: BigInt,
     offset_nanoseconds: Option<i128>,
-    time_zone: TemporalTimeZone,
+    time_zone: Option<TemporalTimeZone>,
     calendar_identifier: Arc<str>,
 }
 
@@ -11149,10 +11551,11 @@ fn temporal_zoned_date_time_property_fields(
         };
         let second = numeric_or_zero(vm, "second")?;
         let time_zone_value = vm.get_property(item, "timeZone")?;
-        if time_zone_value.is_undefined() {
-            return Err(Error::type_err("Temporal property bag requires timeZone"));
-        }
-        let time_zone = temporal_time_zone_from_value(vm, time_zone_value)?;
+        let time_zone = if time_zone_value.is_undefined() {
+            None
+        } else {
+            Some(temporal_time_zone_from_value(vm, time_zone_value)?)
+        };
         let year = match vm.get_property(item, "year")? {
             Value::Undefined => None,
             value => Some(temporal_integer_with_truncation(vm, value)?),
@@ -11204,7 +11607,13 @@ fn temporal_zoned_date_time_from_property_bag(
 ) -> error::Result<(Arc<BigInt>, TemporalTimeZone, Arc<str>)> {
     let fields = temporal_zoned_date_time_property_fields(vm, item)?;
     let options = temporal_zoned_date_time_from_options(vm, options)?;
+    temporal_zoned_date_time_from_property_fields(fields, options)
+}
 
+fn temporal_zoned_date_time_from_property_fields(
+    fields: TemporalZonedDateTimePropertyFields,
+    options: TemporalZonedDateTimeFromOptions,
+) -> error::Result<(Arc<BigInt>, TemporalTimeZone, Arc<str>)> {
     let year = fields
         .year
         .as_ref()
@@ -11278,7 +11687,11 @@ fn temporal_zoned_date_time_from_property_bag(
             nanosecond,
         })
         .ok_or_else(|| Error::range("Temporal date-time is out of range"))?;
-    let time_zone_offset_minutes = match &fields.time_zone.kind {
+    let time_zone = fields
+        .time_zone
+        .clone()
+        .ok_or_else(|| Error::type_err("Temporal property bag requires timeZone"))?;
+    let time_zone_offset_minutes = match &time_zone.kind {
         TemporalTimeZoneKind::Utc => 0,
         TemporalTimeZoneKind::FixedOffset(minutes) => *minutes,
         TemporalTimeZoneKind::Named(_) => {
@@ -11301,7 +11714,7 @@ fn temporal_zoned_date_time_from_property_bag(
     }
     Ok((
         Arc::new(epoch_nanoseconds),
-        fields.time_zone,
+        time_zone,
         fields.calendar_identifier,
     ))
 }

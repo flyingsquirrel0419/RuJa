@@ -2503,11 +2503,18 @@ fn temporal_duration_total_roots_options_and_allocates_no_result_object() {
         r#"
         globalThis.durationTotalValue = new Temporal.Duration(0, 0, 0, 1);
         globalThis.durationTotalGets = 0;
+        globalThis.durationTotalRelative = {
+          get day() { durationTotalGets++; forceDurationTotalGc(); return 1; },
+          get month() { durationTotalGets++; forceDurationTotalGc(); return 1; },
+          get year() { durationTotalGets++; forceDurationTotalGc(); return 2000; }
+        };
         globalThis.durationTotalOptions = {
           get relativeTo() {
             durationTotalGets++;
             forceDurationTotalGc();
-            return undefined;
+            var result = durationTotalRelative;
+            durationTotalRelative = undefined;
+            return result;
           },
           get unit() {
             durationTotalGets++;
@@ -2524,12 +2531,11 @@ fn temporal_duration_total_roots_options_and_allocates_no_result_object() {
     .expect("Duration.total root fixtures should initialize");
     vm.gc();
     let baseline_pins = vm.gc_pins.len();
-    let baseline_live = vm.heap.live_count();
 
     assert_eq!(
         vm.run("durationTotalValue.total(durationTotalOptions) + '|' + durationTotalGets;")
             .expect("options should survive getter and coercion GC"),
-        Value::String(Arc::from("24|3"))
+        Value::String(Arc::from("24|6"))
     );
     assert_eq!(vm.gc_pins.len(), baseline_pins);
 
@@ -2543,11 +2549,11 @@ fn temporal_duration_total_roots_options_and_allocates_no_result_object() {
     assert_eq!(
         vm.run("durationTotalGets;")
             .expect("getter count should remain readable"),
-        Value::Number(3.0)
+        Value::Number(6.0)
     );
 
     vm.gc();
-    assert_eq!(vm.heap.live_count(), baseline_live);
+    let baseline_live = vm.heap.live_count();
     vm.set_max_heap_objects(Some(baseline_live));
     let result = vm
         .run("durationTotalValue.total('hours');")

@@ -5346,7 +5346,7 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
         all_files = TEMPORAL_DURATION_TOTAL_ALL_FILES
         self.assertEqual(
             (len(admitted), len(false_positives), len(blockers), len(all_files)),
-            (28, 15, 35, 78),
+            (77, 0, 1, 78),
         )
         self.assertFalse(admitted & false_positives)
         self.assertFalse(admitted & blockers)

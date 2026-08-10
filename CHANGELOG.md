@@ -5,24 +5,25 @@
 ### Changed
 
 - Added Realm-local, non-constructable, length-1
-  `Temporal.Duration.prototype.total` for the specification's no-`relativeTo`
-  fixed-unit branch. It reads `relativeTo` before `unit`, accepts singular and
-  plural day-through-nanosecond units, rejects calendar-bearing durations and
-  calendar target units without `relativeTo`, and converts the exact hidden
-  record through `Ratio<BigInt>` before one correctly rounded Number result.
-  The pinned direct directory is exact **28 pass / 0 fail / 50 skip**; forced
-  execution is **43/35/0**, with 15 earlier-error false positives kept outside
-  admission. Duration core and `Duration.from` close at **78/0/0** and
-  **31/0/0**. `total` is allocation 145; the installer reserves 146 maximum
-  live pins across 147 allocations.
+  `Temporal.Duration.prototype.total`. In addition to the no-relative fixed
+  branch, a dedicated relativeTo converter now handles branded
+  PlainDate/PlainDateTime/ZonedDateTime records, ordered property bags, and
+  audited strings. ISO constrained date addition and exact calendar-boundary
+  nudging cover year, month, week, day, and time totals for plain and
+  UTC/fixed-offset zoned inputs. All ratios remain exact until one final Number
+  conversion, and target date-time/epoch limits are checked. The pinned direct
+  directory is exact **77 pass / 0 fail / 1 skip** and forced **77/1/0**. The
+  sole blocker constructs absent PlainMonthDay/PlainYearMonth fixtures before
+  calling `total`; no earlier-error false positives remain. `total` remains
+  allocation 145, with 146 maximum live pins across 147 allocations.
 
   [Decision Log]
-  - 목적과 의도: calendar/time-zone 의존성이 없는 `TotalTimeDuration` 분기를 exact Number, option order, Realm/resource 계약까지 완결하고 마지막 Duration.from maximum blocker를 제거한다.
-  - 기존 구현 및 제약 조건: validated Duration slots와 exact integer conversion은 존재하지만 direct total 78개는 ISO calendar-relative, ZonedDateTime, named-zone/DST까지 포함한다. 엔진에는 IANA transition provider와 PlainMonthDay/PlainYearMonth가 아직 없다.
-  - 검토한 주요 대안: f64 field 합산, 전체 78개를 오류 false positive까지 admission, relativeTo를 무시한 고정-unit 계산, full calendar/zoned 구현을 한 변경에 포함, spec의 독립 no-relative branch 구현을 검토했다.
-  - 선택한 방식: brand 후 String shorthand 또는 rooted options를 처리하고 `relativeTo`, `unit` 순으로 관찰한다. no-relative fixed-unit만 checked i128 nanoseconds와 exact Ratio로 계산하며 나머지는 명시 RangeError 경계 및 exact complement로 남긴다.
-  - 다른 대안 대신 이 방식을 선택한 이유: f64 합산은 large/subsecond 정밀도 테스트를 깨고 relativeTo 무시는 calendar fields와 DST를 잘못 계산한다. 오류 종류만 맞는 파일을 admission하면 intended assertion 도달을 거짓 계상한다.
-  - 장점, 단점 및 영향: exact rational rounding, maximum Duration.from, hidden getter 비관찰, unit coercion fuel, GC-root/OOM rollback, no-result-object allocation이 재현된다. calendar-relative 35 failures와 15 false positives는 후속 구현 전까지 지원으로 세지 않는다.
+  - 목적과 의도: Duration total의 ISO plain 및 deterministic fixed-offset relativeTo 경계를 conversion, calendar balancing, exact Number, Realm/resource 계약까지 완결한다.
+  - 기존 구현 및 제약 조건: no-relative fixed total과 Temporal hidden slots/parser/property readers는 있었지만 통합 RelativeTo record, ISO DateAdd, signed calendar-unit nudge, target range 검증은 없었다. named-zone transition provider와 PlainMonthDay/PlainYearMonth는 아직 없다.
+  - 검토한 주요 대안: relativeTo 무시, branded PlainDate만 지원, intermediate f64 fraction, 기존 ZonedDateTime.from을 통한 임시 객체 생성, copied relative record와 pure checked calendar arithmetic을 검토했다.
+  - 선택한 방식: relativeTo를 unit보다 먼저 완전 변환해 copied Plain/Zoned record로 만들고, constrained year/month add 뒤 week/day/time을 checked i128로 합산한다. year/month은 인접 calendar boundary 사이 exact Ratio로, 나머지는 exact nanosecond Ratio로 한 번만 Number 변환한다.
+  - 다른 대안 대신 이 방식을 선택한 이유: 부분 converter는 property order/error precedence를 drift시키고 임시 객체는 명세에 없는 Realm/GC/OOM 면을 만든다. f64 중간값은 calendar fraction과 maximum 값을 손상시키며 relativeTo 무시는 DST/calendar 의미를 오염시킨다.
+  - 장점, 단점 및 영향: hidden-slot fast path, full property order, strings/offset/leap-second/range errors, signed end-of-month/leap-year fractions, fixed-offset target limits, zero early return가 재현된다. direct 77개가 intended assertion까지 통과하고 external sibling fixture 1개만 남는다; named-IANA totals는 transition provider 전까지 명시적으로 거부된다.
 
 - Added Realm-local, non-constructable, length-0
   `Temporal.Duration.prototype.toJSON`. It brands the receiver, ignores every
