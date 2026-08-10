@@ -41,3 +41,4 @@ built-ins/Temporal/PlainDate/compare/not-same-object.js
 built-ins/Temporal/PlainDate/compare/prop-desc.js
 built-ins/Temporal/PlainDate/compare/use-internal-slots.js
 built-ins/Temporal/PlainDate/compare/year-zero.js
+built-ins/Temporal/PlainDate/compare/calendar-temporal-object.js

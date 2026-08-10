@@ -9,17 +9,10 @@ TEMPORAL_PLAIN_DATE_EQUALS_FILES = frozenset(
     for raw_line in _MANIFEST.read_text().splitlines()
     if (line := raw_line.strip()) and not line.startswith("#")
 )
-_BLOCKER = (
-    "built-ins/Temporal/PlainDate/prototype/equals/calendar-temporal-object.js"
-)
-TEMPORAL_PLAIN_DATE_EQUALS_BLOCKER_FEATURES = {
-    _BLOCKER: frozenset({"Temporal"})
-}
-TEMPORAL_PLAIN_DATE_EQUALS_BLOCKER_INCLUDES = {
-    _BLOCKER: frozenset({"compareArray.js", "temporalHelpers.js"})
-}
-TEMPORAL_PLAIN_DATE_EQUALS_BLOCKER_FLAGS = {_BLOCKER: frozenset()}
-TEMPORAL_PLAIN_DATE_EQUALS_BLOCKER_NEGATIVE = {_BLOCKER: None}
+TEMPORAL_PLAIN_DATE_EQUALS_BLOCKER_FEATURES = {}
+TEMPORAL_PLAIN_DATE_EQUALS_BLOCKER_INCLUDES = {}
+TEMPORAL_PLAIN_DATE_EQUALS_BLOCKER_FLAGS = {}
+TEMPORAL_PLAIN_DATE_EQUALS_BLOCKER_NEGATIVE = {}
 
 _DOWNSTREAM_MANIFEST = Path(__file__).with_name(
     "test262_temporal_plain_date_equals_downstream.txt"
@@ -69,10 +62,12 @@ _REFLECT_CONSTRUCT = frozenset({
     "built-ins/Temporal/PlainDate/prototype/equals/not-a-constructor.js",
 })
 _TEMPORAL_HELPERS = frozenset({
+    'built-ins/Temporal/PlainDate/prototype/equals/calendar-temporal-object.js',
     "built-ins/Temporal/PlainDate/prototype/equals/argument-plaindatetime.js",
     "built-ins/Temporal/PlainDate/prototype/equals/infinity-throws-rangeerror.js",
 })
 _COMPARE_ARRAY = frozenset({
+    'built-ins/Temporal/PlainDate/prototype/equals/calendar-temporal-object.js',
     "built-ins/Temporal/PlainDate/prototype/equals/argument-plaindatetime.js",
     "built-ins/Temporal/PlainDate/prototype/equals/argument-zoneddatetime-slots.js",
     "built-ins/Temporal/PlainDate/prototype/equals/infinity-throws-rangeerror.js",
@@ -126,7 +121,7 @@ TEMPORAL_PLAIN_DATE_EQUALS_NEGATIVE = {
     path: None for path in TEMPORAL_PLAIN_DATE_EQUALS_FILES
 }
 
-if len(TEMPORAL_PLAIN_DATE_EQUALS_FILES) != 39:
-    raise RuntimeError("Temporal.PlainDate.prototype.equals admission must contain 39 files")
+if len(TEMPORAL_PLAIN_DATE_EQUALS_FILES) != 40:
+    raise RuntimeError("Temporal.PlainDate.prototype.equals admission must contain 40 files")
 if len(TEMPORAL_PLAIN_DATE_EQUALS_DOWNSTREAM_FILES) != 4:
     raise RuntimeError("Temporal.PlainDate.prototype.equals downstream must contain four files")

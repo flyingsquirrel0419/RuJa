@@ -4948,8 +4948,9 @@ restored exactly to i128. Days and six time fields are combined with checked
 integer nanosecond arithmetic. A `Ratio<BigInt>` divides by the requested
 fixed unit and converts once to f64, avoiding intermediate Number rounding at
 large magnitudes and repeating fractions. The primitive Number result creates
-no GC object. `total` is allocation 145, `Temporal.Now` is 146, `%Temporal%`
-is 147, and the installer reserves 146 maximum live pins.
+no GC object. `total` remains allocation 145; the later calendar sibling core
+occupies allocations 146 through 164, `Temporal.Now` is 165, `%Temporal%` is
+166, and the installer reserves 165 maximum live pins.
 
 With a relative record, constrained ISO year/month addition preserves the
 starting day where possible, then adds weeks, days, and exact time
@@ -4964,11 +4965,11 @@ exists.
 ```text
 [Decision Log]
 - 목적과 의도: no-relative fixed total과 ISO/fixed-offset relative total을 하나의 exact hidden-record 경계로 완결한다.
-- 기존 구현 및 제약 조건: Duration slots와 parser/property readers는 있었지만 통합 RelativeTo record, ISO DateAdd, calendar-unit fraction, target range helper가 없었다. IANA transition provider와 일부 calendar sibling constructors도 없다.
+- 기존 구현 및 제약 조건: Duration slots와 parser/property readers는 있었지만 통합 RelativeTo record, ISO DateAdd, calendar-unit fraction, target range helper가 없었다. IANA transition provider는 아직 없다.
 - 검토한 주요 대안: direct f64 합산, branded PlainDate 전용 분기, ZonedDateTime.from 임시 객체, copied relative record와 pure checked arithmetic을 검토했다.
 - 선택한 방식: relativeTo를 unit보다 먼저 copied Plain/Zoned record로 변환한다. constrained ISO date add와 checked i128 destination을 만든 뒤 one-shot Ratio<BigInt>로 fixed/calendar 결과를 publish한다.
 - 다른 대안 대신 이 방식을 선택한 이유: f64 중간값은 precision-exact tests를 깨고 임시 JS 객체는 명세에 없는 Realm/GC/OOM 면을 추가한다. 입력별 ad hoc 분기는 property order, offset, zero/range semantics를 drift시킨다.
-- 장점, 단점 및 영향: all units, signed month/year nudge, leap/end-of-month, property/string conversion, zero/range/offset errors, no-result-allocation이 재현된다. direct 78개 중 77개가 통과하며 나머지 1개는 total 호출 전에 absent PlainMonthDay/PlainYearMonth fixture에서 중단한다. named-IANA totals는 transition provider 전까지 거부된다.
+- 장점, 단점 및 영향: all units, signed month/year nudge, leap/end-of-month, property/string conversion, zero/range/offset errors, no-result-allocation이 재현된다. later calendar sibling core 이후 direct 78개가 모두 통과한다. named-IANA totals는 transition provider 전까지 거부된다.
 ```
 
 ## Temporal PlainTime arithmetic
@@ -4998,6 +4999,44 @@ across 140 allocations.
 - 선택한 방식: validated f64 integer를 field별 BigInt로 복원해 exact nanoseconds sum을 만들고 bounded i128로 변환한다. shared helper가 signed delta를 Euclidean modulo로 balance하며 두 메서드는 subtract의 post-conversion negate만 달리한다.
 - 다른 대안 대신 이 방식을 선택한 이유: f64 합산은 큰 second/subsecond 조합에서 정밀도를 잃고 temporary object는 명세에 없는 allocation을 추가한다. 공용 경로는 brand/order/options/Realm 동작의 분기를 막고 i128은 Duration limit보다 충분히 넓다.
 - 장점, 단점 및 영향: 최대 경계, 음수 midnight wrap, hidden getter 비관찰, abrupt identity, ignored options, method-Realm 결과와 GC/root/OOM/fuel 경계가 재현된다. calendar-relative date arithmetic이나 difference semantics는 포함하지 않는다.
+```
+
+## Temporal calendar sibling hidden-slot cores
+
+`Temporal.PlainMonthDay` and `Temporal.PlainYearMonth` are distinct
+`TemporalKind` heap records rather than aliases or ordinary property bags.
+PlainMonthDay stores reference ISO year/month/day; PlainYearMonth stores ISO
+year/month/reference day. Keeping the complete ISO date is required for leap
+validation, endpoint rules, future serialization, and brand-specific methods.
+Both constructors use the existing integer truncation and ISO-only calendar
+boundary, validate before observing `newTarget.prototype`, then allocate with
+the selected Realm/subclass prototype pinned across GC retry.
+
+Each Realm roots a constructor and prototype for both brands. Realm teardown,
+intrinsic fallback, GC tracing, failed-Realm rollback, and constructible-native
+inventory include all four identities. The installer adds 19 objects after
+`Duration.prototype.total`: PlainMonthDay uses prototype, constructor, three
+getters, and `valueOf`; PlainYearMonth uses prototype, constructor, ten
+getters, and `valueOf`. `Temporal.Now` and `%Temporal%` are therefore
+allocations 165 and 166, with 165 maximum live pins. The exhaustive allocation
+sweep runs on an explicit 8 MiB test thread because debug-build stack frames
+for 149 repeated installer rollback attempts exceed Rust's default test-thread
+stack; production installation behavior is unchanged.
+
+Calendar extraction is centralized over all five calendar-bearing hidden
+kinds. It returns the copied `Arc<str>` directly and never reads public
+`calendar`, `calendarId`, accessors, prototypes, or string conversion. This
+unlocks the existing PlainDate, PlainDateTime, ZonedDateTime, and Duration
+calendar-object fast paths while preserving foreign-Realm records.
+
+```text
+[Decision Log]
+- 목적과 의도: MonthDay/YearMonth를 위조 불가능한 hidden ISO date brand로 추가하고 existing ToTemporalCalendar fast path에 연결한다.
+- 기존 구현 및 제약 조건: VM은 세 calendar-bearing Temporal kind(PlainDate, PlainDateTime, ZonedDateTime)만 저장했고 두 missing sibling kind 때문에 열한 downstream fixture가 intended assertion 전에 실패했다. non-ISO calendar, dedicated partial-date parsers, serialization과 arithmetic은 없다.
+- 검토한 주요 대안: ordinary fields, PlainDate kind alias, constructor-only stub, complete distinct records와 accessor core를 검토했다.
+- 선택한 방식: reference component까지 포함한 두 compact field record, Realm-local constructor/prototype registries, branded core getters/valueOf/tag, exhaustive hidden-calendar extractor를 추가한다.
+- 다른 대안 대신 이 방식을 선택한 이유: ordinary fields와 stub은 getter 비관찰/branding을 보장하지 못하고 PlainDate alias는 internal-slot 종류를 섞는다. parser와 arithmetic 동시 도입은 독립된 grammar/ordering 표면을 검증 없이 넓힌다.
+- 장점, 단점 및 영향: ISO range/leap rules, constructor order, subclass/cross-Realm fallback, GC/OOM/fuel, 166-object installer rollback과 downstream calendar fast paths가 고정된다. from/formatting/arithmetic/non-ISO calendar는 명시적으로 후속 경계다.
 ```
 
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

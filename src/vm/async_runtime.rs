@@ -1368,6 +1368,13 @@ impl Vm {
                 .cloned()
                 .unwrap_or(fallback));
         }
+        if intrinsic == "Temporal.PlainMonthDay" {
+            return Ok(self
+                .realm_temporal_plain_month_day_prototypes
+                .get(&realm.0)
+                .cloned()
+                .unwrap_or(fallback));
+        }
         if intrinsic == "Temporal.PlainTime" {
             return Ok(self
                 .realm_temporal_plain_time_prototypes
@@ -1378,6 +1385,13 @@ impl Vm {
         if intrinsic == "Temporal.PlainDateTime" {
             return Ok(self
                 .realm_temporal_plain_date_time_prototypes
+                .get(&realm.0)
+                .cloned()
+                .unwrap_or(fallback));
+        }
+        if intrinsic == "Temporal.PlainYearMonth" {
+            return Ok(self
+                .realm_temporal_plain_year_month_prototypes
                 .get(&realm.0)
                 .cloned()
                 .unwrap_or(fallback));

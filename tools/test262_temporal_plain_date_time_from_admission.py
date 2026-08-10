@@ -41,5 +41,5 @@ TEMPORAL_PLAIN_DATE_TIME_FROM_FEATURES = {
     path: _features(path) for path in TEMPORAL_PLAIN_DATE_TIME_FROM_FILES
 }
 
-if len(TEMPORAL_PLAIN_DATE_TIME_FROM_FILES) != 69:
-    raise RuntimeError("Temporal.PlainDateTime.from admission must contain 69 files")
+if len(TEMPORAL_PLAIN_DATE_TIME_FROM_FILES) != 70:
+    raise RuntimeError("Temporal.PlainDateTime.from admission must contain 70 files")

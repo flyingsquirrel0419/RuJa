@@ -30,7 +30,9 @@ The following resource limits are enforced:
   PlainDate/PlainDateTime and UTC/fixed-offset ZonedDateTime values, property
   bags, and strings. Named-IANA ZonedDateTime totals remain unavailable until
   a deterministic transition provider exists; non-ISO calendars also remain
-  unavailable. Other calendar-relative Duration arithmetic, `compare`, locale
+  unavailable. The pinned direct `total` directory is complete after the
+  PlainMonthDay/PlainYearMonth hidden calendar fast paths landed. Other
+  calendar-relative Duration arithmetic, `compare`, locale
   formatting, and the remaining methods are not implemented.
   Realm-local `%Temporal.PlainDateTime%` supports
   hidden-slot construction, subclassing, 22 ISO/calendar accessors,
@@ -53,6 +55,14 @@ The following resource limits are enforced:
   remains absent until full ECMA-402 `Intl.DateTimeFormat` semantics exist;
   exposing an ISO-only fallback alongside RuJa's partial `%Intl%` would
   overstate locale support.
+  Realm-local `%Temporal.PlainMonthDay%` and `%Temporal.PlainYearMonth%`
+  support distinct hidden ISO date construction, reference ISO year/day
+  validation, subclass and cross-Realm prototype fallback, branded ISO
+  accessors, `@@toStringTag`, and always-throwing `valueOf`. Their hidden
+  calendars participate in all existing ToTemporalCalendar fast paths without
+  observing public properties. Static `from`, equality/comparison,
+  serialization, date conversion, arithmetic/difference, locale formatting,
+  and non-ISO calendars remain unsupported.
   Realm-local `%Temporal.PlainTime%` supports six-field hidden-slot
   construction, subclassing, branded accessors, `@@toStringTag`, static
   `from` and lexicographic `compare`, hidden-record `equals`, and
@@ -63,9 +73,9 @@ The following resource limits are enforced:
   property bags, and the audited time String grammar. `round` supports String
   shorthand, all time units, valid increments, all rounding modes, and
   midnight rollover. `with` implements partial merge and constrain/reject
-  overflow, but one direct Test262 case remains blocked by absent
-  PlainMonthDay/PlainYearMonth constructors. Difference, locale serialization,
-  and other PlainTime methods remain unsupported.
+  overflow, but one direct Test262 case remains blocked because it calls the
+  unimplemented PlainMonthDay/PlainYearMonth `from` factories. Difference,
+  locale serialization, and other PlainTime methods remain unsupported.
   Realm-local `%Temporal.ZonedDateTime%` supports hidden-slot construction for
   UTC and fixed offsets, exact epoch/time-zone/calendar accessors, subclassing,
   all ISO civil/calendar/offset accessors, fixed-offset String and ISO
@@ -79,8 +89,8 @@ The following resource limits are enforced:
   minute-precision fixed offsets only. `startOfDay` rejects named zones until
   transition-aware midnight gap/overlap resolution exists. Named IANA time-zone transitions,
   the remaining ZonedDateTime string grammar, the remaining RFC 9557
-  grammar, PlainMonthDay/PlainYearMonth, remaining duration operations, and `Temporal.Now` methods remain
-  unsupported.
+  grammar, remaining PlainMonthDay/PlainYearMonth methods, remaining duration
+  operations, and `Temporal.Now` methods remain unsupported.
 
 - **Execution fuel**: `Vm::set_fuel(Some(n))` bounds dispatched opcodes and
   explicitly metered native-loop steps. Proxy `[[Call]]`, `[[Delete]]`,

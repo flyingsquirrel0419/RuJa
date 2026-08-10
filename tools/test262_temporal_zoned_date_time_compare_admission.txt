@@ -48,3 +48,4 @@ built-ins/Temporal/ZonedDateTime/compare/requires-properties.js
 built-ins/Temporal/ZonedDateTime/compare/year-zero.js
 built-ins/Temporal/ZonedDateTime/compare/zoneddatetime-string-multiple-offsets.js
 built-ins/Temporal/ZonedDateTime/compare/zoneddatetime-string.js
+built-ins/Temporal/ZonedDateTime/compare/calendar-temporal-object.js

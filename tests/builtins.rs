@@ -25795,6 +25795,190 @@ fn temporal_duration_constructor_and_getters_honor_function_realms() {
 }
 
 #[test]
+fn temporal_plain_month_day_and_year_month_use_distinct_hidden_iso_slots() {
+    assert_eq!(
+        run(r#"
+            var monthDay = new Temporal.PlainMonthDay(2.9, 29.8, 'ISO8601');
+            var yearMonth = new Temporal.PlainYearMonth(2020.9, 2.8, 'ISO8601', 29.7);
+            class CustomMonthDay extends Temporal.PlainMonthDay {}
+            class CustomYearMonth extends Temporal.PlainYearMonth {}
+            var customMonthDay = new CustomMonthDay(5, 2);
+            var customYearMonth = new CustomYearMonth(2000, 5);
+            var monthDayReads = 0;
+            var yearMonthReads = 0;
+            Object.defineProperty(monthDay, 'day', {
+              get: function () { monthDayReads++; throw new Error('observed'); }
+            });
+            Object.defineProperty(yearMonth, 'year', {
+              get: function () { yearMonthReads++; throw new Error('observed'); }
+            });
+            var monthDayGetter = Object.getOwnPropertyDescriptor(
+              Temporal.PlainMonthDay.prototype, 'day'
+            ).get;
+            var yearMonthGetter = Object.getOwnPropertyDescriptor(
+              Temporal.PlainYearMonth.prototype, 'year'
+            ).get;
+            var distinctMonthDay = false;
+            var distinctYearMonth = false;
+            try { yearMonthGetter.call(monthDay); }
+            catch (error) { distinctMonthDay = error instanceof TypeError; }
+            try { monthDayGetter.call(yearMonth); }
+            catch (error) { distinctYearMonth = error instanceof TypeError; }
+            [
+              Temporal.PlainMonthDay.name,
+              Temporal.PlainMonthDay.length,
+              monthDay.monthCode,
+              monthDayGetter.call(monthDay),
+              monthDay.calendarId,
+              Object.prototype.toString.call(monthDay),
+              Temporal.PlainYearMonth.name,
+              Temporal.PlainYearMonth.length,
+              yearMonthGetter.call(yearMonth),
+              yearMonth.month,
+              yearMonth.monthCode,
+              yearMonth.calendarId,
+              yearMonth.daysInMonth,
+              yearMonth.daysInYear,
+              yearMonth.monthsInYear,
+              yearMonth.inLeapYear,
+              yearMonth.era,
+              yearMonth.eraYear,
+              Object.prototype.toString.call(yearMonth),
+              monthDayReads,
+              yearMonthReads,
+              distinctMonthDay,
+              distinctYearMonth,
+              Object.getPrototypeOf(customMonthDay) === CustomMonthDay.prototype,
+              Object.getPrototypeOf(customYearMonth) === CustomYearMonth.prototype
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "PlainMonthDay|2|M02|29|iso8601|[object Temporal.PlainMonthDay]|PlainYearMonth|2|2020|2|M02|iso8601|29|366|12|true|||[object Temporal.PlainYearMonth]|0|0|true|true|true|true"
+        ))
+    );
+
+    for source in [
+        "new Temporal.PlainMonthDay(2, 29, 'iso8601', 2019)",
+        "new Temporal.PlainMonthDay(9, 14, 'iso8601', 275760)",
+        "new Temporal.PlainYearMonth(-271821, 3)",
+        "new Temporal.PlainYearMonth(275760, 10)",
+        "new Temporal.PlainYearMonth(2020, 2, 'iso8601', 30)",
+    ] {
+        assert!(run_err(source).contains("RangeError"), "{source}");
+    }
+    for source in [
+        "Temporal.PlainMonthDay(5, 2)",
+        "Temporal.PlainYearMonth(2000, 5)",
+        "new Temporal.PlainMonthDay.prototype.valueOf()",
+        "new Temporal.PlainYearMonth.prototype.valueOf()",
+    ] {
+        assert!(run_err(source).contains("TypeError"), "{source}");
+    }
+
+    assert_eq!(
+        run(r#"
+            var stringMonthDay = new Temporal.PlainMonthDay("11.7", "24.1");
+            var negativeYearMonth = new Temporal.PlainYearMonth(-2020.6, 11.7);
+            var nullYearMonth = new Temporal.PlainYearMonth(null, 11);
+            var booleanYearMonth = new Temporal.PlainYearMonth(false, true);
+            var min = new Temporal.PlainYearMonth(-271821, 4, "iso8601", 18);
+            var max = new Temporal.PlainYearMonth(275760, 9, "iso8601", 14);
+            var defaultMonthDay = new Temporal.PlainMonthDay(2, 29, "iso8601", undefined);
+            var defaultYearMonth = new Temporal.PlainYearMonth(-271821, 4, "iso8601", undefined);
+            [
+              stringMonthDay.monthCode, stringMonthDay.day,
+              negativeYearMonth.year, negativeYearMonth.month,
+              nullYearMonth.year, booleanYearMonth.month,
+              min.year, min.month, max.year, max.month,
+              defaultMonthDay.day, defaultYearMonth.year
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "M11|24|-2020|11|0|1|-271821|4|275760|9|29|-271821"
+        ))
+    );
+}
+
+#[test]
+fn temporal_calendar_fast_path_accepts_month_day_and_year_month_without_getters() {
+    assert_eq!(
+        run(r#"
+            var values = [
+              new Temporal.PlainMonthDay(5, 2),
+              new Temporal.PlainYearMonth(2000, 5)
+            ];
+            var reads = 0;
+            var totals = values.map(function (calendar) {
+              Object.defineProperty(calendar, 'calendar', {
+                get: function () { reads++; throw new Error('calendar observed'); }
+              });
+              Object.defineProperty(calendar, 'calendarId', {
+                get: function () { reads++; throw new Error('calendarId observed'); }
+              });
+              return new Temporal.Duration(0, 0, 0, 1).total({
+                unit: 'seconds',
+                relativeTo: { year: 2000, month: 1, day: 1, calendar: calendar }
+              });
+            });
+            totals.join(',') + '|' + reads;
+        "#),
+        Value::String(Arc::from("86400,86400|0"))
+    );
+}
+
+#[test]
+fn temporal_month_day_and_year_month_constructor_order_and_realm_are_exact() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            function field(name, value) {
+              return { valueOf: function () { log.push(name); return value; } };
+            }
+            var hiddenReference = field('reference', 1);
+            try {
+              new Temporal.PlainMonthDay(field('month', 5), field('day', 2), 'invalid', hiddenReference);
+            } catch (error) { log.push(error instanceof RangeError); }
+            try {
+              new Temporal.PlainYearMonth(field('year', 2000), field('month2', 5), 'invalid', hiddenReference);
+            } catch (error) { log.push(error instanceof RangeError); }
+
+            var other = $262.createRealm().global;
+            var foreignMonthDay = new other.Temporal.PlainMonthDay(6, 3);
+            var foreignYearMonth = new other.Temporal.PlainYearMonth(2001, 7);
+            var monthDayGetter = Object.getOwnPropertyDescriptor(
+              other.Temporal.PlainMonthDay.prototype, 'day'
+            ).get;
+            var yearMonthGetter = Object.getOwnPropertyDescriptor(
+              other.Temporal.PlainYearMonth.prototype, 'year'
+            ).get;
+            var getterRealm = false;
+            try { monthDayGetter.call({}); }
+            catch (error) { getterRealm = error instanceof other.TypeError && !(error instanceof TypeError); }
+
+            var NewTarget = function () {}.bind(null);
+            var prototypeReads = 0;
+            Object.defineProperty(NewTarget, 'prototype', {
+              get: function () { prototypeReads++; return null; }
+            });
+            var fallbackMonthDay = Reflect.construct(other.Temporal.PlainMonthDay, [8, 9], NewTarget);
+            var fallbackYearMonth = Reflect.construct(other.Temporal.PlainYearMonth, [2002, 8], NewTarget);
+            [
+              log.join(','),
+              monthDayGetter.call(foreignMonthDay),
+              yearMonthGetter.call(foreignYearMonth),
+              getterRealm,
+              prototypeReads,
+              Object.getPrototypeOf(fallbackMonthDay) === Temporal.PlainMonthDay.prototype,
+              Object.getPrototypeOf(fallbackYearMonth) === Temporal.PlainYearMonth.prototype
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "month,day,true,year,month2,true|3|2001|true|2|true|true"
+        ))
+    );
+}
+
+#[test]
 fn temporal_plain_date_core_uses_distinct_hidden_iso_slots() {
     assert_eq!(
         run(r#"

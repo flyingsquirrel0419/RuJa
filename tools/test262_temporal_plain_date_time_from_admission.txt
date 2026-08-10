@@ -69,3 +69,4 @@ built-ins/Temporal/PlainDateTime/from/roundtrip-from-property-bag.js
 built-ins/Temporal/PlainDateTime/from/roundtrip-from-string.js
 built-ins/Temporal/PlainDateTime/from/subclassing-ignored.js
 built-ins/Temporal/PlainDateTime/from/year-zero.js
+built-ins/Temporal/PlainDateTime/from/calendar-temporal-object.js

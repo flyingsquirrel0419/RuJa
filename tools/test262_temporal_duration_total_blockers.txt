@@ -1,2 +1,1 @@
-# Exact external-fixture blocker: the test constructs unsupported Temporal calendar siblings before calling total.
-built-ins/Temporal/Duration/prototype/total/calendar-temporal-object.js
+# No blockers after PlainMonthDay/PlainYearMonth hidden-slot cores.

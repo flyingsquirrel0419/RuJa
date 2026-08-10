@@ -14103,19 +14103,18 @@ surface.
 ## Temporal.ZonedDateTime fixed-offset civil and formatting surface
 
 `tools/test262_temporal_zoned_date_time_fixed_offset_admission.txt` freezes
-exactly **260** pinned files. The boundary covers the 24 ISO
+exactly **261** pinned files. The boundary covers the 24 ISO
 civil/calendar/offset accessors, `construction-and-properties.js`, complete
 `toInstant`, complete `toJSON` and `valueOf`, 61 independently runnable
 `toString` files, including the plural-smallest-unit helper now unlocked by
 PlainTime, and 90 static `from` cases supported by branded values, the
 strict fixed-offset string parser, or ISO property bags. Dedicated CI requires
-**260 pass / 0 fail / 0 skip**.
+**261 pass / 0 fail / 0 skip**.
 
 `tools/test262_temporal_zoned_date_time_fixed_offset_blockers.txt` freezes the
 exact unsupported complement. CI forces the complete 266-file surface and
-requires **260 pass / 6 fail / 0 skip**. The six retained blockers are explicit:
-one `from` case needs another Temporal calendar-bearing type; five
-`basic.js` accessor cases require unsupported
+requires **261 pass / 5 fail / 0 skip**. The five retained blockers are
+`basic.js` accessor cases requiring unsupported
 `Temporal.PlainDateTime.prototype.toZonedDateTime`. UTC and minute-precision
 fixed offsets are deterministic. Named IANA zones and DST transitions are not
 claimed.
@@ -14135,11 +14134,10 @@ confirmed by ordinary CI `30872435648` (**3/3**) and full matrix
 
 ## Temporal.ZonedDateTime.prototype.equals
 
-`tools/test262_temporal_zoned_date_time_equals_admission.txt` freezes **54**
-exact paths from the pinned 55-file equals directory. Dedicated CI requires
-**54 pass / 0 fail / 0 skip**; the forced complement requires **54 pass / 1
-fail / 0 skip**. The remaining blocker requires calendar slots from other
-Temporal object types.
+`tools/test262_temporal_zoned_date_time_equals_admission.txt` freezes all **55**
+paths from the pinned equals directory. Dedicated and forced CI both require
+**55 pass / 0 fail / 0 skip**. The former calendar-object blocker entered
+admission with the PlainMonthDay/PlainYearMonth hidden-slot cores.
 The admitted surface covers receiver branding, complete property-bag/string
 conversion order, canonical UTC and offset spellings, calendar identity,
 date-only annotated strings, cross-Realm behavior, and metadata descriptors.
@@ -14158,7 +14156,8 @@ At the pre-`withTimeZone` checkpoint, implementation commit `1490baa` is
 confirmed by ordinary CI `30875867855` (**3/3**) and full matrix
 `30875867994` (**58/58**), including the then-current **50/0/0** exact and
 **50/5/0-skip** forced equals jobs. The subsequent `withTimeZone` checkpoint
-was **52/3**; the current Duration-backed boundary is **54/1**.
+was **52/3**; Duration later moved it to **54/1**, and calendar sibling hidden
+slots complete the current boundary at **55/0**.
 
 ## Temporal.ZonedDateTime.prototype.withTimeZone
 
@@ -14177,7 +14176,7 @@ negative-zero years, sub-minute rejection, and bracket precedence.
 - 검토한 주요 대안: 전체 prefix admission, blocker 의존성을 가짜 constructor로 충족, 실제 통과 경계와 complement를 분리하는 방식을 검토했다.
 - 선택한 방식: 처음 통과한 15개 path를 exact admission으로 열고 blocker dependency 구현 후 재실측한 마지막 path를 같은 manifest로 이동한다.
 - 다른 대안 대신 이 방식을 선택한 이유: directory prefix는 미래 파일을 자동 허용한다. exact path set은 complete 16-file corpus와 metadata를 고정한다.
-- 장점, 단점 및 영향: complete exact 16/0/0과 equals 54/1이 재현된다. 새 sibling은 별도 검토 전까지 자동 입장하지 않는다.
+- 장점, 단점 및 영향: complete exact 16/0/0과 current equals 55/0이 재현된다. 새 sibling은 별도 검토 전까지 자동 입장하지 않는다.
 ```
 
 Implementation commit `593d047` is confirmed by ordinary CI `30879142138`
@@ -14187,10 +14186,10 @@ Implementation commit `593d047` is confirmed by ordinary CI `30879142138`
 ## Temporal.ZonedDateTime.prototype.withCalendar
 
 `tools/test262_temporal_zoned_date_time_with_calendar_admission.txt` freezes
-**15** exact paths from the pinned 16-file method directory. Dedicated CI
-requires **15 pass / 0 fail / 0 skip**; the forced complement requires **15
-pass / 1 fail / 0 skip**. `calendar-temporal-object.js` constructs the absent
-PlainDate, PlainDateTime, PlainMonthDay, and PlainYearMonth object models. The admitted surface covers branding, descriptors, subclass
+all **16** paths from the pinned method directory. Dedicated and forced CI
+both require **16 pass / 0 fail / 0 skip**. The former
+`calendar-temporal-object.js` blocker entered admission with the complete set
+of calendar-bearing hidden-slot object models. The admitted surface covers branding, descriptors, subclass
 suppression, strict wrong-type/missing-argument errors, case-insensitive ISO
 canonicalization, date/time/month-day/year-month strings, leap seconds, and
 the complete 39-case time-string table.
@@ -14327,11 +14326,11 @@ skip** at the pinned Test262 revision.
 
 ## Temporal.ZonedDateTime.compare
 
-`tools/test262_temporal_zoned_date_time_compare_admission.txt` freezes **49**
-exact paths from the pinned 50-file static method directory. Dedicated CI
-requires **49 pass / 0 fail / 0 skip**; forced diagnostic accounting requires
-**49 pass / 1 fail / 0 skip**. `calendar-temporal-object.js` constructs absent
-PlainDate family objects. `compares-exact-time-not-clock-time.js` moved into
+`tools/test262_temporal_zoned_date_time_compare_admission.txt` freezes all
+**50** paths from the pinned static method directory. Dedicated and forced CI
+both require **50 pass / 0 fail / 0 skip**. The former
+`calendar-temporal-object.js` blocker entered admission with the calendar
+sibling hidden slots. `compares-exact-time-not-clock-time.js` moved into
 admission after `toPlainDateTime` and `Temporal.PlainDateTime.compare` became
 available. The admitted surface
 covers descriptors, nonconstruction, complete left-to-right property-bag
@@ -14412,9 +14411,9 @@ Forced diagnostics therefore require **78 pass / 0 fail / 0 skip**.
 
 The same unit unlocks nine previously frozen ZonedDateTime wrong-type paths,
 including the constructor core's `calendar-wrong-type.js`.
-Current exact/forced boundaries are fixed-offset **259/7** over 266, equals
-**54/1** over 55, compare **49/1** over 50, `withTimeZone` **16/0** over 16,
-and `withCalendar` **15/1** over 16. Every moved path was executed against the
+Current exact/forced boundaries are fixed-offset **261/5** over 266, equals
+**55/0** over 55, compare **50/0** over 50, `withTimeZone` **16/0** over 16,
+and `withCalendar` **16/0** over 16. Every moved path was executed against the
 pinned revision before admission; future Duration siblings remain gated.
 
 ```text
@@ -14467,7 +14466,8 @@ freezes all **10** paths in the pinned method directory. Dedicated CI requires
 civil fields, negative epoch and offset balancing, and both PlainDateTime
 limits; six files freeze branding and built-in metadata. The same conversion
 unblocks four fixed-offset `from` roundtrip/input files and the final
-`withTimeZone` file. Those exact/forced boundaries are now **259/7** over 266
+`withTimeZone` file. After the calendar sibling core, those exact/forced
+boundaries are now **261/5** over 266
 and complete **16/0** over 16.
 
 ```text
@@ -14477,7 +14477,7 @@ and complete **16/0** over 16.
 - 검토한 주요 대안: directory prefix 허용, direct 10개만 등록, direct exact set과 재실측된 downstream path를 각 소유 manifest에 이동하는 방식을 검토했다.
 - 선택한 방식: direct 10개 path와 features/includes/flags/negative metadata를 exact manifest로 고정하고, pinned binary로 통과한 downstream 5개만 기존 manifests로 이동한다.
 - 다른 대안 대신 이 방식을 선택한 이유: prefix는 미래 sibling을 검토 없이 허용하고 direct-only accounting은 구현이 실제로 복구한 기존 표준 경로를 계속 skip한다.
-- 장점, 단점 및 영향: exact 10/0/0, fixed-offset 259/7, complete withTimeZone 16/0이 재현된다. 당시 compare blocker 두 개 중 PlainDateTime.compare 의존성은 후속 구현으로 해제됐고 PlainDate-family blocker 하나가 남는다.
+- 장점, 단점 및 영향: exact 10/0/0, current fixed-offset 261/5, complete withTimeZone 16/0이 재현된다. 당시 compare blocker 둘은 후속 PlainDateTime.compare와 calendar sibling 구현으로 모두 해제됐다.
 ```
 
 Implementation commit `044f765` is confirmed by ordinary CI `31113158807`
@@ -14487,12 +14487,11 @@ and forced **259/7/0-skip**, and complete `withTimeZone` **16/0/0**.
 
 ## Temporal.PlainDateTime.from
 
-`tools/test262_temporal_plain_date_time_from_admission.txt` freezes **69**
-independently supported paths from the pinned 70-file static method directory.
-Dedicated CI requires **69 pass / 0 fail / 0 skip**. The sole blocker,
-`calendar-temporal-object.js`, constructs absent PlainMonthDay and
-PlainYearMonth objects. Forced full directory execution is **69 pass / 1
-fail**. Four former PlainDate dependencies moved into admission only after the
+`tools/test262_temporal_plain_date_time_from_admission.txt` freezes all **70**
+paths from the pinned static method directory. Dedicated and forced CI both
+require **70 pass / 0 fail / 0 skip**. The former
+`calendar-temporal-object.js` blocker entered admission with the calendar
+sibling hidden slots. Four former PlainDate dependencies moved into admission only after the
 hidden PlainDate branch reached their intended assertions.
 
 The admitted surface covers nonconstruction and descriptors, hidden-slot
@@ -14510,7 +14509,7 @@ PlainDateTime core, which is now exact **105/0/0** and forced **105/1/0** over
 - 검토한 주요 대안: 70-file prefix 허용, forced pass 전부 admission, parser/property-bag별 분리 manifest, intended assertion에 도달하는 path와 dependency complement를 분리하는 방식을 검토했다.
 - 선택한 방식: 초기에는 intended assertion까지 독립 실행되는 65개 path를 열었고, PlainDate 도입 후 재실측한 네 path를 같은 owner manifest로 이동해 69개로 확장했다. calendar sibling dependency 하나만 blocker로 유지한다.
 - 다른 대안 대신 이 방식을 선택한 이유: 단순 process pass는 빠른 선행 TypeError를 intended behavior 증명으로 오인할 수 있다. dependency-aware complement만이 현재 object model을 과장하지 않고 향후 PlainDate/equals 도입 때 재측정 지점을 보존한다.
-- 장점, 단점 및 영향: 현재 exact 69/0, forced 69/1, core 105/1 경계와 future-sibling gating이 재현된다. calendar sibling types 구현 후 마지막 blocker를 다시 감사해야 한다.
+- 장점, 단점 및 영향: current exact/forced 70/0, core 105/1 경계와 future-sibling gating이 재현된다. calendar sibling 구현으로 마지막 direct blocker가 admission에 들어갔다.
 ```
 
 Implementation commit `31a7298` is confirmed by ordinary CI `31119606326`
@@ -14521,21 +14520,20 @@ Implementation commit `31a7298` is confirmed by ordinary CI `31119606326`
 
 ## Temporal.PlainDateTime.prototype.equals
 
-`tools/test262_temporal_plain_date_time_equals_admission.txt` freezes **40**
-independently supported paths from the pinned 41-file method directory.
-Dedicated CI requires **40 pass / 0 fail / 0 skip**; forced diagnostics require
-**40 pass / 1 fail / 0 skip**. The PlainDate hidden-slot path is admitted;
-`calendar-temporal-object.js` remains blocked by absent PlainMonthDay and
-PlainYearMonth objects. Future siblings remain behind the broad Temporal gate.
+`tools/test262_temporal_plain_date_time_equals_admission.txt` freezes all
+**41** paths from the pinned method directory. Dedicated and forced CI both
+require **41 pass / 0 fail / 0 skip**. The PlainDate hidden-slot path and the
+former calendar-object blocker are admitted. Future siblings remain behind
+the broad Temporal gate.
 
 ```text
 [Decision Log]
 - 목적과 의도: PlainDateTime equality의 complete reachable corpus와 from downstream 개선을 exact accounting에 반영한다.
 - 기존 구현 및 제약 조건: broad Temporal gate가 41개 모두 skip했고 두 파일은 intended equals assertion 전에 아직 없는 PlainDate family를 생성한다. from blocker 한 개는 equals 부재만으로 막혀 있었다.
 - 검토한 주요 대안: directory prefix 전체 허용, 두 constructor dependency를 stub 처리, from manifest에 혼합, direct exact admission과 blocker complement를 검토했다.
-- 선택한 방식: 초기 39개 path를 열고, PlainDate hidden conversion 도입 후 argument-plaindate를 재실측해 40개로 확장했다. calendar sibling path 하나만 forced diagnostic에 유지한다.
+- 선택한 방식: 초기 39개 path를 열고 PlainDate 도입 후 40개, calendar sibling 도입 후 complete 41개로 재실측 확장했다.
 - 다른 대안 대신 이 방식을 선택한 이유: prefix와 stub은 미구현 object model을 과장하고 method surface 혼합은 equals 회귀를 숨긴다. exact complement는 intended assertion 도달 여부를 보존한다.
-- 장점, 단점 및 영향: 현재 direct exact 40/0, forced 40/1, from exact 69/0 및 forced 69/1이 재현된다. calendar sibling types 구현 후 마지막 blocker를 다시 감사해야 한다.
+- 장점, 단점 및 영향: current direct exact/forced 41/0과 from exact/forced 70/0이 재현된다. future sibling은 자동 입장하지 않는다.
 ```
 
 Implementation commit `ed47123` is confirmed by ordinary CI `31195704556`
@@ -14545,13 +14543,11 @@ exact **65/0/0** and forced **66/4/0**.
 
 ## Temporal.PlainDateTime.compare
 
-`tools/test262_temporal_plain_date_time_compare_admission.txt` freezes **41**
-independently supported paths from the pinned 42-file static method directory.
-Dedicated CI requires **41 pass / 0 fail / 0 skip**; forced diagnostics require
-**41 pass / 1 fail / 0 skip**. The hidden PlainDate-to-midnight path is
-admitted; `calendar-temporal-object.js` remains blocked by absent PlainMonthDay
-and PlainYearMonth objects. Future siblings remain behind the broad Temporal
-gate.
+`tools/test262_temporal_plain_date_time_compare_admission.txt` freezes all
+**42** paths from the pinned static method directory. Dedicated and forced CI
+both require **42 pass / 0 fail / 0 skip**. The hidden PlainDate-to-midnight
+path and the former calendar-object blocker are admitted. Future siblings
+remain behind the broad Temporal gate.
 
 The method also admits
 `Temporal/ZonedDateTime/compare/compares-exact-time-not-clock-time.js`, moving
@@ -14562,9 +14558,9 @@ that exact boundary to **49/0/0** and its forced diagnostic to **49/1/0**.
 - 목적과 의도: static PlainDateTime ordering의 complete reachable corpus와 ZonedDateTime downstream 해제를 exact accounting에 반영한다.
 - 기존 구현 및 제약 조건: 42-file directory 전체가 broad Temporal gate 뒤에 있었고 두 파일은 intended compare assertion 전에 아직 없는 PlainDate family를 생성한다. ZonedDateTime compare blocker 하나는 PlainDateTime.compare만 추가로 필요했다.
 - 검토한 주요 대안: directory prefix 허용, dependency constructors stub, equals manifest와 혼합, direct exact admission과 blocker complement를 검토했다.
-- 선택한 방식: 초기 40개 path와 metadata를 열고, PlainDate hidden conversion 도입 후 argument-plaindate를 재실측해 41개로 확장했다. calendar sibling path 하나만 forced diagnostic에 유지한다.
+- 선택한 방식: 초기 40개 path와 metadata를 열고 PlainDate 도입 후 41개, calendar sibling 도입 후 complete 42개로 재실측 확장했다.
 - 다른 대안 대신 이 방식을 선택한 이유: prefix와 stub은 미구현 object model을 과장하고 method surface 혼합은 ordering 회귀를 숨긴다. exact complement는 intended assertion 도달 여부와 future sibling drift를 모두 보존한다.
-- 장점, 단점 및 영향: 현재 direct exact 41/0, forced 41/1, ZonedDateTime exact 49/0 및 forced 49/1이 재현된다. calendar sibling types 구현 후 마지막 blocker를 다시 감사해야 한다.
+- 장점, 단점 및 영향: current direct exact/forced 42/0과 ZonedDateTime exact/forced 50/0이 재현된다. future sibling은 자동 입장하지 않는다.
 ```
 
 Implementation commit `bf45482` is confirmed by ordinary CI `31200775282`
@@ -14582,10 +14578,9 @@ CI requires **78 pass / 0 fail / 0 skip**.
 
 The hidden PlainDate-to-PlainDateTime midnight branch also releases four
 PlainDateTime.from paths, one equals path, and one compare path. Their current
-exact/forced boundaries are **69/0** and **69/1** over 70, **40/0** and
-**40/1** over 41, and **41/0** and **41/1** over 42. The three remaining
-`calendar-temporal-object.js` blockers require PlainMonthDay and
-PlainYearMonth, so PlainDate alone does not over-admit them.
+exact/forced boundaries are now **70/0** over 70, **41/0** over 41, and
+**42/0** over 42. The former three `calendar-temporal-object.js` blockers
+entered admission with PlainMonthDay and PlainYearMonth.
 
 ```text
 [Decision Log]
@@ -14599,11 +14594,10 @@ PlainYearMonth, so PlainDate alone does not over-admit them.
 
 ## Temporal.PlainDate.from
 
-`tools/test262_temporal_plain_date_from_admission.txt` freezes **70** exact
-paths from the pinned 71-file static method directory. Dedicated CI requires
-**70 pass / 0 fail / 0 skip**. The forced admission-plus-blocker diagnostic is
-**70 pass / 1 fail / 0 skip**; `calendar-temporal-object.js` requires absent
-PlainMonthDay and PlainYearMonth hidden kinds. Runner and analyzer share exact
+`tools/test262_temporal_plain_date_from_admission.txt` freezes all **71**
+paths from the pinned static method directory. Dedicated and forced CI both
+require **71 pass / 0 fail / 0 skip**; the former calendar-object blocker
+entered admission with the sibling hidden kinds. Runner and analyzer share exact
 path/feature metadata, while tooling additionally freezes includes, flags,
 negative metadata, full live-directory complement, and malformed path input
 contracts.
@@ -14611,21 +14605,20 @@ contracts.
 ```text
 [Decision Log]
 - 목적과 의도: PlainDate.from의 실제 독립 지원 경계와 core factory dependency 해제를 pinned Test262 accounting에 반영한다.
-- 기존 구현 및 제약 조건: 71개 direct 파일 전체가 broad Temporal gate 뒤에 있었고 일부 TypeError 기대 테스트는 missing method만으로도 거짓 양성이 될 수 있었다. calendar helper는 아직 없는 PlainMonthDay/PlainYearMonth도 생성한다.
+- 기존 구현 및 제약 조건: 71개 direct 파일 전체가 broad Temporal gate 뒤에 있었고 일부 TypeError 기대 테스트는 missing method만으로도 거짓 양성이 될 수 있었다. 초기 calendar helper는 당시 없던 PlainMonthDay/PlainYearMonth도 생성했다.
 - 검토한 주요 대안: directory prefix 허용, forced pass 전부 admission, core 11개만 여는 stub, intended assertion 기반 exact admission과 blocker complement를 검토했다.
 - 선택한 방식: 71개를 강제 실행하고 analyzer로 실패 원인을 분류한 뒤 intended assertions에 도달하는 70개만 exact manifest에 열고 calendar sibling 한 경로를 forced blocker로 고정한다.
 - 다른 대안 대신 이 방식을 선택한 이유: process exit와 오류 class만으로는 선행 TypeError false positive를 배제할 수 없다. live metadata 및 exact complement가 future sibling drift와 실제 method 회귀를 함께 검출한다.
-- 장점, 단점 및 영향: direct 70/0, forced 70/1, core 78/0이 재현된다. PlainMonthDay/PlainYearMonth 도입 시 마지막 direct blocker를 재감사해야 한다.
+- 장점, 단점 및 영향: current direct exact/forced 71/0과 core 78/0이 재현된다. future sibling은 자동 입장하지 않는다.
 ```
 
 ## Temporal.PlainDate.compare
 
-`tools/test262_temporal_plain_date_compare_admission.txt` freezes **41** exact
-paths from the pinned 42-file static method directory. Dedicated CI requires
-**41 pass / 0 fail / 0 skip**; the forced admission-plus-blocker diagnostic is
-**41 pass / 1 fail / 0 skip**. `calendar-temporal-object.js` remains blocked
-because its shared helper constructs absent PlainMonthDay and PlainYearMonth
-objects.
+`tools/test262_temporal_plain_date_compare_admission.txt` freezes all **42**
+paths from the pinned static method directory. Dedicated and forced CI both
+require **42 pass / 0 fail / 0 skip**. The former
+`calendar-temporal-object.js` blocker entered admission with PlainMonthDay and
+PlainYearMonth.
 
 Intl402 is tracked separately rather than being folded into the direct method
 directory. `future-calendar.js` is exact **1/0/0** because unsupported future
@@ -14642,16 +14635,15 @@ directory's live complement and metadata independently.
 - 검토한 주요 대안: 두 directory prefix 허용, forced pass 전부 admission, Intl402를 direct manifest에 혼합, exact path와 blocker complement 분리를 검토했다.
 - 선택한 방식: direct는 41/1, Intl402는 1/2의 admission/blocker complement로 나누고 features/includes/flags/negative metadata와 runner/analyzer parity를 동결한다.
 - 다른 대안 대신 이 방식을 선택한 이유: exact live complement만 future test drift, 선행 TypeError false positive, non-ISO calendar 지원 과장을 동시에 막는다. 두 corpus를 분리하면 실패 소유권도 명확하다.
-- 장점, 단점 및 영향: direct exact 41/0과 forced 41/1, Intl402 exact 1/0과 forced 1/2가 재현된다. PlainMonthDay/PlainYearMonth 및 gregory calendar 도입 시 세 blocker를 다시 감사해야 한다.
+- 장점, 단점 및 영향: current direct exact/forced 42/0, Intl402 exact 1/0과 forced 1/2가 재현된다. 남은 Intl402 둘은 non-ISO gregory calendar 지원 후 재감사한다.
 ```
 
 ## Temporal.PlainDate.prototype.equals
 
-`tools/test262_temporal_plain_date_equals_admission.txt` freezes **39** exact
-paths from the pinned 40-file method directory. Dedicated CI requires **39
-pass / 0 fail / 0 skip**; forced execution is **39 pass / 1 fail / 0 skip**.
-The sole direct blocker, `calendar-temporal-object.js`, constructs absent
-PlainMonthDay and PlainYearMonth objects before its equality assertions.
+`tools/test262_temporal_plain_date_equals_admission.txt` freezes all **40**
+paths from the pinned method directory. Dedicated and forced CI both require
+**40 pass / 0 fail / 0 skip**. The former direct calendar-object blocker
+entered admission with PlainMonthDay and PlainYearMonth.
 
 The separate Intl402 contract admits `future-calendar.js` at exact **1/0/0**.
 Its complete six-file forced surface is **1/5/0**: the five blockers require
@@ -14673,7 +14665,7 @@ matching the tooling's other optional-corpus checks.
 - 검토한 주요 대안: directory prefix admission, forced pass 전부 admission, direct/Intl 혼합, exact admission과 blocker complement 분리를 검토했다.
 - 선택한 방식: direct를 39/1, Intl402를 1/5 complement로 분리하고 features/includes/flags/negative metadata와 live corpus를 각각 동결한다. 네 downstream caller는 지원 수치와 분리된 non-admitting manifest로 동결한다.
 - 다른 대안 대신 이 방식을 선택한 이유: exact complement만 선행 TypeError 거짓 양성, future test drift, 미구현 calendar 의미론 과장을 동시에 검출한다.
-- 장점, 단점 및 영향: direct exact 39/0과 forced 39/1, Intl402 exact 1/0과 forced 1/5가 재현되고 전체 50-file 표면의 metadata가 고정된다. calendar sibling, arithmetic methods, non-ISO calendars 지원 후 blocker와 downstream dependency를 재감사해야 한다.
+- 장점, 단점 및 영향: current direct exact/forced 40/0, Intl402 exact 1/0과 forced 1/5가 재현되고 전체 50-file 표면의 metadata가 고정된다. arithmetic methods와 non-ISO calendars 지원 후 남은 dependency를 재감사한다.
 ```
 
 ## Temporal.PlainDate.prototype.toString
@@ -14753,8 +14745,9 @@ prototype identity/tag, and six accessor directories are **40/0/0**; static
 and `subtract` directories are **32/0/0** each. The combined dedicated CI
 boundary therefore requires **335 pass / 0 fail / 0 skip**. The 22nd direct
 `with` file, `plaintimelike-invalid.js`, is a non-admitting blocker because it
-constructs the absent PlainMonthDay and PlainYearMonth types before reaching
-the method under test. Forced execution of all 22 files is **21 pass / 1 fail**.
+calls the unimplemented `PlainMonthDay.from` and `PlainYearMonth.from`
+factories before reaching the method under test. Forced execution of all 22
+files is **21 pass / 1 fail**.
 
 One shared admission module freezes features, includes, flags, and negative
 metadata for every path. Runner and analyzer use exact membership rather than
@@ -14769,11 +14762,11 @@ before reporting its aggregate.
 ```text
 [Decision Log]
 - 목적과 의도: real PlainTime hidden-slot/ToTemporalTime/ToTemporalDuration 구현으로 도달 가능한 complete 335-file 표면을 method별로 정확히 공개한다.
-- 기존 구현 및 제약 조건: broad Temporal gate가 PlainTime 493개 전체를 숨겼고 method 부재 상태에서도 unrelated TypeError false positive가 가능했다. with direct 22개 중 한 파일은 아직 없는 PlainMonthDay/PlainYearMonth를 먼저 생성한다.
+- 기존 구현 및 제약 조건: broad Temporal gate가 PlainTime 493개 전체를 숨겼고 method 부재 상태에서도 unrelated TypeError false positive가 가능했다. with direct 22개 중 한 파일은 unimplemented PlainMonthDay.from/PlainYearMonth.from을 먼저 호출한다.
 - 검토한 주요 대안: PlainTime directory prefix admission, method별 독립 metadata 모듈, forced pass 자동 수용, eleven exact manifest와 shared metadata/diagnostic 및 explicit blocker를 검토했다.
 - 선택한 방식: core 40, from 51, valueOf 7, equals 31, compare 32, toString 40, toJSON 7, round 42, with 21, add 32, subtract 32를 disjoint manifest로 고정하고 runner/analyzer가 같은 map을 소비한다. live selection은 with directory의 21 admissions와 one-file blocker 합집합도 검증한다.
 - 다른 대안 대신 이 방식을 선택한 이유: prefix는 158개 미구현 sibling과 미래 파일을 자동 허용하며 forced process pass는 intended assertion 도달을 증명하지 않는다. 명시 blocker만 선행 constructor 의존성을 정직하게 보존한다.
-- 장점, 단점 및 영향: exact/forced admitted 335/0/0, full with 21/1, metadata drift, malformed/future path, corpus PermissionError가 재현 가능하다. 493개 중 158개는 미승인 상태로 남으며 PlainMonthDay/PlainYearMonth 구현 후 blocker 한 건을 재감사해야 한다.
+- 장점, 단점 및 영향: exact/forced admitted 335/0/0, full with 21/1, metadata drift, malformed/future path, corpus PermissionError가 재현 가능하다. 493개 중 158개는 미승인 상태며 sibling factories 구현 후 blocker 한 건을 재감사한다.
 ```
 
 ## Temporal.PlainDate.prototype.toPlainDateTime
@@ -14988,33 +14981,71 @@ formatting surface.
 At pinned Test262 revision
 `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the complete direct `total`
 directory contains 78 files. The complete supported boundary is **77 pass / 0
-fail / 1 skip**; the exact 77-path admission is **77/0/0**, and forced complete
-execution is **77 pass / 1 fail / 0 skip**. Admission covers the
+fail / 1 skip** before the calendar sibling core; it is now exact and forced
+**78 pass / 0 fail / 0 skip**. Admission covers the
 no-relative fixed branch plus ISO PlainDate/PlainDateTime and UTC/fixed-offset
 ZonedDateTime relative totals for all ten units, branded fast paths, complete
 property-bag order/coercion, plain/zoned strings, signed calendar fractions,
 zero early return, offset matching, leap seconds, and every exercised date,
 date-time, and target-epoch limit. No earlier-error false positive remains.
 
-The sole blocker, `calendar-temporal-object.js`, constructs missing
+The former blocker, `calendar-temporal-object.js`, constructs
 `Temporal.PlainMonthDay` and `Temporal.PlainYearMonth` fixtures before its
-callback can invoke `total`. It remains an explicit external-fixture blocker;
-stubbing those constructors or counting its unreachable assertion would
-overstate both sibling and total support.
+callback invokes `total`. Real hidden-slot constructor cores now satisfy that
+prerequisite, and the callback reaches its intended assertions without reading
+public calendar properties.
 
 The former downstream blockers now reach their intended assertions:
 `Temporal.Duration.from` is exact/forced **31/0/0**, and the Duration hidden-
-slot core is exact/forced **78/0/0**. Runner and analyzer admit only the 77
+slot core is exact/forced **78/0/0**. Runner and analyzer admit all 78
 owned direct paths. Three disjoint manifests freeze the complete live
-directory, metadata, empty false-positive set, and one external blocker.
+directory, metadata, empty false-positive set, and empty blocker set.
 Ordinary and dedicated full CI require literal exact and forced counts.
 
 ```text
 [Decision Log]
 - 목적과 의도: total의 complete direct surface를 intended assertion 도달 기준으로 계상하고 total 외부 sibling fixture를 분리한다.
-- 기존 구현 및 제약 조건: 초기 fixed branch는 28 admission, 15 earlier-error false positive, 35 blocker였다. relativeTo conversion과 ISO/fixed-offset arithmetic 구현 후 77개가 실제 assertion까지 통과하지만 한 파일은 absent calendar sibling construction에서 먼저 실패한다.
+- 기존 구현 및 제약 조건: 초기 fixed branch는 28 admission, 15 earlier-error false positive, 35 blocker였다. relativeTo conversion과 ISO/fixed-offset arithmetic 구현 후 77개가 실제 assertion까지 통과했고 한 파일은 calendar sibling construction에서 먼저 실패했다.
 - 검토한 주요 대안: 78-file prefix admission, unreachable callback도 total support로 계상, blocker 파일 삭제, exact admission과 one-file complement를 검토했다.
-- 선택한 방식: 재실행으로 증명된 77개만 admission하고 false-positive manifest를 비운다. fixture 실패 1개는 complete directory identity와 metadata를 유지한 채 blocker로 남긴다.
+- 선택한 방식: relative implementation에서 증명된 77개와 later sibling core가 해제한 마지막 fixture를 모두 재실행해 78-path exact admission으로 고정하고 false-positive/blocker manifest를 비운다.
 - 다른 대안 대신 이 방식을 선택한 이유: prefix는 future sibling과 unreachable assertion을 거짓 허용하고 blocker 삭제는 complete denominator를 숨긴다. exact complement만 total 구현과 missing PlainMonthDay/PlainYearMonth 책임을 구분한다.
-- 장점, 단점 및 영향: exact 77/0/1, forced 77/1/0, core 78/0, from 31/0, live metadata/disjointness/future/corpus failure가 재현된다. total 내부 relativeTo blocker는 없고 external calendar sibling fixture만 남는다.
+- 장점, 단점 및 영향: exact/forced 78/0/0, core 78/0, from 31/0, live metadata/disjointness/future/corpus failure가 재현된다. total direct surface에는 남은 blocker가 없다.
+```
+
+## Temporal PlainMonthDay/PlainYearMonth constructor cores
+
+At pinned Test262 revision
+`9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the audited constructor,
+prototype, accessor, `valueOf`, and `@@toStringTag` candidate surface contains
+104 files. Exact admission is **89 pass / 0 fail / 0 skip**. Forced execution
+is **89 pass / 15 fail / 0 skip**; all 15 blockers require intentionally
+separate `from` or serialization behavior. The admission contains no
+method-absence TypeError false positives.
+
+The two genuine hidden brands unlock eleven existing calendar-object fixtures:
+PlainDate `from/compare/equals` become **71/42/40**, PlainDateTime
+`from/compare/equals` become **70/42/41**, ZonedDateTime fixed-offset/from,
+`compare`, `equals`, and `withCalendar` become **261/50/55/16**, and
+Duration `total` becomes **78**. Each listed direct admission is exact with no
+remaining calendar-object blocker. The fixed-offset ZonedDateTime diagnostic
+remains **261 pass / 5 fail / 266 total** because five unrelated computed-field
+blockers remain. `PlainTime.prototype.with` remains **21 pass / 1 fail**:
+`plaintimelike-invalid.js` invokes the sibling `from` factories, which are not
+part of this constructor core.
+
+The dedicated manifest freezes exact path identity and live metadata across
+both type directories. Its 15-path complement rejects future accidental
+expansion. Runner and analyzer share the same exact helper; malformed,
+outside-root, inaccessible, absent-corpus, and future paths fail closed. Full
+CI separately requires literal **89/0/0** admission and **89/15/104** forced
+results.
+
+```text
+[Decision Log]
+- 목적과 의도: 두 partial-date type의 real hidden-slot constructor/accessor core와 그 downstream calendar fast-path 효과를 exact supported accounting에 반영한다.
+- 기존 구현 및 제약 조건: 타입 부재로 11개 calendar-temporal-object fixture가 intended assertion 전에 실패했고 broad Temporal gate는 direct candidate 104개를 모두 숨겼다.
+- 검토한 주요 대안: blocker 파일만 이동, directory prefix 허용, constructor 존재만으로 전체 type 지원 주장, direct 89-path admission과 15-path complement를 검토했다.
+- 선택한 방식: 실제 실행으로 통과한 constructor/getter/valueOf/tag 89개만 admit하고 from/serialization 의존 15개를 frozen complement로 둔다. downstream 11개도 각 owning manifest에서 독립 재실행 후 이동한다.
+- 다른 대안 대신 이 방식을 선택한 이유: prefix와 broad type claim은 아직 없는 factory/formatting/arithmetic을 거짓 허용한다. downstream만 이동하면 신규 type 자체의 metadata/descriptor/branding 회귀를 잡지 못한다.
+- 장점, 단점 및 영향: direct exact 89/0/15, total 78/0, 10개 다른 calendar fast-path directory 완결, live metadata/disjointness/future gating이 재현된다. PlainTime.with의 from 의존 blocker와 sibling의 나머지 methods는 명시적으로 남는다.
 ```

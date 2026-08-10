@@ -1,3 +1,2 @@
 # Pinned Test262 revision: 9e61c12835c5e4a3bdba93850427e6742c4f64c4
-# Requires absent PlainMonthDay and PlainYearMonth calendar hidden kinds.
-built-ins/Temporal/PlainDate/compare/calendar-temporal-object.js
+# No blockers after PlainMonthDay/PlainYearMonth hidden-slot cores.

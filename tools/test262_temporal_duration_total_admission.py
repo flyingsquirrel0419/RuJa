@@ -124,11 +124,11 @@ TEMPORAL_DURATION_TOTAL_NEGATIVE = {
     for path in TEMPORAL_DURATION_TOTAL_FILES
 }
 
-if len(TEMPORAL_DURATION_TOTAL_FILES) != 77:
-    raise RuntimeError("Temporal.Duration.prototype.total admission must contain 77 files")
+if len(TEMPORAL_DURATION_TOTAL_FILES) != 78:
+    raise RuntimeError("Temporal.Duration.prototype.total admission must contain 78 files")
 if TEMPORAL_DURATION_TOTAL_FALSE_POSITIVES:
     raise RuntimeError("Temporal.Duration.prototype.total false positives must be empty")
-if len(TEMPORAL_DURATION_TOTAL_BLOCKERS) != 1:
-    raise RuntimeError("Temporal.Duration.prototype.total blockers must contain 1 file")
+if TEMPORAL_DURATION_TOTAL_BLOCKERS:
+    raise RuntimeError("Temporal.Duration.prototype.total blockers must be empty")
 if len(TEMPORAL_DURATION_TOTAL_ALL_FILES) != 78:
     raise RuntimeError("Temporal.Duration.prototype.total surface must contain 78 files")

@@ -26,11 +26,13 @@ _REFLECT_CONSTRUCT = frozenset({
 })
 
 _TEMPORAL_HELPERS = frozenset({
+    'built-ins/Temporal/PlainDate/compare/calendar-temporal-object.js',
     'built-ins/Temporal/PlainDate/compare/argument-plaindatetime.js',
     'built-ins/Temporal/PlainDate/compare/infinity-throws-rangeerror.js',
 })
 
 _COMPARE_ARRAY = frozenset({
+    'built-ins/Temporal/PlainDate/compare/calendar-temporal-object.js',
     'built-ins/Temporal/PlainDate/compare/argument-plaindatetime.js',
     'built-ins/Temporal/PlainDate/compare/argument-zoneddatetime-slots.js',
     'built-ins/Temporal/PlainDate/compare/infinity-throws-rangeerror.js',
@@ -83,5 +85,5 @@ TEMPORAL_PLAIN_DATE_COMPARE_NEGATIVE = {
     path: None for path in TEMPORAL_PLAIN_DATE_COMPARE_FILES
 }
 
-if len(TEMPORAL_PLAIN_DATE_COMPARE_FILES) != 41:
-    raise RuntimeError("Temporal.PlainDate.compare admission must contain 41 files")
+if len(TEMPORAL_PLAIN_DATE_COMPARE_FILES) != 42:
+    raise RuntimeError("Temporal.PlainDate.compare admission must contain 42 files")

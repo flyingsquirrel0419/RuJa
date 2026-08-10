@@ -72,7 +72,7 @@ TEMPORAL_ZONED_DATE_TIME_FIXED_OFFSET_FEATURES = {
     path: _features(path) for path in TEMPORAL_ZONED_DATE_TIME_FIXED_OFFSET_FILES
 }
 
-if len(TEMPORAL_ZONED_DATE_TIME_FIXED_OFFSET_FILES) != 260:
+if len(TEMPORAL_ZONED_DATE_TIME_FIXED_OFFSET_FILES) != 261:
     raise RuntimeError(
-        "Temporal.ZonedDateTime fixed-offset admission must contain 260 files"
+        "Temporal.ZonedDateTime fixed-offset admission must contain 261 files"
     )

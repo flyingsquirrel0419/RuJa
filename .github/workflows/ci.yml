@@ -89,8 +89,10 @@ jobs:
             test/built-ins/Temporal/Duration/prototype/toString
             test/built-ins/Temporal/Duration/prototype/toJSON
             test/built-ins/Temporal/Duration/prototype/total
+            test/built-ins/Temporal/PlainMonthDay
             test/built-ins/Temporal/PlainTime
             test/built-ins/Temporal/PlainDate/prototype/toPlainDateTime
+            test/built-ins/Temporal/PlainYearMonth
       - name: Run exact Temporal.Duration.prototype.with admission
         run: |
           mapfile -t files < <(
@@ -153,7 +155,7 @@ jobs:
             tools/test262_temporal_duration_total_admission.txt)
           TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
             "${admitted[@]}" | tee temporal_duration_total_result.txt
-          grep -q '^RATE=100.0 PASS=77 FAIL=0 SKIP=0 TOTAL=77 RAN=77$' \
+          grep -q '^RATE=100.0 PASS=78 FAIL=0 SKIP=0 TOTAL=78 RAN=78$' \
             temporal_duration_total_result.txt
           mapfile -t complete < <(grep -hEv '^(#|$)' \
             tools/test262_temporal_duration_total_admission.txt \
@@ -162,8 +164,24 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" \
             python3 tools/test262_temporal_duration_total_diagnostic.py \
             "${complete[@]}" | tee temporal_duration_total_diagnostic.txt
-          grep -q '^RATE=98.7 PASS=77 FAIL=1 SKIP=0 TOTAL=78 RAN=78$' \
+          grep -q '^RATE=100.0 PASS=78 FAIL=0 SKIP=0 TOTAL=78 RAN=78$' \
             temporal_duration_total_diagnostic.txt
+      - name: Run exact Temporal calendar sibling core admission
+        run: |
+          mapfile -t admitted < <(grep -hEv '^(#|$)' \
+            tools/test262_temporal_calendar_siblings_core_admission.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
+            "${admitted[@]}" | tee temporal_calendar_siblings_core_result.txt
+          grep -q '^RATE=100.0 PASS=89 FAIL=0 SKIP=0 TOTAL=89 RAN=89$' \
+            temporal_calendar_siblings_core_result.txt
+          mapfile -t complete < <(grep -hEv '^(#|$)' \
+            tools/test262_temporal_calendar_siblings_core_admission.txt \
+            tools/test262_temporal_calendar_siblings_core_blockers.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_calendar_siblings_core_diagnostic.py \
+            "${complete[@]}" | tee temporal_calendar_siblings_core_diagnostic.txt
+          grep -q '^RATE=85.6 PASS=89 FAIL=15 SKIP=0 TOTAL=104 RAN=104$' \
+            temporal_calendar_siblings_core_diagnostic.txt
       - name: Run exact Temporal.PlainTime admissions
         run: |
           mapfile -t files < <(

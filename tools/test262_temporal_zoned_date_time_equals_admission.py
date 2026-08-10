@@ -38,5 +38,5 @@ TEMPORAL_ZONED_DATE_TIME_EQUALS_FEATURES = {
     path: _features(path) for path in TEMPORAL_ZONED_DATE_TIME_EQUALS_FILES
 }
 
-if len(TEMPORAL_ZONED_DATE_TIME_EQUALS_FILES) != 54:
-    raise RuntimeError("Temporal.ZonedDateTime equals admission must contain 54 files")
+if len(TEMPORAL_ZONED_DATE_TIME_EQUALS_FILES) != 55:
+    raise RuntimeError("Temporal.ZonedDateTime equals admission must contain 55 files")

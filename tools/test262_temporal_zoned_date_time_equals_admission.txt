@@ -53,3 +53,4 @@ built-ins/Temporal/ZonedDateTime/prototype/equals/requires-properties.js
 built-ins/Temporal/ZonedDateTime/prototype/equals/year-zero.js
 built-ins/Temporal/ZonedDateTime/prototype/equals/zoneddatetime-string-multiple-offsets.js
 built-ins/Temporal/ZonedDateTime/prototype/equals/zoneddatetime-string.js
+built-ins/Temporal/ZonedDateTime/prototype/equals/calendar-temporal-object.js

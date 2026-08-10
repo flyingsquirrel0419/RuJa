@@ -4,6 +4,29 @@
 
 ### Changed
 
+- Added Realm-local `%Temporal.PlainMonthDay%` and
+  `%Temporal.PlainYearMonth%` constructor/accessor cores with distinct hidden
+  ISO date records. Constructors preserve the reference ISO year/day, validate
+  ISO and Temporal range boundaries, canonicalize the ISO calendar, defer
+  `newTarget.prototype`, support subclass and cross-Realm fallback semantics,
+  and expose branded calendar/date getters, `valueOf`, and `@@toStringTag`.
+  Central hidden-calendar extraction now accepts both records without reading
+  public `calendar` or `calendarId` properties. The pinned direct core is exact
+  **89/0/0** with a frozen **15**-file serialization/factory complement. Eleven
+  existing `calendar-temporal-object.js` blockers move into their owning
+  admissions; `Temporal.Duration.prototype.total` is now complete **78/0/0**.
+  `PlainTime.prototype.with/plaintimelike-invalid.js` remains blocked because
+  it calls the intentionally unimplemented sibling `from` factories. The
+  installer reserves 165 maximum live pins across 166 allocations.
+
+  [Decision Log]
+  - 목적과 의도: PlainMonthDay/PlainYearMonth의 실제 hidden ISO date brand를 도입해 calendar-carrying Temporal fast path와 constructor/accessor core를 완결한다.
+  - 기존 구현 및 제약 조건: calendar converter는 PlainDate/PlainDateTime/ZonedDateTime만 인식했고 11개 downstream fixture가 신규 타입 생성 전에 중단됐다. non-ISO calendar engine, sibling parser/factory, serialization과 arithmetic은 아직 독립 구현이 필요하다.
+  - 검토한 주요 대안: 이름만 있는 constructor stub, PlainDate brand 재사용, visible properties, 두 complete ISO date record와 exact core admission을 검토했다.
+  - 선택한 방식: 각 타입에 distinct TemporalKind와 reference ISO component를 저장하고 constructor validation, Realm registry/prototype fallback, branded getter/valueOf/tag를 설치한다. 공용 calendar extractor는 다섯 calendar-bearing hidden kind를 한 exhaustive match로 처리한다.
+  - 다른 대안 대신 이 방식을 선택한 이유: stub과 visible fields는 getter 비관찰 및 cross-Realm brand를 거짓 지원하고 PlainDate alias는 타입별 internal-slot 계약을 파괴한다. parser/serialization을 함께 묶으면 검증되지 않은 더 넓은 표면을 노출한다.
+  - 장점, 단점 및 영향: conversion order, reference date/range, subclass/newTarget, GC/OOM/fuel, Realm errors, 89-file direct core와 11 downstream fast paths가 재현된다. `from`, equals/compare, formatting, conversion, arithmetic과 non-ISO calendars는 후속 단위다.
+
 - Added Realm-local, non-constructable, length-1
   `Temporal.Duration.prototype.total`. In addition to the no-relative fixed
   branch, a dedicated relativeTo converter now handles branded
@@ -12,18 +35,19 @@
   nudging cover year, month, week, day, and time totals for plain and
   UTC/fixed-offset zoned inputs. All ratios remain exact until one final Number
   conversion, and target date-time/epoch limits are checked. The pinned direct
-  directory is exact **77 pass / 0 fail / 1 skip** and forced **77/1/0**. The
-  sole blocker constructs absent PlainMonthDay/PlainYearMonth fixtures before
-  calling `total`; no earlier-error false positives remain. `total` remains
-  allocation 145, with 146 maximum live pins across 147 allocations.
+  directory is now exact and forced **78/0/0** after the later
+  PlainMonthDay/PlainYearMonth hidden-slot core resolved its sole external
+  fixture blocker. No earlier-error false positives remain. `total` remains
+  allocation 145; the complete installer now reserves 165 maximum live pins
+  across 166 allocations.
 
   [Decision Log]
   - 목적과 의도: Duration total의 ISO plain 및 deterministic fixed-offset relativeTo 경계를 conversion, calendar balancing, exact Number, Realm/resource 계약까지 완결한다.
-  - 기존 구현 및 제약 조건: no-relative fixed total과 Temporal hidden slots/parser/property readers는 있었지만 통합 RelativeTo record, ISO DateAdd, signed calendar-unit nudge, target range 검증은 없었다. named-zone transition provider와 PlainMonthDay/PlainYearMonth는 아직 없다.
+  - 기존 구현 및 제약 조건: no-relative fixed total과 Temporal hidden slots/parser/property readers는 있었지만 통합 RelativeTo record, ISO DateAdd, signed calendar-unit nudge, target range 검증은 없었다. named-zone transition provider는 아직 없다.
   - 검토한 주요 대안: relativeTo 무시, branded PlainDate만 지원, intermediate f64 fraction, 기존 ZonedDateTime.from을 통한 임시 객체 생성, copied relative record와 pure checked calendar arithmetic을 검토했다.
   - 선택한 방식: relativeTo를 unit보다 먼저 완전 변환해 copied Plain/Zoned record로 만들고, constrained year/month add 뒤 week/day/time을 checked i128로 합산한다. year/month은 인접 calendar boundary 사이 exact Ratio로, 나머지는 exact nanosecond Ratio로 한 번만 Number 변환한다.
   - 다른 대안 대신 이 방식을 선택한 이유: 부분 converter는 property order/error precedence를 drift시키고 임시 객체는 명세에 없는 Realm/GC/OOM 면을 만든다. f64 중간값은 calendar fraction과 maximum 값을 손상시키며 relativeTo 무시는 DST/calendar 의미를 오염시킨다.
-  - 장점, 단점 및 영향: hidden-slot fast path, full property order, strings/offset/leap-second/range errors, signed end-of-month/leap-year fractions, fixed-offset target limits, zero early return가 재현된다. direct 77개가 intended assertion까지 통과하고 external sibling fixture 1개만 남는다; named-IANA totals는 transition provider 전까지 명시적으로 거부된다.
+  - 장점, 단점 및 영향: hidden-slot fast path, full property order, strings/offset/leap-second/range errors, signed end-of-month/leap-year fractions, fixed-offset target limits, zero early return가 재현된다. later sibling core 이후 direct 78개가 intended assertion까지 통과한다; named-IANA totals는 transition provider 전까지 명시적으로 거부된다.
 
 - Added Realm-local, non-constructable, length-0
   `Temporal.Duration.prototype.toJSON`. It brands the receiver, ignores every

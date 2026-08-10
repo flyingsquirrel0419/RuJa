@@ -70,3 +70,4 @@ built-ins/Temporal/PlainDate/from/with-year-month-day.js
 built-ins/Temporal/PlainDate/from/with-year-monthCode-day-need-constrain.js
 built-ins/Temporal/PlainDate/from/with-year-monthCode-day.js
 built-ins/Temporal/PlainDate/from/year-zero.js
+built-ins/Temporal/PlainDate/from/calendar-temporal-object.js

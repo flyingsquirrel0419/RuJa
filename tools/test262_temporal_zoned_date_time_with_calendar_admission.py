@@ -27,5 +27,5 @@ TEMPORAL_ZONED_DATE_TIME_WITH_CALENDAR_FEATURES = {
     path: _features(path) for path in TEMPORAL_ZONED_DATE_TIME_WITH_CALENDAR_FILES
 }
 
-if len(TEMPORAL_ZONED_DATE_TIME_WITH_CALENDAR_FILES) != 15:
-    raise RuntimeError("Temporal.ZonedDateTime withCalendar admission must contain 15 files")
+if len(TEMPORAL_ZONED_DATE_TIME_WITH_CALENDAR_FILES) != 16:
+    raise RuntimeError("Temporal.ZonedDateTime withCalendar admission must contain 16 files")

@@ -40,3 +40,4 @@ built-ins/Temporal/PlainDateTime/prototype/equals/no-fractional-minutes-hours.js
 built-ins/Temporal/PlainDateTime/prototype/equals/not-a-constructor.js
 built-ins/Temporal/PlainDateTime/prototype/equals/prop-desc.js
 built-ins/Temporal/PlainDateTime/prototype/equals/year-zero.js
+built-ins/Temporal/PlainDateTime/prototype/equals/calendar-temporal-object.js

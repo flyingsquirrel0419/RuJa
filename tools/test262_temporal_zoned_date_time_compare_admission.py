@@ -34,5 +34,5 @@ TEMPORAL_ZONED_DATE_TIME_COMPARE_FEATURES = {
     path: _features(path) for path in TEMPORAL_ZONED_DATE_TIME_COMPARE_FILES
 }
 
-if len(TEMPORAL_ZONED_DATE_TIME_COMPARE_FILES) != 49:
-    raise RuntimeError("Temporal.ZonedDateTime compare admission must contain 49 files")
+if len(TEMPORAL_ZONED_DATE_TIME_COMPARE_FILES) != 50:
+    raise RuntimeError("Temporal.ZonedDateTime compare admission must contain 50 files")

@@ -36,6 +36,7 @@ _REFLECT_CONSTRUCT = frozenset({
 })
 
 _TEMPORAL_HELPERS = frozenset({
+    'built-ins/Temporal/PlainDate/from/calendar-temporal-object.js',
     'built-ins/Temporal/PlainDate/from/argument-leap-second.js',
     'built-ins/Temporal/PlainDate/from/argument-object-invalid.js',
     'built-ins/Temporal/PlainDate/from/argument-object-valid.js',
@@ -74,6 +75,7 @@ _TEMPORAL_HELPERS = frozenset({
 })
 
 _COMPARE_ARRAY = frozenset({
+    'built-ins/Temporal/PlainDate/from/calendar-temporal-object.js',
     'built-ins/Temporal/PlainDate/from/argument-plaindatetime.js',
     'built-ins/Temporal/PlainDate/from/argument-zoneddatetime-slots.js',
     'built-ins/Temporal/PlainDate/from/infinity-throws-rangeerror.js',
@@ -133,5 +135,5 @@ TEMPORAL_PLAIN_DATE_FROM_NEGATIVE = {
     path: None for path in TEMPORAL_PLAIN_DATE_FROM_FILES
 }
 
-if len(TEMPORAL_PLAIN_DATE_FROM_FILES) != 70:
-    raise RuntimeError("Temporal.PlainDate.from admission must contain 70 files")
+if len(TEMPORAL_PLAIN_DATE_FROM_FILES) != 71:
+    raise RuntimeError("Temporal.PlainDate.from admission must contain 71 files")

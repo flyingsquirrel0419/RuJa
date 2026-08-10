@@ -34,5 +34,5 @@ TEMPORAL_PLAIN_DATE_TIME_COMPARE_FEATURES = {
     path: _features(path) for path in TEMPORAL_PLAIN_DATE_TIME_COMPARE_FILES
 }
 
-if len(TEMPORAL_PLAIN_DATE_TIME_COMPARE_FILES) != 41:
-    raise RuntimeError("Temporal.PlainDateTime.compare admission must contain 41 files")
+if len(TEMPORAL_PLAIN_DATE_TIME_COMPARE_FILES) != 42:
+    raise RuntimeError("Temporal.PlainDateTime.compare admission must contain 42 files")

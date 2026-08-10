@@ -186,6 +186,12 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_core_manifest_is_exact_live_disjoint_and_shared
           -v
+      - name: Verify exact Temporal calendar sibling core admission
+        working-directory: tools
+        run: >-
+          TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_calendar_siblings_core_manifest_is_exact_live_disjoint_and_shared
+          -v
       - name: Verify exact Temporal.PlainDate.from admission
         working-directory: tools
         run: >-
@@ -624,7 +630,7 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
             "${files[@]}" > temporal_zoned_date_time_fixed_offset_result.txt 2>&1
           cat temporal_zoned_date_time_fixed_offset_result.txt
-          grep -q '^RATE=100.0 PASS=260 FAIL=0 SKIP=0 TOTAL=260 RAN=260$' \
+          grep -q '^RATE=100.0 PASS=261 FAIL=0 SKIP=0 TOTAL=261 RAN=261$' \
             temporal_zoned_date_time_fixed_offset_result.txt
       - name: Freeze Temporal.ZonedDateTime fixed-offset blockers
         run: |
@@ -636,7 +642,7 @@ jobs:
             python3 tools/test262_temporal_zoned_date_time_fixed_offset_diagnostic.py \
             "${files[@]}" > temporal_zoned_date_time_fixed_offset_diagnostic.txt 2>&1
           cat temporal_zoned_date_time_fixed_offset_diagnostic.txt
-          grep -q '^RATE=97.7 PASS=260 FAIL=6 SKIP=0 TOTAL=266 RAN=266$' \
+          grep -q '^RATE=98.1 PASS=261 FAIL=5 SKIP=0 TOTAL=266 RAN=266$' \
             temporal_zoned_date_time_fixed_offset_diagnostic.txt
 
   temporal-zoned-date-time-equals:
@@ -666,7 +672,7 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
             "${files[@]}" > temporal_zoned_date_time_equals_result.txt 2>&1
           cat temporal_zoned_date_time_equals_result.txt
-          grep -q '^RATE=100.0 PASS=54 FAIL=0 SKIP=0 TOTAL=54 RAN=54$' \
+          grep -q '^RATE=100.0 PASS=55 FAIL=0 SKIP=0 TOTAL=55 RAN=55$' \
             temporal_zoned_date_time_equals_result.txt
       - name: Freeze Temporal.ZonedDateTime equals blockers
         run: |
@@ -678,7 +684,7 @@ jobs:
             python3 tools/test262_temporal_zoned_date_time_equals_diagnostic.py \
             "${files[@]}" > temporal_zoned_date_time_equals_diagnostic.txt 2>&1
           cat temporal_zoned_date_time_equals_diagnostic.txt
-          grep -q '^RATE=98.2 PASS=54 FAIL=1 SKIP=0 TOTAL=55 RAN=55$' \
+          grep -q '^RATE=100.0 PASS=55 FAIL=0 SKIP=0 TOTAL=55 RAN=55$' \
             temporal_zoned_date_time_equals_diagnostic.txt
 
   temporal-zoned-date-time-with-time-zone:
@@ -738,7 +744,7 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
             "${files[@]}" > temporal_zoned_date_time_with_calendar_result.txt 2>&1
           cat temporal_zoned_date_time_with_calendar_result.txt
-          grep -q '^RATE=100.0 PASS=15 FAIL=0 SKIP=0 TOTAL=15 RAN=15$' \
+          grep -q '^RATE=100.0 PASS=16 FAIL=0 SKIP=0 TOTAL=16 RAN=16$' \
             temporal_zoned_date_time_with_calendar_result.txt
       - name: Freeze Temporal.ZonedDateTime withCalendar blockers
         run: |
@@ -750,7 +756,7 @@ jobs:
             python3 tools/test262_temporal_zoned_date_time_with_calendar_diagnostic.py \
             "${files[@]}" > temporal_zoned_date_time_with_calendar_diagnostic.txt 2>&1
           cat temporal_zoned_date_time_with_calendar_diagnostic.txt
-          grep -q '^RATE=93.8 PASS=15 FAIL=1 SKIP=0 TOTAL=16 RAN=16$' \
+          grep -q '^RATE=100.0 PASS=16 FAIL=0 SKIP=0 TOTAL=16 RAN=16$' \
             temporal_zoned_date_time_with_calendar_diagnostic.txt
 
   temporal-zoned-date-time-start-of-day:
@@ -840,7 +846,7 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
             "${files[@]}" > temporal_zoned_date_time_compare_result.txt 2>&1
           cat temporal_zoned_date_time_compare_result.txt
-          grep -q '^RATE=100.0 PASS=49 FAIL=0 SKIP=0 TOTAL=49 RAN=49$' \
+          grep -q '^RATE=100.0 PASS=50 FAIL=0 SKIP=0 TOTAL=50 RAN=50$' \
             temporal_zoned_date_time_compare_result.txt
       - name: Freeze Temporal.ZonedDateTime compare blockers
         run: |
@@ -852,7 +858,7 @@ jobs:
             python3 tools/test262_temporal_zoned_date_time_compare_diagnostic.py \
             "${files[@]}" > temporal_zoned_date_time_compare_diagnostic.txt 2>&1
           cat temporal_zoned_date_time_compare_diagnostic.txt
-          grep -q '^RATE=98.0 PASS=49 FAIL=1 SKIP=0 TOTAL=50 RAN=50$' \
+          grep -q '^RATE=100.0 PASS=50 FAIL=0 SKIP=0 TOTAL=50 RAN=50$' \
             temporal_zoned_date_time_compare_diagnostic.txt
 
   temporal-duration-core:
@@ -1141,7 +1147,7 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
             "${admitted[@]}" > temporal_duration_total_result.txt 2>&1
           cat temporal_duration_total_result.txt
-          grep -q '^RATE=100.0 PASS=77 FAIL=0 SKIP=0 TOTAL=77 RAN=77$' \
+          grep -q '^RATE=100.0 PASS=78 FAIL=0 SKIP=0 TOTAL=78 RAN=78$' \
             temporal_duration_total_result.txt
           mapfile -t complete < <(grep -hEv '^(#|$)' \
             tools/test262_temporal_duration_total_admission.txt \
@@ -1151,8 +1157,48 @@ jobs:
             python3 tools/test262_temporal_duration_total_diagnostic.py \
             "${complete[@]}" > temporal_duration_total_diagnostic.txt 2>&1
           cat temporal_duration_total_diagnostic.txt
-          grep -q '^RATE=98.7 PASS=77 FAIL=1 SKIP=0 TOTAL=78 RAN=78$' \
+          grep -q '^RATE=100.0 PASS=78 FAIL=0 SKIP=0 TOTAL=78 RAN=78$' \
             temporal_duration_total_diagnostic.txt
+
+  temporal-calendar-siblings-core:
+    needs: [build, setup]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download RuJa binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ruja-release
+          path: target/release/
+      - run: chmod +x target/release/ruja
+      - name: Checkout pinned Temporal calendar sibling core tests
+        uses: actions/checkout@v4
+        with:
+          repository: tc39/test262
+          ref: ${{ env.TEST262_REV }}
+          path: test262
+          sparse-checkout: |
+            harness
+            test/built-ins/Temporal/PlainMonthDay
+            test/built-ins/Temporal/PlainYearMonth
+      - name: Require exact Temporal calendar sibling core boundary
+        run: |
+          mapfile -t admitted < <(grep -hEv '^(#|$)' \
+            tools/test262_temporal_calendar_siblings_core_admission.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
+            "${admitted[@]}" > temporal_calendar_siblings_core_result.txt 2>&1
+          cat temporal_calendar_siblings_core_result.txt
+          grep -q '^RATE=100.0 PASS=89 FAIL=0 SKIP=0 TOTAL=89 RAN=89$' \
+            temporal_calendar_siblings_core_result.txt
+          mapfile -t complete < <(grep -hEv '^(#|$)' \
+            tools/test262_temporal_calendar_siblings_core_admission.txt \
+            tools/test262_temporal_calendar_siblings_core_blockers.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_calendar_siblings_core_diagnostic.py \
+            "${complete[@]}" > temporal_calendar_siblings_core_diagnostic.txt 2>&1
+          cat temporal_calendar_siblings_core_diagnostic.txt
+          grep -q '^RATE=85.6 PASS=89 FAIL=15 SKIP=0 TOTAL=104 RAN=104$' \
+            temporal_calendar_siblings_core_diagnostic.txt
 
   temporal-plain-date-core:
     needs: [build, setup]
@@ -1223,7 +1269,7 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
             "${files[@]}" > temporal_plain_date_from_result.txt 2>&1
           cat temporal_plain_date_from_result.txt
-          grep -q '^RATE=100.0 PASS=70 FAIL=0 SKIP=0 TOTAL=70 RAN=70$' \
+          grep -q '^RATE=100.0 PASS=71 FAIL=0 SKIP=0 TOTAL=71 RAN=71$' \
             temporal_plain_date_from_result.txt
       - name: Freeze Temporal.PlainDate.from blocker
         run: |
@@ -1235,7 +1281,7 @@ jobs:
             python3 tools/test262_temporal_plain_date_from_diagnostic.py \
             "${files[@]}" > temporal_plain_date_from_diagnostic.txt 2>&1
           cat temporal_plain_date_from_diagnostic.txt
-          grep -q '^RATE=98.6 PASS=70 FAIL=1 SKIP=0 TOTAL=71 RAN=71$' \
+          grep -q '^RATE=100.0 PASS=71 FAIL=0 SKIP=0 TOTAL=71 RAN=71$' \
             temporal_plain_date_from_diagnostic.txt
 
   temporal-plain-date-compare:
@@ -1266,7 +1312,7 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
             "${files[@]}" > temporal_plain_date_compare_result.txt 2>&1
           cat temporal_plain_date_compare_result.txt
-          grep -q '^RATE=100.0 PASS=41 FAIL=0 SKIP=0 TOTAL=41 RAN=41$' \
+          grep -q '^RATE=100.0 PASS=42 FAIL=0 SKIP=0 TOTAL=42 RAN=42$' \
             temporal_plain_date_compare_result.txt
       - name: Freeze Temporal.PlainDate.compare blocker
         run: |
@@ -1278,7 +1324,7 @@ jobs:
             python3 tools/test262_temporal_plain_date_compare_diagnostic.py \
             "${files[@]}" > temporal_plain_date_compare_diagnostic.txt 2>&1
           cat temporal_plain_date_compare_diagnostic.txt
-          grep -q '^RATE=97.6 PASS=41 FAIL=1 SKIP=0 TOTAL=42 RAN=42$' \
+          grep -q '^RATE=100.0 PASS=42 FAIL=0 SKIP=0 TOTAL=42 RAN=42$' \
             temporal_plain_date_compare_diagnostic.txt
       - name: Require exact Intl402 Temporal.PlainDate.compare boundary
         run: |
@@ -1330,7 +1376,7 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
             "${files[@]}" > temporal_plain_date_equals_result.txt 2>&1
           cat temporal_plain_date_equals_result.txt
-          grep -q '^RATE=100.0 PASS=39 FAIL=0 SKIP=0 TOTAL=39 RAN=39$' \
+          grep -q '^RATE=100.0 PASS=40 FAIL=0 SKIP=0 TOTAL=40 RAN=40$' \
             temporal_plain_date_equals_result.txt
       - name: Freeze Temporal.PlainDate equals blocker
         run: |
@@ -1342,7 +1388,7 @@ jobs:
             python3 tools/test262_temporal_plain_date_equals_diagnostic.py \
             "${files[@]}" > temporal_plain_date_equals_diagnostic.txt 2>&1
           cat temporal_plain_date_equals_diagnostic.txt
-          grep -q '^RATE=97.5 PASS=39 FAIL=1 SKIP=0 TOTAL=40 RAN=40$' \
+          grep -q '^RATE=100.0 PASS=40 FAIL=0 SKIP=0 TOTAL=40 RAN=40$' \
             temporal_plain_date_equals_diagnostic.txt
       - name: Require exact Intl402 Temporal.PlainDate equals boundary
         run: |
@@ -1575,7 +1621,7 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
             "${files[@]}" > temporal_plain_date_time_from_result.txt 2>&1
           cat temporal_plain_date_time_from_result.txt
-          grep -q '^RATE=100.0 PASS=69 FAIL=0 SKIP=0 TOTAL=69 RAN=69$' \
+          grep -q '^RATE=100.0 PASS=70 FAIL=0 SKIP=0 TOTAL=70 RAN=70$' \
             temporal_plain_date_time_from_result.txt
       - name: Freeze Temporal.PlainDateTime.from blockers
         run: |
@@ -1587,7 +1633,7 @@ jobs:
             python3 tools/test262_temporal_plain_date_time_from_diagnostic.py \
             "${files[@]}" > temporal_plain_date_time_from_diagnostic.txt 2>&1
           cat temporal_plain_date_time_from_diagnostic.txt
-          grep -q '^RATE=98.6 PASS=69 FAIL=1 SKIP=0 TOTAL=70 RAN=70$' \
+          grep -q '^RATE=100.0 PASS=70 FAIL=0 SKIP=0 TOTAL=70 RAN=70$' \
             temporal_plain_date_time_from_diagnostic.txt
 
   temporal-plain-date-to-plain-date-time:
@@ -1726,7 +1772,7 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
             "${files[@]}" > temporal_plain_date_time_equals_result.txt 2>&1
           cat temporal_plain_date_time_equals_result.txt
-          grep -q '^RATE=100.0 PASS=40 FAIL=0 SKIP=0 TOTAL=40 RAN=40$' \
+          grep -q '^RATE=100.0 PASS=41 FAIL=0 SKIP=0 TOTAL=41 RAN=41$' \
             temporal_plain_date_time_equals_result.txt
       - name: Freeze Temporal.PlainDateTime equals blockers
         run: |
@@ -1738,7 +1784,7 @@ jobs:
             python3 tools/test262_temporal_plain_date_time_equals_diagnostic.py \
             "${files[@]}" > temporal_plain_date_time_equals_diagnostic.txt 2>&1
           cat temporal_plain_date_time_equals_diagnostic.txt
-          grep -q '^RATE=97.6 PASS=40 FAIL=1 SKIP=0 TOTAL=41 RAN=41$' \
+          grep -q '^RATE=100.0 PASS=41 FAIL=0 SKIP=0 TOTAL=41 RAN=41$' \
             temporal_plain_date_time_equals_diagnostic.txt
 
   temporal-plain-date-time-compare:
@@ -1768,7 +1814,7 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
             "${files[@]}" > temporal_plain_date_time_compare_result.txt 2>&1
           cat temporal_plain_date_time_compare_result.txt
-          grep -q '^RATE=100.0 PASS=41 FAIL=0 SKIP=0 TOTAL=41 RAN=41$' \
+          grep -q '^RATE=100.0 PASS=42 FAIL=0 SKIP=0 TOTAL=42 RAN=42$' \
             temporal_plain_date_time_compare_result.txt
       - name: Freeze Temporal.PlainDateTime compare blockers
         run: |
@@ -1780,7 +1826,7 @@ jobs:
             python3 tools/test262_temporal_plain_date_time_compare_diagnostic.py \
             "${files[@]}" > temporal_plain_date_time_compare_diagnostic.txt 2>&1
           cat temporal_plain_date_time_compare_diagnostic.txt
-          grep -q '^RATE=97.6 PASS=41 FAIL=1 SKIP=0 TOTAL=42 RAN=42$' \
+          grep -q '^RATE=100.0 PASS=42 FAIL=0 SKIP=0 TOTAL=42 RAN=42$' \
             temporal_plain_date_time_compare_diagnostic.txt
 
   temporal-instant-epoch-factories:

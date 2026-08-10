@@ -76,3 +76,4 @@ built-ins/Temporal/Duration/prototype/total/relativeto-zoneddatetime-with-fracti
 built-ins/Temporal/Duration/prototype/total/rounding-window.js
 built-ins/Temporal/Duration/prototype/total/unit-plurals-accepted.js
 built-ins/Temporal/Duration/prototype/total/zero-duration.js
+built-ins/Temporal/Duration/prototype/total/calendar-temporal-object.js

@@ -650,8 +650,10 @@ fn trace_obj_impl(obj: &HeapObj, worklist: &mut Vec<usize>) {
             crate::value::TemporalKind::Instant { .. }
             | crate::value::TemporalKind::Duration { .. }
             | crate::value::TemporalKind::PlainDate { .. }
+            | crate::value::TemporalKind::PlainMonthDay { .. }
             | crate::value::TemporalKind::PlainTime { .. }
             | crate::value::TemporalKind::PlainDateTime { .. }
+            | crate::value::TemporalKind::PlainYearMonth { .. }
             | crate::value::TemporalKind::ZonedDateTime { .. } => {}
         },
         HeapObj::Environment(e) => {

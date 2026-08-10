@@ -259,3 +259,4 @@ built-ins/Temporal/ZonedDateTime/prototype/year/prop-desc.js
 built-ins/Temporal/ZonedDateTime/prototype/yearOfWeek/basic.js
 built-ins/Temporal/ZonedDateTime/prototype/yearOfWeek/branding.js
 built-ins/Temporal/ZonedDateTime/prototype/yearOfWeek/prop-desc.js
+built-ins/Temporal/ZonedDateTime/from/calendar-temporal-object.js

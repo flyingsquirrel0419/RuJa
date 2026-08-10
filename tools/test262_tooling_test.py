@@ -272,6 +272,16 @@ from test262_temporal_plain_date_core_admission import (
     TEMPORAL_PLAIN_DATE_CORE_FEATURES,
     TEMPORAL_PLAIN_DATE_CORE_FILES,
 )
+from test262_temporal_calendar_siblings_core_admission import (
+    TEMPORAL_CALENDAR_SIBLINGS_CORE_ALL_FEATURES,
+    TEMPORAL_CALENDAR_SIBLINGS_CORE_ALL_FILES,
+    TEMPORAL_CALENDAR_SIBLINGS_CORE_ALL_FLAGS,
+    TEMPORAL_CALENDAR_SIBLINGS_CORE_ALL_INCLUDES,
+    TEMPORAL_CALENDAR_SIBLINGS_CORE_ALL_NEGATIVE,
+    TEMPORAL_CALENDAR_SIBLINGS_CORE_BLOCKER_FILES,
+    TEMPORAL_CALENDAR_SIBLINGS_CORE_FEATURES,
+    TEMPORAL_CALENDAR_SIBLINGS_CORE_FILES,
+)
 from test262_temporal_plain_date_from_admission import (
     TEMPORAL_PLAIN_DATE_FROM_FEATURES,
     TEMPORAL_PLAIN_DATE_FROM_FILES,
@@ -3713,13 +3723,14 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
             ).read_text().splitlines()
             if (line := raw_line.strip()) and not line.startswith("#")
         }
-        self.assertEqual(len(files), 260)
-        self.assertEqual(len(blockers), 6)
+        self.assertEqual(len(files), 261)
+        self.assertEqual(len(blockers), 5)
         self.assertEqual(set(features_by_file), set(files))
         self.assertTrue(files.isdisjoint(blockers))
         self.assertTrue(files.isdisjoint(TEMPORAL_ZONED_DATE_TIME_CORE_FILES))
 
         compare_helpers = {
+            "built-ins/Temporal/ZonedDateTime/from/calendar-temporal-object.js",
             "built-ins/Temporal/ZonedDateTime/from/disambiguation-wrong-type.js",
             "built-ins/Temporal/ZonedDateTime/from/infinity-throws-rangeerror.js",
             "built-ins/Temporal/ZonedDateTime/from/observable-get-overflow-argument-primitive.js",
@@ -3904,8 +3915,8 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
             ).read_text().splitlines()
             if (line := raw_line.strip()) and not line.startswith("#")
         }
-        self.assertEqual(len(files), 54)
-        self.assertEqual(len(blockers), 1)
+        self.assertEqual(len(files), 55)
+        self.assertEqual(len(blockers), 0)
         self.assertEqual(set(features_by_file), set(files))
         self.assertTrue(files.isdisjoint(blockers))
 
@@ -3933,7 +3944,11 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                     features_by_file[relative],
                     relative,
                 )
-                if path.name in {"infinity-throws-rangeerror.js", "order-of-operations.js"}:
+                if path.name in {
+                    "calendar-temporal-object.js",
+                    "infinity-throws-rangeerror.js",
+                    "order-of-operations.js",
+                }:
                     includes = ["compareArray.js", "temporalHelpers.js"]
                 elif path.name in {"length.js", "name.js", "prop-desc.js"}:
                     includes = ["propertyHelper.js"]
@@ -4118,8 +4133,8 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
             ).read_text().splitlines()
             if (line := raw_line.strip()) and not line.startswith("#")
         }
-        self.assertEqual(len(files), 15)
-        self.assertEqual(len(blockers), 1)
+        self.assertEqual(len(files), 16)
+        self.assertEqual(len(blockers), 0)
         self.assertEqual(set(features_by_file), set(files))
         self.assertTrue(files.isdisjoint(blockers))
 
@@ -4151,6 +4166,8 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                     includes = ["propertyHelper.js"]
                 elif path.name == "not-a-constructor.js":
                     includes = ["isConstructor.js"]
+                elif path.name == "calendar-temporal-object.js":
+                    includes = ["compareArray.js"]
                 elif path.name == "subclassing-ignored.js":
                     includes = ["temporalHelpers.js"]
                 else:
@@ -5346,7 +5363,7 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
         all_files = TEMPORAL_DURATION_TOTAL_ALL_FILES
         self.assertEqual(
             (len(admitted), len(false_positives), len(blockers), len(all_files)),
-            (77, 0, 1, 78),
+            (78, 0, 0, 78),
         )
         self.assertFalse(admitted & false_positives)
         self.assertFalse(admitted & blockers)
@@ -5484,8 +5501,8 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
             ).read_text().splitlines()
             if (line := raw_line.strip()) and not line.startswith("#")
         }
-        self.assertEqual(len(files), 41)
-        self.assertEqual(len(blockers), 1)
+        self.assertEqual(len(files), 42)
+        self.assertEqual(len(blockers), 0)
         self.assertEqual(set(features_by_file), set(files))
         self.assertTrue(files.isdisjoint(blockers))
 
@@ -5517,7 +5534,11 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                     includes = ["propertyHelper.js"]
                 elif path.name == "not-a-constructor.js":
                     includes = ["isConstructor.js"]
-                elif path.name in {"argument-plaindate.js", "infinity-throws-rangeerror.js"}:
+                elif path.name in {
+                    "argument-plaindate.js",
+                    "calendar-temporal-object.js",
+                    "infinity-throws-rangeerror.js",
+                }:
                     includes = ["compareArray.js", "temporalHelpers.js"]
                 else:
                     includes = []
@@ -5571,8 +5592,8 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
             ).read_text().splitlines()
             if (line := raw_line.strip()) and not line.startswith("#")
         }
-        self.assertEqual(len(files), 40)
-        self.assertEqual(len(blockers), 1)
+        self.assertEqual(len(files), 41)
+        self.assertEqual(len(blockers), 0)
         self.assertEqual(set(features_by_file), set(files))
         self.assertTrue(files.isdisjoint(blockers))
 
@@ -5747,8 +5768,8 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
             ).read_text().splitlines()
             if (line := raw_line.strip()) and not line.startswith("#")
         }
-        self.assertEqual(len(files), 69)
-        self.assertEqual(len(blockers), 1)
+        self.assertEqual(len(files), 70)
+        self.assertEqual(len(blockers), 0)
         self.assertEqual(set(features_by_file), set(files))
         self.assertTrue(files.isdisjoint(blockers))
 
@@ -5826,8 +5847,8 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
             ).read_text().splitlines()
             if (line := raw_line.strip()) and not line.startswith("#")
         }
-        self.assertEqual(len(files), 41)
-        self.assertEqual(len(blockers), 1)
+        self.assertEqual(len(files), 42)
+        self.assertEqual(len(blockers), 0)
         self.assertEqual(set(features_by_file), set(files))
         self.assertEqual(set(includes_by_file), set(files))
         self.assertEqual(set(flags_by_file), set(files))
@@ -6019,8 +6040,8 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                 "test262_temporal_plain_date_equals_blockers.txt",
                 "built-ins/Temporal/PlainDate/prototype/equals",
                 "built-ins/Temporal/PlainDate/prototype/equals/future.js",
-                39,
-                1,
+                40,
+                0,
                 "temporal_plain_date_equals_path",
                 "temporal_plain_date_equals_features",
             ),
@@ -6627,8 +6648,8 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
             ).read_text().splitlines()
             if (line := raw_line.strip()) and not line.startswith("#")
         }
-        self.assertEqual(len(files), 70)
-        self.assertEqual(len(blockers), 1)
+        self.assertEqual(len(files), 71)
+        self.assertEqual(len(blockers), 0)
         self.assertEqual(set(features_by_file), set(files))
         self.assertEqual(set(includes_by_file), set(files))
         self.assertEqual(set(flags_by_file), set(files))
@@ -6703,6 +6724,179 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                             tool.temporal_plain_date_from_features(path), frozenset()
                         )
                         self.assertTrue(tool.should_skip({"features": ["Temporal"]}, path))
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_temporal_calendar_siblings_core_manifest_is_exact_live_disjoint_and_shared(self):
+        files = TEMPORAL_CALENDAR_SIBLINGS_CORE_FILES
+        features_by_file = TEMPORAL_CALENDAR_SIBLINGS_CORE_FEATURES
+        blockers = TEMPORAL_CALENDAR_SIBLINGS_CORE_BLOCKER_FILES
+        all_files = TEMPORAL_CALENDAR_SIBLINGS_CORE_ALL_FILES
+        self.assertEqual(len(files), 89)
+        self.assertEqual(len(blockers), 15)
+        self.assertEqual(set(features_by_file), set(files))
+        self.assertTrue(files.isdisjoint(blockers))
+        self.assertEqual(all_files, files | blockers)
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        corpus_required = "TEST262" in os.environ
+        groups = {
+            "PlainMonthDay": ("calendarId", "day", "monthCode", "valueOf", "toStringTag"),
+            "PlainYearMonth": (
+                "calendarId", "era", "eraYear", "year", "month", "monthCode",
+                "daysInMonth", "daysInYear", "monthsInYear", "inLeapYear",
+                "valueOf", "toStringTag",
+            ),
+        }
+        def live_candidate_files():
+            live_files = set()
+            for kind, accessor_names in groups.items():
+                directory = test_root / "built-ins/Temporal" / kind
+                if not directory.is_dir():
+                    if corpus_required:
+                        raise FileNotFoundError(directory)
+                    return None
+                live_files.update(
+                    path.relative_to(test_root).as_posix()
+                    for path in directory.glob("*.js")
+                    if "_FIXTURE" not in path.name
+                )
+                live_files.update(
+                    path.relative_to(test_root).as_posix()
+                    for path in (directory / "prototype").glob("*.js")
+                    if "_FIXTURE" not in path.name
+                )
+                for name in accessor_names:
+                    live_files.update(
+                        path.relative_to(test_root).as_posix()
+                        for path in (directory / "prototype" / name).glob("*.js")
+                        if "_FIXTURE" not in path.name
+                    )
+            return live_files
+
+        def read_live_metadata(path):
+            try:
+                return test262_runner.parse_meta(path.read_text())
+            except OSError:
+                if corpus_required:
+                    raise
+                return None
+
+        try:
+            live_files = live_candidate_files()
+        except OSError:
+            if corpus_required:
+                raise
+            live_files = None
+        if live_files is not None:
+            self.assertEqual(live_files, all_files)
+            for relative in all_files:
+                path = test_root / relative
+                metadata = read_live_metadata(path)
+                if metadata is None:
+                    self.skipTest("live Test262 checkout is inaccessible")
+                self.assertEqual(
+                    frozenset(metadata.get("features", [])),
+                    TEMPORAL_CALENDAR_SIBLINGS_CORE_ALL_FEATURES[relative],
+                    relative,
+                )
+                self.assertEqual(
+                    frozenset(metadata.get("includes", [])),
+                    TEMPORAL_CALENDAR_SIBLINGS_CORE_ALL_INCLUDES[relative],
+                    relative,
+                )
+                self.assertEqual(
+                    frozenset(metadata.get("flags", [])),
+                    TEMPORAL_CALENDAR_SIBLINGS_CORE_ALL_FLAGS[relative],
+                    relative,
+                )
+                self.assertEqual(
+                    metadata.get("negative"),
+                    TEMPORAL_CALENDAR_SIBLINGS_CORE_ALL_NEGATIVE[relative],
+                    relative,
+                )
+                for tool in (test262_runner, test262_analyze):
+                    if relative in files:
+                        self.assertTrue(
+                            tool.temporal_calendar_siblings_core_path(path), relative
+                        )
+                        self.assertEqual(
+                            tool.temporal_calendar_siblings_core_features(path),
+                            features_by_file[relative],
+                        )
+                        self.assertFalse(tool.should_skip(metadata, path), relative)
+                    else:
+                        self.assertFalse(
+                            tool.temporal_calendar_siblings_core_path(path), relative
+                        )
+                        self.assertEqual(
+                            tool.temporal_calendar_siblings_core_features(path),
+                            frozenset(),
+                        )
+                        self.assertTrue(tool.should_skip(metadata, path), relative)
+
+            with patch("pathlib.Path.read_text", side_effect=PermissionError):
+                path = test_root / next(iter(all_files))
+                if corpus_required:
+                    with self.assertRaises(PermissionError):
+                        read_live_metadata(path)
+                else:
+                    self.assertIsNone(read_live_metadata(path))
+
+        with patch("pathlib.Path.is_dir", side_effect=PermissionError):
+            with self.assertRaises(PermissionError):
+                live_candidate_files()
+        with patch("pathlib.Path.is_dir", return_value=False):
+            if corpus_required:
+                with self.assertRaises(FileNotFoundError):
+                    live_candidate_files()
+            else:
+                self.assertIsNone(live_candidate_files())
+
+        tools_dir = Path(__file__).resolve().parent
+        for manifest in tools_dir.glob("test262_*_admission.txt"):
+            if manifest.name == "test262_temporal_calendar_siblings_core_admission.txt":
+                continue
+            existing = {
+                line
+                for raw_line in manifest.read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            self.assertTrue(files.isdisjoint(existing), manifest.name)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = root / "test/built-ins/Temporal/PlainMonthDay/prototype/day/future.js"
+            outside = root / "test/built-ins/Other/prototype/day/basic.js"
+            for tool in (test262_runner, test262_analyze):
+                self.assertFalse(tool.temporal_calendar_siblings_core_path(None))
+                self.assertFalse(tool.temporal_calendar_siblings_core_path(object()))
+                self.assertEqual(
+                    tool.temporal_calendar_siblings_core_features(None), frozenset()
+                )
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, features in features_by_file.items():
+                        path = root / "test" / relative
+                        self.assertTrue(
+                            tool.temporal_calendar_siblings_core_path(path), relative
+                        )
+                        self.assertEqual(
+                            tool.temporal_calendar_siblings_core_features(path), features
+                        )
+                        self.assertFalse(
+                            tool.should_skip({"features": sorted(features)}, path)
+                        )
+                    for path in (future, outside):
+                        self.assertFalse(tool.temporal_calendar_siblings_core_path(path))
+                        self.assertEqual(
+                            tool.temporal_calendar_siblings_core_features(path),
+                            frozenset(),
+                        )
+                        self.assertTrue(
+                            tool.should_skip({"features": ["Temporal"]}, path)
+                        )
                 finally:
                     tool.TEST262 = original_root
 
@@ -6931,8 +7125,8 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
             ).read_text().splitlines()
             if (line := raw_line.strip()) and not line.startswith("#")
         }
-        self.assertEqual(len(files), 49)
-        self.assertEqual(len(blockers), 1)
+        self.assertEqual(len(files), 50)
+        self.assertEqual(len(blockers), 0)
         self.assertEqual(set(features_by_file), set(files))
         self.assertTrue(files.isdisjoint(blockers))
 
@@ -6964,7 +7158,11 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                     includes = ["propertyHelper.js"]
                 elif path.name == "not-a-constructor.js":
                     includes = ["isConstructor.js"]
-                elif path.name in {"infinity-throws-rangeerror.js", "order-of-operations.js"}:
+                elif path.name in {
+                    "calendar-temporal-object.js",
+                    "infinity-throws-rangeerror.js",
+                    "order-of-operations.js",
+                }:
                     includes = ["compareArray.js", "temporalHelpers.js"]
                 else:
                     includes = []

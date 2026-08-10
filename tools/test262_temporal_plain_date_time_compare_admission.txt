@@ -41,3 +41,4 @@ built-ins/Temporal/PlainDateTime/compare/not-a-constructor.js
 built-ins/Temporal/PlainDateTime/compare/prop-desc.js
 built-ins/Temporal/PlainDateTime/compare/use-internal-slots.js
 built-ins/Temporal/PlainDateTime/compare/year-zero.js
+built-ins/Temporal/PlainDateTime/compare/calendar-temporal-object.js

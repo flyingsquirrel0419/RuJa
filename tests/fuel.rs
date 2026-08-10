@@ -877,6 +877,74 @@ fn temporal_plain_date_precharges_numeric_and_calendar_strings() {
 }
 
 #[test]
+fn temporal_month_day_and_year_month_precharge_numeric_and_calendar_strings() {
+    const BUDGET: i64 = 20_000;
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        globalThis.temporalFieldShort = "2";
+        globalThis.temporalFieldLong = "0".repeat(512) + "2";
+        globalThis.temporalCalendarShort = "x";
+        globalThis.temporalCalendarLong = "x".repeat(512);
+        "#,
+    )
+    .expect("Temporal calendar sibling fuel fixtures should initialize");
+
+    for (short, long, label) in [
+        (
+            "new Temporal.PlainMonthDay(temporalFieldShort, 1);",
+            "new Temporal.PlainMonthDay(temporalFieldLong, 1);",
+            "PlainMonthDay",
+        ),
+        (
+            "new Temporal.PlainYearMonth(temporalFieldShort, 1);",
+            "new Temporal.PlainYearMonth(temporalFieldLong, 1);",
+            "PlainYearMonth",
+        ),
+    ] {
+        vm.set_fuel(Some(BUDGET));
+        vm.run(short).expect("short numeric field should convert");
+        let short_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+
+        vm.set_fuel(Some(BUDGET));
+        vm.run(long).expect("long numeric field should convert");
+        let long_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+        assert!(long_work >= short_work + 500, "{label}");
+
+        vm.set_fuel(Some(long_work - 1));
+        let error = vm
+            .run(long)
+            .expect_err("N-1 fuel must abort numeric field conversion");
+        assert_eq!(error.kind, ruja::ErrorKind::Fuel, "{label}");
+        assert_eq!(vm.fuel_remaining(), Some(0), "{label}");
+    }
+
+    for (short, long, label) in [
+        (
+            "new Temporal.PlainMonthDay(2, 1, temporalCalendarShort);",
+            "new Temporal.PlainMonthDay(2, 1, temporalCalendarLong);",
+            "PlainMonthDay",
+        ),
+        (
+            "new Temporal.PlainYearMonth(2000, 1, temporalCalendarShort);",
+            "new Temporal.PlainYearMonth(2000, 1, temporalCalendarLong);",
+            "PlainYearMonth",
+        ),
+    ] {
+        vm.set_fuel(Some(BUDGET));
+        vm.run(short)
+            .expect_err("short invalid calendar should throw");
+        let short_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+
+        vm.set_fuel(Some(BUDGET));
+        vm.run(long)
+            .expect_err("long invalid calendar should throw");
+        let long_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+        assert!(long_work >= short_work + 500, "{label}");
+    }
+}
+
+#[test]
 fn temporal_plain_date_from_precharges_input_bytes() {
     const BUDGET: i64 = 20_000;
     let mut vm = Vm::new().expect("failed to initialize VM");
