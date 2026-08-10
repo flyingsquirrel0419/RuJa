@@ -1,22 +1,17 @@
 #!/usr/bin/env python3
-"""Force the complete PlainYearMonth add/subtract directories."""
+"""Force the exact PlainYearMonth.prototype.equals directory."""
 
 from pathlib import Path
 import sys
 
 import test262_runner
-from test262_temporal_plain_year_month_arithmetic_admission import (
-    TEMPORAL_PLAIN_YEAR_MONTH_ARITHMETIC_BLOCKERS,
-    TEMPORAL_PLAIN_YEAR_MONTH_ARITHMETIC_FILES,
-    TEMPORAL_PLAIN_YEAR_MONTH_ARITHMETIC_SURFACE,
+from test262_temporal_plain_year_month_equals_admission import (
+    TEMPORAL_PLAIN_YEAR_MONTH_EQUALS_FILES,
 )
 
-BLOCKERS = TEMPORAL_PLAIN_YEAR_MONTH_ARITHMETIC_BLOCKERS
-SURFACE = TEMPORAL_PLAIN_YEAR_MONTH_ARITHMETIC_SURFACE
-_SHARED_SHOULD_SKIP = test262_runner.should_skip
 
-if BLOCKERS or len(SURFACE) != 73:
-    raise RuntimeError("PlainYearMonth arithmetic surface must be 73 pass / 0 fail")
+SURFACE = TEMPORAL_PLAIN_YEAR_MONTH_EQUALS_FILES
+_SHARED_SHOULD_SKIP = test262_runner.should_skip
 
 
 def _relative(path):
@@ -49,13 +44,11 @@ def verify_expected_results(arguments):
         or len(requested) != len(arguments)
         or requested != SURFACE
     ):
-        raise RuntimeError(
-            "PlainYearMonth arithmetic diagnostic requires the exact frozen surface"
-        )
+        raise RuntimeError("PlainYearMonth equals diagnostic requires the exact frozen surface")
     actual = {path: test262_runner.run_test(test_root / path) for path in SURFACE}
-    expected = {path: "fail" if path in BLOCKERS else "pass" for path in SURFACE}
+    expected = {path: "pass" for path in SURFACE}
     if actual != expected:
-        raise RuntimeError(f"PlainYearMonth arithmetic results drifted: {actual}")
+        raise RuntimeError(f"PlainYearMonth equals results drifted: {actual}")
 
 
 if __name__ == "__main__":

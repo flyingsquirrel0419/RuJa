@@ -97,6 +97,7 @@ jobs:
         working-directory: tools
         run: >-
           TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_year_month_equals_surface_is_exact_live_disjoint_and_shared
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_year_month_arithmetic_surface_is_exact_live_and_shared
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_calendar_siblings_formatter_surface_is_exact
           -v
@@ -229,7 +230,7 @@ jobs:
             tools/test262_temporal_plain_year_month_arithmetic_admission.txt)
           TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
             "${admitted[@]}" | tee temporal_plain_year_month_arithmetic_result.txt
-          grep -q '^RATE=100.0 PASS=71 FAIL=0 SKIP=0 TOTAL=71 RAN=71$' \
+          grep -q '^RATE=100.0 PASS=73 FAIL=0 SKIP=0 TOTAL=73 RAN=73$' \
             temporal_plain_year_month_arithmetic_result.txt
           mapfile -t complete < <(grep -hEv '^(#|$)' \
             tools/test262_temporal_plain_year_month_arithmetic_admission.txt \
@@ -237,8 +238,17 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" \
             python3 tools/test262_temporal_plain_year_month_arithmetic_diagnostic.py \
             "${complete[@]}" | tee temporal_plain_year_month_arithmetic_diagnostic.txt
-          grep -q '^RATE=97.3 PASS=71 FAIL=2 SKIP=0 TOTAL=73 RAN=73$' \
+          grep -q '^RATE=100.0 PASS=73 FAIL=0 SKIP=0 TOTAL=73 RAN=73$' \
             temporal_plain_year_month_arithmetic_diagnostic.txt
+      - name: Run exact Temporal.PlainYearMonth equals admission
+        run: |
+          mapfile -t files < <(grep -hEv '^(#|$)' \
+            tools/test262_temporal_plain_year_month_equals_admission.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_plain_year_month_equals_diagnostic.py \
+            "${files[@]}" | tee temporal_plain_year_month_equals_result.txt
+          grep -q '^RATE=100.0 PASS=40 FAIL=0 SKIP=0 TOTAL=40 RAN=40$' \
+            temporal_plain_year_month_equals_result.txt
       - name: Diagnose complete Temporal calendar sibling formatter surface
         run: |
           mapfile -t files < <(grep -hEv '^(#|$)' \

@@ -94,8 +94,8 @@ TEMPORAL_PLAIN_YEAR_MONTH_ARITHMETIC_SURFACE_NEGATIVE = {
 }
 
 if (
-    len(TEMPORAL_PLAIN_YEAR_MONTH_ARITHMETIC_FILES) != 71
-    or len(TEMPORAL_PLAIN_YEAR_MONTH_ARITHMETIC_BLOCKERS) != 2
+    len(TEMPORAL_PLAIN_YEAR_MONTH_ARITHMETIC_FILES) != 73
+    or len(TEMPORAL_PLAIN_YEAR_MONTH_ARITHMETIC_BLOCKERS) != 0
     or len(TEMPORAL_PLAIN_YEAR_MONTH_ARITHMETIC_SURFACE) != 73
 ):
-    raise RuntimeError("PlainYearMonth arithmetic surface must contain 71 pass / 2 fail")
+    raise RuntimeError("PlainYearMonth arithmetic surface must contain 73 pass / 0 fail")

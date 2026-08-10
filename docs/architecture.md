@@ -5152,7 +5152,34 @@ pins.
 - 검토한 주요 대안: year/month f64 합산, 월별 반복, temporary PlainDate/YearMonth 객체, checked copied-record arithmetic을 검토했다.
 - 선택한 방식: jointly rooted arguments에서 Duration을 완전 변환하고 checked i128 배열로 만든 뒤 options/lower-unit 계약을 완료한다. canonical day 1 record와 Euclidean month index로 date를 한 번 계산하고 intrinsic allocator로 publish한다.
 - 다른 대안 대신 이 방식을 선택한 이유: f64와 반복은 exact maximum 입력 또는 성능을 훼손하고 temporary objects는 명세에 없는 getter, Realm, GC/OOM 면을 추가한다. copied records는 reference day와 subclass를 관찰하지 않는다.
-- 장점, 단점 및 영향: 3,285,488개월 경계, min/max endpoint, lower-unit/options precedence, cross-Realm result/error, abrupt identity, joint GC roots, OOM retry, fuel과 174-allocation rollback이 고정된다. non-ISO arithmetic과 equals는 별도 후속 경계다.
+- 장점, 단점 및 영향: 3,285,488개월 경계, min/max endpoint, lower-unit/options precedence, cross-Realm result/error, abrupt identity, joint GC roots, OOM retry, fuel과 174-allocation rollback이 고정된다. non-ISO arithmetic은 별도 후속 경계이며 equals는 아래 단위에서 추가된다.
+```
+
+`Temporal.PlainYearMonth.prototype.equals` is a Realm-local,
+non-constructable, length-1 native function. It copies and validates the
+receiver hidden slots before touching the argument, then delegates complete
+argument conversion to the shared ToTemporalYearMonth path. Branded arguments
+retain their stored reference ISO day without observing public accessors;
+property bags and strings produce the canonical reference day 1. Equality
+compares the full hidden year/month/reference-day record and canonical
+calendar identifier.
+
+The result is a primitive Boolean, so branded equality performs no heap
+allocation. Property-bag conversion retains the existing item and coercion
+root preflights, observable-GC behavior, and abrupt completion identity.
+String parsing retains byte-proportional fuel. Native errors are materialized
+in the method Realm. The equals function is installer allocation 173;
+`Temporal.Now` and `%Temporal%` move to 174 and 175, with 174 maximum live
+pins.
+
+```text
+[Decision Log]
+- 목적과 의도: PlainYearMonth equality를 full hidden ISO date와 calendar identity에 연결하고 conversion/Realm/resource 불변식을 보존한다.
+- 기존 구현 및 제약 조건: shared converter는 branded reference day와 bag/string canonical day 1을 구분했지만 public method가 없었다. 산술 direct directory의 2개 파일도 valid 결과 뒤 equals 부재에서 멈췄다.
+- 검토한 주요 대안: year/month tuple만 비교, visible accessors, serialization 왕복, shared converter와 hidden record direct comparison을 검토했다.
+- 선택한 방식: brand-first receiver copy, complete ToTemporalYearMonth conversion, full fields Eq, canonical calendar comparison, primitive Boolean 반환을 사용한다.
+- 다른 대안 대신 이 방식을 선택한 이유: tuple-only는 arbitrary branded reference day를 잃고 visible/serialization 경로는 명세에 없는 getter, option, annotation 및 Realm 관찰을 만든다. shared converter 재사용은 parser/order/root/fuel 계약을 한 곳에 유지한다.
+- 장점, 단점 및 영향: hidden getter 비관찰, reference-day distinction, property-bag/string canonicalization, cross-Realm errors, GC/root failure retry, zero-result allocation, exact 40/40과 arithmetic 73/73 및 175-allocation rollback이 고정된다. non-ISO calendar backend는 별도 후속 범위다.
 ```
 
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

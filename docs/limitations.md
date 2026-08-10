@@ -70,9 +70,10 @@ The following resource limits are enforced:
   constrain/reject overflow without public property access. PlainYearMonth
   `add` and `subtract` convert complete Duration-like inputs, observe validated
   overflow before rejecting nonzero lower units, perform checked ISO month
-  arithmetic from day 1, and return canonical method-Realm results. Two direct
-  arithmetic fixtures remain gated only because `PlainYearMonth.prototype.equals`
-  is absent. Equality/comparison, JSON serialization,
+  arithmetic from day 1, and return canonical method-Realm results.
+  `PlainYearMonth.prototype.equals` compares converted hidden year, month,
+  reference day, and calendar identity without public getters; direct
+  arithmetic and equals directories are complete. Static comparison, JSON serialization,
   date conversion,
   remaining arithmetic/difference, locale formatting, and non-ISO calendars remain
   unsupported.
@@ -103,7 +104,7 @@ The following resource limits are enforced:
   transition-aware midnight gap/overlap resolution exists. Named IANA time-zone transitions,
   the remaining ZonedDateTime string grammar, the remaining RFC 9557
   grammar, remaining PlainMonthDay/PlainYearMonth methods beyond the supported
-  PlainYearMonth `add`/`subtract`, remaining duration
+  PlainYearMonth `add`/`subtract`/`equals`, remaining duration
   operations, and `Temporal.Now` methods remain unsupported.
 
 - **Execution fuel**: `Vm::set_fuel(Some(n))` bounds dispatched opcodes and

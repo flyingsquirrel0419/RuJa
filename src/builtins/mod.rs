@@ -6291,7 +6291,7 @@ pub(crate) fn install_temporal_namespace_in_env(
     global: Option<&Value>,
     object_proto: Value,
 ) -> error::Result<Value> {
-    vm.try_reserve_gc_pins(173)?;
+    vm.try_reserve_gc_pins(174)?;
     let mut pin_count = 0;
     let result = (|| {
         let instant_prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
@@ -7289,6 +7289,13 @@ pub(crate) fn install_temporal_namespace_in_env(
                 env,
             )?);
         pin_count += vm.pin(&plain_year_month_subtract);
+        let plain_year_month_equals = Value::Object(vm.new_native_function_in_env_with_gc_retry(
+            "equals",
+            temporal_plain_year_month_equals,
+            1,
+            env,
+        )?);
+        pin_count += vm.pin(&plain_year_month_equals);
 
         let Value::Object(instant_constructor_index) = instant_constructor.clone() else {
             unreachable!()
@@ -7895,6 +7902,10 @@ pub(crate) fn install_temporal_namespace_in_env(
                 props.insert(
                     PropertyKey::from("subtract"),
                     data_prop(plain_year_month_subtract),
+                );
+                props.insert(
+                    PropertyKey::from("equals"),
+                    data_prop(plain_year_month_equals),
                 );
                 let mut tag = data_prop(Value::String(Arc::from("Temporal.PlainYearMonth")));
                 tag.writable = false;
@@ -11879,6 +11890,19 @@ fn temporal_plain_year_month_subtract(
     this: Option<Value>,
 ) -> error::Result<Value> {
     temporal_plain_year_month_add_or_subtract(vm, args, this, true)
+}
+
+fn temporal_plain_year_month_equals(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let (fields, calendar_identifier) = temporal_plain_year_month_slots(vm, this)?;
+    let (other_fields, other_calendar) =
+        to_temporal_plain_year_month(vm, args.first().unwrap_or(&Value::Undefined), None)?;
+    Ok(Value::Bool(
+        fields == other_fields && temporal_calendar_equals(&calendar_identifier, &other_calendar),
+    ))
 }
 
 fn to_temporal_plain_year_month(

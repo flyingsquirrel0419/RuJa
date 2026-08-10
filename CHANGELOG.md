@@ -5,6 +5,25 @@
 ### Changed
 
 - Added Realm-local, non-constructable, length-1
+  `Temporal.PlainYearMonth.prototype.equals`. It brands the receiver before
+  argument observation, reuses complete YearMonth conversion, compares the
+  full hidden ISO date including reference day, and compares canonical
+  calendar identifiers. Branded arguments bypass public getters; property
+  bags and strings canonicalize reference day to 1. Boolean results allocate
+  no heap object, while conversion errors use the method Realm. Exact pinned
+  Test262 coverage is **40/40** and the two former arithmetic blockers now
+  pass, making `add`/`subtract` **73/73**. The installer reserves 174 maximum
+  live pins across 175 allocations.
+
+  [Decision Log]
+  - 목적과 의도: PlainYearMonth equality를 hidden reference ISO date, calendar identity, conversion, Realm 및 sandbox resource 경계까지 완결한다.
+  - 기존 구현 및 제약 조건: shared YearMonth converter와 hidden slots는 있었지만 equals가 없어 direct 40개와 산술 결과를 비교하는 2개 fixture가 실패했다. branded YearMonth는 arbitrary reference day를 보존하지만 bag/string 변환은 day 1을 생성한다.
+  - 검토한 주요 대안: year/month만 비교, public getter 비교, constructor 또는 toString 왕복, existing hidden converter와 full record 비교를 검토했다.
+  - 선택한 방식: receiver brand를 먼저 확인하고 shared converter로 argument를 완전 변환한 뒤 year/month/reference day record와 canonical calendar identifier를 직접 비교한다.
+  - 다른 대안 대신 이 방식을 선택한 이유: year/month-only는 compare-reference-day 계약을 깨고 visible/round-trip 경로는 getter, subclass, annotation 및 Realm을 잘못 관찰한다. 기존 converter는 property order, parser, rooting, fuel을 이미 공유한다.
+  - 장점, 단점 및 영향: direct 40/40, arithmetic 73/73, brand-first, getter 비관찰, cross-Realm errors, observable GC, root-preflight retry, allocation-free Boolean과 full installer rollback이 재현된다. non-ISO 생성/변환은 calendar backend 후속 범위다.
+
+- Added Realm-local, non-constructable, length-1
   `Temporal.PlainYearMonth.prototype.add` and `subtract`. Both methods brand
   before observing the jointly rooted duration-like and options arguments,
   reuse complete Duration conversion, negate only after conversion for
@@ -12,16 +31,17 @@
   perform checked ISO year/month arithmetic from canonical day 1. Results
   always store reference day 1 and use the method Realm intrinsic prototype;
   non-ISO records fail closed until calendar arithmetic exists. Pinned direct
-  Test262 coverage is **71 pass / 2 fail / 73**, where both failures depend
-  only on the separately missing `PlainYearMonth.prototype.equals`. All 22
+  Test262 coverage is now **73 pass / 0 fail / 73** after the separately
+  implemented `PlainYearMonth.prototype.equals` removed both blockers. All 22
   former formatter blockers now pass, making that frozen surface **128/128**.
-  The installer reserves 173 maximum live pins across 174 allocations.
+  At this unit's checkpoint the installer reserved 173 maximum live pins
+  across 174 allocations.
 
   [Decision Log]
   - 목적과 의도: PlainYearMonth year/month 산술을 conversion, observable order, range, Realm 및 sandbox resource 경계까지 구현하고 실제 direct directory를 숨김없이 계상한다.
-  - 기존 구현 및 제약 조건: Duration converter와 checked ISO date add는 있었지만 YearMonth public methods가 없었고 formatter 진단 22개가 absent method에서 멈췄다. non-ISO calendar backend와 YearMonth.equals는 아직 없다.
+  - 기존 구현 및 제약 조건: Duration converter와 checked ISO date add는 있었지만 YearMonth public methods가 없었고 formatter 진단 22개가 absent method에서 멈췄다. non-ISO calendar backend는 남아 있으며 당시 없던 YearMonth.equals는 후속 단위에서 추가됐다.
   - 검토한 주요 대안: 22개 formatter fixture만 지원, month 반복 루프, public getter/constructor 왕복, 기존 exact Duration 및 ISO date helper를 조합한 complete method를 검토했다.
-  - 선택한 방식: receiver brand 뒤 duration/options를 함께 pin하고 complete Duration conversion, overflow conversion, lower-unit 검증, day-1 checked month-index arithmetic, method-Realm allocation을 순서대로 수행한다. 71개는 admit하고 equals 의존 2개는 exact blocker로 유지한다.
+  - 선택한 방식: receiver brand 뒤 duration/options를 함께 pin하고 complete Duration conversion, overflow conversion, lower-unit 검증, day-1 checked month-index arithmetic, method-Realm allocation을 순서대로 수행한다. 최초 71개를 admit하고 equals 의존 2개를 exact blocker로 유지했으며, 후속 equals 구현 뒤 두 경로도 admission으로 이동했다.
   - 다른 대안 대신 이 방식을 선택한 이유: 22개 전용 구현은 direct 73개 계약을 숨기고 반복 루프는 최대 3,285,488개월 입력에 부적합하다. public 객체 왕복은 getter, subclass, reference day, Realm을 잘못 관찰한다.
   - 장점, 단점 및 영향: maximum duration, endpoint month, canonical reference day, brand/order, GC/OOM/fuel, cross-Realm result/error와 full installer rollback이 재현된다. ISO overflow는 관찰·검증되지만 day-1 연산 결과에는 차이가 없고 non-ISO는 조용한 오계산 대신 거부된다.
 

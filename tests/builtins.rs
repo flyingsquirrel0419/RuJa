@@ -27152,6 +27152,102 @@ fn temporal_plain_year_month_arithmetic_observes_order_and_method_realm() {
 }
 
 #[test]
+fn temporal_plain_year_month_equals_compares_hidden_records_and_converts_arguments() {
+    assert_eq!(
+        run(r#"
+            var value = new Temporal.PlainYearMonth(1994, 11, 'iso8601', 18);
+            var same = new Temporal.PlainYearMonth(1994, 11, 'iso8601', 18);
+            var reads = 0;
+            for (var key of ['calendarId', 'year', 'month', 'monthCode']) {
+              Object.defineProperty(same, key, {
+                get: function () { reads++; throw new Error('observed'); }
+              });
+            }
+            [
+              Temporal.PlainYearMonth.prototype.equals.name,
+              Temporal.PlainYearMonth.prototype.equals.length,
+              value.equals(same), reads,
+              value.equals(new Temporal.PlainYearMonth(1994, 11, 'iso8601', 1)),
+              value.equals({ year: 1994, month: 11 }),
+              value.equals('1994-11-18'),
+              new Temporal.PlainYearMonth(1994, 11).equals({ year: 1994, month: 11 }),
+              new Temporal.PlainYearMonth(1994, 11).equals('1994-11-18'),
+              value.equals('2013-06')
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "equals|1|true|0|false|false|false|true|true|false"
+        ))
+    );
+}
+
+#[test]
+fn temporal_plain_year_month_equals_brands_first_and_uses_function_realm() {
+    assert_eq!(
+        run(r#"
+            var reads = 0;
+            var argument = {};
+            Object.defineProperty(argument, 'calendar', {
+              get: function () { reads++; throw new Error('observed'); }
+            });
+            var equals = Temporal.PlainYearMonth.prototype.equals;
+            var brandFirst = false;
+            try { equals.call({}, argument); }
+            catch (error) { brandFirst = error instanceof TypeError && reads === 0; }
+
+            var other = $262.createRealm().global;
+            var foreignEquals = other.Temporal.PlainYearMonth.prototype.equals;
+            var foreign = new other.Temporal.PlainYearMonth(2000, 5);
+            var valid = foreignEquals.call(foreign, new Temporal.PlainYearMonth(2000, 5));
+            var receiverRealm = false;
+            var argumentRealm = false;
+            try { foreignEquals.call({}, foreign); } catch (error) {
+              receiverRealm = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            try { foreignEquals.call(foreign, 'invalid'); } catch (error) {
+              argumentRealm = error instanceof other.RangeError && !(error instanceof RangeError);
+            }
+            var nonconstructable = false;
+            try { new Temporal.PlainYearMonth.prototype.equals(); }
+            catch (error) { nonconstructable = error instanceof TypeError; }
+            [brandFirst, valid, receiverRealm, argumentRealm, nonconstructable].join('|');
+        "#),
+        Value::String(Arc::from("true|true|true|true|true"))
+    );
+}
+
+#[test]
+fn temporal_plain_year_month_equals_roots_argument_across_observable_gc() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+    assert_eq!(
+        vm.run(
+            r#"
+            function ephemeralArgument() {
+              return {
+                get calendar() { forceGc(); return 'iso8601'; },
+                month: 5,
+                monthCode: 'M05',
+                year: 2000
+              };
+            }
+            new Temporal.PlainYearMonth(2000, 5).equals(ephemeralArgument());
+            "#,
+        )
+        .expect("PlainYearMonth.equals argument should survive observable GC"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn temporal_plain_time_with_merges_partial_fields_and_regulates_overflow() {
     assert_eq!(
         run(r#"

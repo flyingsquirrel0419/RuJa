@@ -7,6 +7,7 @@ built-ins/Temporal/PlainYearMonth/prototype/add/argument-lower-units.js
 built-ins/Temporal/PlainYearMonth/prototype/add/argument-mixed-sign.js
 built-ins/Temporal/PlainYearMonth/prototype/add/argument-not-object.js
 built-ins/Temporal/PlainYearMonth/prototype/add/argument-object.js
+built-ins/Temporal/PlainYearMonth/prototype/add/argument-propertybag-optional-properties.js
 built-ins/Temporal/PlainYearMonth/prototype/add/argument-singular-properties.js
 built-ins/Temporal/PlainYearMonth/prototype/add/argument-string.js
 built-ins/Temporal/PlainYearMonth/prototype/add/blank-duration.js
@@ -42,6 +43,7 @@ built-ins/Temporal/PlainYearMonth/prototype/subtract/argument-lower-units.js
 built-ins/Temporal/PlainYearMonth/prototype/subtract/argument-mixed-sign.js
 built-ins/Temporal/PlainYearMonth/prototype/subtract/argument-not-object.js
 built-ins/Temporal/PlainYearMonth/prototype/subtract/argument-object.js
+built-ins/Temporal/PlainYearMonth/prototype/subtract/argument-propertybag-optional-properties.js
 built-ins/Temporal/PlainYearMonth/prototype/subtract/argument-singular-properties.js
 built-ins/Temporal/PlainYearMonth/prototype/subtract/argument-string.js
 built-ins/Temporal/PlainYearMonth/prototype/subtract/blank-duration.js
