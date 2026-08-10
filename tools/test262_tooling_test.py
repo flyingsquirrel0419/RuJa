@@ -6861,7 +6861,12 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                 )
             return live_files
 
-        live_files = live_candidate_files()
+        try:
+            live_files = live_candidate_files()
+        except OSError:
+            if corpus_required:
+                raise
+            live_files = None
         if live_files is not None:
             self.assertEqual(live_files, set(files))
             for relative in files:
@@ -6991,7 +6996,13 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
         test_root = Path(test262_runner.TEST262) / "test"
         corpus_required = "TEST262" in os.environ
         temporal_root = test_root / "built-ins/Temporal"
-        if temporal_root.is_dir():
+        try:
+            temporal_root_available = temporal_root.is_dir()
+        except OSError:
+            if corpus_required:
+                raise
+            temporal_root_available = False
+        if temporal_root_available:
             downstream = set()
             for kind, helper in (
                 ("PlainMonthDay", "assertPlainMonthDay"),
