@@ -31,6 +31,9 @@ import test262_temporal_plain_date_sibling_conversions_downstream_diagnostic as 
 import test262_temporal_plain_date_with_calendar_siblings_complete_diagnostic as temporal_plain_date_with_calendar_complete_diagnostic
 import test262_temporal_plain_date_with_calendar_siblings_diagnostic as temporal_plain_date_with_calendar_diagnostic
 import test262_temporal_plain_date_with_calendar_siblings_downstream_diagnostic as temporal_plain_date_with_calendar_downstream_diagnostic
+import test262_temporal_plain_date_time_serialization_complete_diagnostic as temporal_plain_date_time_serialization_complete_diagnostic
+import test262_temporal_plain_date_time_serialization_diagnostic as temporal_plain_date_time_serialization_diagnostic
+import test262_temporal_plain_date_time_serialization_downstream_diagnostic as temporal_plain_date_time_serialization_downstream_diagnostic
 import test262_temporal_plain_year_month_arithmetic_diagnostic as temporal_year_month_arithmetic_diagnostic
 import test262_temporal_plain_year_month_compare_diagnostic as temporal_year_month_compare_diagnostic
 import test262_temporal_plain_year_month_compare_intl_diagnostic as temporal_year_month_compare_intl_diagnostic
@@ -579,6 +582,18 @@ from test262_temporal_plain_date_with_calendar_siblings_downstream_admission imp
     TEMPORAL_PLAIN_DATE_WITH_CALENDAR_SIBLING_DOWNSTREAM_NEGATIVE,
     TEMPORAL_PLAIN_DATE_WITH_CALENDAR_SIBLING_DOWNSTREAM_REUSED,
     TEMPORAL_PLAIN_DATE_WITH_CALENDAR_SIBLING_DOWNSTREAM_SURFACE,
+)
+from test262_temporal_plain_date_time_serialization_admission import (
+    TEMPORAL_PLAIN_DATE_TIME_SERIALIZATION_ALL_FILES,
+    TEMPORAL_PLAIN_DATE_TIME_SERIALIZATION_BLOCKERS,
+    TEMPORAL_PLAIN_DATE_TIME_SERIALIZATION_DOWNSTREAM_SURFACE,
+    TEMPORAL_PLAIN_DATE_TIME_SERIALIZATION_FALSE_POSITIVES,
+    TEMPORAL_PLAIN_DATE_TIME_SERIALIZATION_FEATURES,
+    TEMPORAL_PLAIN_DATE_TIME_SERIALIZATION_FILES,
+    TEMPORAL_PLAIN_DATE_TIME_SERIALIZATION_FLAGS,
+    TEMPORAL_PLAIN_DATE_TIME_SERIALIZATION_INCLUDES,
+    TEMPORAL_PLAIN_DATE_TIME_SERIALIZATION_NEGATIVE,
+    TEMPORAL_PLAIN_DATE_TIME_SERIALIZATION_SURFACE,
 )
 from test262_temporal_plain_date_to_locale_string_admission import (
     TEMPORAL_PLAIN_DATE_TO_LOCALE_STRING_BLOCKER_FEATURES,
@@ -1995,6 +2010,101 @@ def _js_property_call_indices(tokens, property_name):
                     continue
                 calls.append(index)
     return tuple(calls)
+
+
+def _js_property_reference_indices(tokens, property_name):
+    references = []
+    for index, token in enumerate(tokens):
+        if (
+            token in (".", "?.")
+            and index + 1 < len(tokens)
+            and tokens[index + 1] == property_name
+        ):
+            references.append(index)
+        elif (
+            token == "["
+            and index + 2 < len(tokens)
+            and tokens[index + 1] == ("string", property_name)
+            and tokens[index + 2] == "]"
+        ):
+            references.append(index)
+    return tuple(references)
+
+
+def _js_temporal_plain_date_time_alias_call_indices(tokens, property_name):
+    aliases = set()
+    assignment = (
+        "=",
+        "Temporal",
+        ".",
+        "PlainDateTime",
+        ".",
+        "prototype",
+        ".",
+        property_name,
+    )
+    for index in range(len(tokens) - len(assignment)):
+        if tokens[index : index + len(assignment)] == assignment and index:
+            aliases.add(tokens[index - 1])
+    return tuple(
+        index
+        for index in range(len(tokens) - 3)
+        if tokens[index] in aliases
+        and tokens[index + 1 : index + 4] == (".", "call", "(")
+    )
+
+
+def _js_plain_date_time_constructor_attempt_indices(tokens, property_name):
+    sequence = (
+        "new",
+        "Temporal",
+        ".",
+        "PlainDateTime",
+        ".",
+        "prototype",
+        ".",
+        property_name,
+        "(",
+    )
+    return tuple(
+        index
+        for index in range(len(tokens) - len(sequence) + 1)
+        if tokens[index : index + len(sequence)] == sequence
+    )
+
+
+def _plain_date_time_formatter_candidate_counts(root):
+    """Freeze every formatter property candidate in files naming PlainDateTime."""
+    counts = {}
+    for path in root.rglob("*.js"):
+        source = path.read_text()
+        if "PlainDateTime" not in source or not (
+            "toString" in source or "toJSON" in source
+        ):
+            continue
+        tokens = _js_executable_tokens(source)
+        to_string = len(_js_property_reference_indices(tokens, "toString"))
+        to_json = len(_js_property_reference_indices(tokens, "toJSON"))
+        if to_string or to_json:
+            counts[path.relative_to(root).as_posix()] = (to_string, to_json)
+    return counts
+
+
+def _plain_date_time_formatter_owned_calls(root, surface):
+    calls = {}
+    for relative in sorted(surface):
+        tokens = _js_executable_tokens((root / relative).read_text())
+        calls[relative] = (
+            len(_js_property_call_indices(tokens, "toString")),
+            len(
+                _js_temporal_plain_date_time_alias_call_indices(tokens, "toString")
+            ),
+            len(_js_plain_date_time_constructor_attempt_indices(tokens, "toString")),
+            len(_js_property_call_indices(tokens, "toJSON")),
+            len(_js_temporal_plain_date_time_alias_call_indices(tokens, "toJSON")),
+            len(_js_plain_date_time_constructor_attempt_indices(tokens, "toJSON")),
+        )
+    return calls
 
 
 def _js_equals_call_indices(tokens):
@@ -7520,6 +7630,447 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                         diagnostic.verify_expected_results(arguments)
             finally:
                 diagnostic.test262_runner.TEST262 = original_root
+
+    def test_temporal_plain_date_time_serialization_is_exact_live_and_shared(self):
+        admitted = TEMPORAL_PLAIN_DATE_TIME_SERIALIZATION_FILES
+        blockers = TEMPORAL_PLAIN_DATE_TIME_SERIALIZATION_BLOCKERS
+        direct = TEMPORAL_PLAIN_DATE_TIME_SERIALIZATION_SURFACE
+        downstream = TEMPORAL_PLAIN_DATE_TIME_SERIALIZATION_DOWNSTREAM_SURFACE
+        all_files = TEMPORAL_PLAIN_DATE_TIME_SERIALIZATION_ALL_FILES
+        false_positives = TEMPORAL_PLAIN_DATE_TIME_SERIALIZATION_FALSE_POSITIVES
+
+        self.assertEqual(
+            (len(admitted), len(blockers), len(direct), len(downstream)),
+            (57, 7, 64, 1),
+        )
+        self.assertEqual(direct, admitted | blockers)
+        self.assertEqual(all_files, direct | downstream)
+        self.assertTrue(admitted.isdisjoint(blockers))
+        self.assertTrue(direct.isdisjoint(downstream))
+        self.assertEqual(
+            false_positives,
+            {
+                "built-ins/Temporal/PlainDateTime/prototype/toString/builtin.js",
+                "built-ins/Temporal/PlainDateTime/prototype/toString/length.js",
+                "built-ins/Temporal/PlainDateTime/prototype/toString/name.js",
+                "built-ins/Temporal/PlainDateTime/prototype/toString/not-a-constructor.js",
+                "built-ins/Temporal/PlainDateTime/prototype/toString/smallestunit-plurals-accepted.js",
+            },
+        )
+        self.assertTrue(false_positives < admitted)
+        self.assertEqual(
+            admitted, temporal_plain_date_time_serialization_diagnostic.SURFACE
+        )
+        self.assertEqual(
+            direct,
+            temporal_plain_date_time_serialization_complete_diagnostic.SURFACE,
+        )
+        self.assertEqual(
+            blockers,
+            temporal_plain_date_time_serialization_complete_diagnostic.BLOCKERS,
+        )
+        self.assertEqual(
+            downstream,
+            temporal_plain_date_time_serialization_downstream_diagnostic.SURFACE,
+        )
+        for metadata in (
+            TEMPORAL_PLAIN_DATE_TIME_SERIALIZATION_FEATURES,
+            TEMPORAL_PLAIN_DATE_TIME_SERIALIZATION_INCLUDES,
+            TEMPORAL_PLAIN_DATE_TIME_SERIALIZATION_FLAGS,
+            TEMPORAL_PLAIN_DATE_TIME_SERIALIZATION_NEGATIVE,
+        ):
+            self.assertEqual(set(metadata), all_files)
+
+        tools_dir = Path(__file__).resolve().parent
+
+        def manifest_entries(name):
+            return tuple(
+                line
+                for raw_line in (tools_dir / name).read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            )
+
+        manifest_cases = (
+            (
+                "test262_temporal_plain_date_time_serialization_admission.txt",
+                admitted,
+            ),
+            (
+                "test262_temporal_plain_date_time_serialization_blockers.txt",
+                blockers,
+            ),
+            (
+                "test262_temporal_plain_date_time_serialization_downstream_blockers.txt",
+                downstream,
+            ),
+            (
+                "test262_temporal_plain_date_time_serialization_false_positives.txt",
+                false_positives,
+            ),
+        )
+        for name, expected in manifest_cases:
+            entries = manifest_entries(name)
+            self.assertEqual(entries, tuple(sorted(entries)), name)
+            self.assertEqual(len(entries), len(set(entries)), name)
+            self.assertEqual(frozenset(entries), expected, name)
+
+        direct_manifest = manifest_cases[0][0]
+        for manifest in tools_dir.glob("test262_*_admission.txt"):
+            if manifest.name == direct_manifest:
+                continue
+            existing = frozenset(manifest_entries(manifest.name))
+            self.assertTrue(admitted.isdisjoint(existing), manifest.name)
+            self.assertTrue(blockers.isdisjoint(existing), manifest.name)
+            self.assertTrue(downstream.isdisjoint(existing), manifest.name)
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        corpus_required = "TEST262" in os.environ
+        required_roots = (
+            test_root / "built-ins/Temporal/PlainDateTime/prototype/toString",
+            test_root / "built-ins/Temporal/PlainDateTime/prototype/toJSON",
+            test_root / "built-ins/Temporal/PlainDateTime/prototype/until",
+            test_root / "intl402/Temporal/PlainDateTime/prototype/toString",
+            test_root.parent / "harness",
+        )
+        try:
+            corpus_available = all(root.is_dir() for root in required_roots)
+        except OSError:
+            if corpus_required:
+                raise
+            corpus_available = False
+        if corpus_required and not corpus_available:
+            raise FileNotFoundError(required_roots)
+        if corpus_available:
+            live_direct = set()
+            for directory in (
+                required_roots[0],
+                required_roots[1],
+                required_roots[3],
+            ):
+                live_direct.update(
+                    path.relative_to(test_root).as_posix()
+                    for path in directory.glob("*.js")
+                    if "_FIXTURE" not in path.name
+                )
+            self.assertEqual(live_direct, direct)
+
+            for relative in all_files:
+                path = test_root / relative
+                self.assertTrue(path.is_file(), relative)
+                metadata = test262_runner.parse_meta(path.read_text())
+                self.assertEqual(
+                    frozenset(metadata.get("features", [])),
+                    TEMPORAL_PLAIN_DATE_TIME_SERIALIZATION_FEATURES[relative],
+                    relative,
+                )
+                self.assertEqual(
+                    frozenset(metadata.get("includes", [])),
+                    TEMPORAL_PLAIN_DATE_TIME_SERIALIZATION_INCLUDES[relative],
+                    relative,
+                )
+                self.assertEqual(
+                    frozenset(metadata.get("flags", [])),
+                    TEMPORAL_PLAIN_DATE_TIME_SERIALIZATION_FLAGS[relative],
+                    relative,
+                )
+                self.assertEqual(
+                    metadata.get("negative"),
+                    TEMPORAL_PLAIN_DATE_TIME_SERIALIZATION_NEGATIVE[relative],
+                    relative,
+                )
+                for tool in (test262_runner, test262_analyze):
+                    is_admitted = relative in admitted
+                    self.assertEqual(
+                        tool.temporal_plain_date_time_serialization_path(path),
+                        is_admitted,
+                        relative,
+                    )
+                    self.assertEqual(
+                        tool.temporal_plain_date_time_serialization_features(path),
+                        (
+                            TEMPORAL_PLAIN_DATE_TIME_SERIALIZATION_FEATURES[relative]
+                            if is_admitted
+                            else frozenset()
+                        ),
+                        relative,
+                    )
+                    self.assertEqual(
+                        tool.should_skip(metadata, path), not is_admitted, relative
+                    )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = root / "test/built-ins/Temporal/PlainDateTime/prototype/toString/future.js"
+            outside = root / "test/built-ins/Temporal/PlainDate/prototype/toString/basic.js"
+            blocker = root / "test" / next(iter(blockers))
+            downstream_path = root / "test" / next(iter(downstream))
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    self.assertFalse(tool.temporal_plain_date_time_serialization_path(None))
+                    self.assertEqual(
+                        tool.temporal_plain_date_time_serialization_features(None),
+                        frozenset(),
+                    )
+                    for relative in admitted:
+                        path = root / "test" / relative
+                        self.assertTrue(
+                            tool.temporal_plain_date_time_serialization_path(path)
+                        )
+                        self.assertEqual(
+                            tool.temporal_plain_date_time_serialization_features(path),
+                            TEMPORAL_PLAIN_DATE_TIME_SERIALIZATION_FEATURES[relative],
+                        )
+                        self.assertFalse(
+                            tool.should_skip(
+                                {
+                                    "features": sorted(
+                                        TEMPORAL_PLAIN_DATE_TIME_SERIALIZATION_FEATURES[
+                                            relative
+                                        ]
+                                    )
+                                },
+                                path,
+                            )
+                        )
+                    for path in (future, outside, blocker, downstream_path):
+                        self.assertFalse(
+                            tool.temporal_plain_date_time_serialization_path(path)
+                        )
+                        self.assertEqual(
+                            tool.temporal_plain_date_time_serialization_features(path),
+                            frozenset(),
+                        )
+                    for path in (future, blocker, downstream_path):
+                        self.assertTrue(
+                            tool.should_skip({"features": ["Temporal"]}, path)
+                        )
+                    self.assertFalse(
+                        tool.should_skip({"features": ["Temporal"]}, outside)
+                    )
+                finally:
+                    tool.TEST262 = original_root
+
+        diagnostics = (
+            (temporal_plain_date_time_serialization_diagnostic, admitted),
+            (temporal_plain_date_time_serialization_complete_diagnostic, direct),
+            (temporal_plain_date_time_serialization_downstream_diagnostic, downstream),
+        )
+        for diagnostic, surface in diagnostics:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                original_root = diagnostic.test262_runner.TEST262
+                diagnostic.test262_runner.TEST262 = temp_dir
+                try:
+                    with self.assertRaises(FileNotFoundError):
+                        diagnostic.verify_expected_results(sorted(surface))
+                finally:
+                    diagnostic.test262_runner.TEST262 = original_root
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "test").mkdir()
+
+            def relative_test_path(path):
+                return (
+                    Path(path)
+                    .resolve()
+                    .relative_to((root / "test").resolve())
+                    .as_posix()
+                )
+
+            diagnostic = temporal_plain_date_time_serialization_diagnostic
+            original_root = diagnostic.test262_runner.TEST262
+            diagnostic.test262_runner.TEST262 = str(root)
+            arguments = sorted(admitted)
+            try:
+                with (
+                    patch.object(diagnostic, "_verify_corpus"),
+                    patch.object(
+                        diagnostic.test262_runner, "run_test", return_value="pass"
+                    ),
+                ):
+                    diagnostic.verify_expected_results(arguments)
+                    for invalid in (
+                        arguments[:-1],
+                        arguments[:-1] + [arguments[0]],
+                        arguments + ["built-ins/Temporal/PlainDateTime/future.js"],
+                    ):
+                        with self.assertRaisesRegex(RuntimeError, "exact frozen"):
+                            diagnostic.verify_expected_results(invalid)
+                with (
+                    patch.object(diagnostic, "_verify_corpus"),
+                    patch.object(
+                        diagnostic.test262_runner, "run_test", return_value="fail"
+                    ),
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "results drifted"):
+                        diagnostic.verify_expected_results(arguments)
+            finally:
+                diagnostic.test262_runner.TEST262 = original_root
+
+            for diagnostic, surface, failed, expected_error in (
+                (
+                    temporal_plain_date_time_serialization_complete_diagnostic,
+                    direct,
+                    blockers,
+                    "RangeError: Invalid Temporal calendar identifier",
+                ),
+                (
+                    temporal_plain_date_time_serialization_downstream_diagnostic,
+                    downstream,
+                    downstream,
+                    "TypeError: undefined is not a function",
+                ),
+            ):
+                original_root = diagnostic.test262_runner.TEST262
+                diagnostic.test262_runner.TEST262 = str(root)
+                arguments = sorted(surface)
+
+                def expected_result(path, failed=failed, expected_error=expected_error):
+                    if relative_test_path(path) in failed:
+                        return "fail", (
+                            f"{expected_error} (at line 1)",
+                            f"{expected_error} (at line 2)",
+                        )
+                    return "pass", ("", "")
+
+                try:
+                    with (
+                        patch.object(diagnostic, "_verify_corpus"),
+                        patch.object(
+                            diagnostic,
+                            "_run_with_diagnostics",
+                            side_effect=expected_result,
+                        ),
+                    ):
+                        diagnostic.verify_expected_results(arguments)
+                        invalid_arguments = [
+                            arguments[:-1],
+                            arguments
+                            + ["built-ins/Temporal/PlainDateTime/future.js"],
+                        ]
+                        if len(arguments) > 1:
+                            invalid_arguments.append(arguments[:-1] + [arguments[0]])
+                        for invalid in invalid_arguments:
+                            with self.assertRaisesRegex(RuntimeError, "exact frozen"):
+                                diagnostic.verify_expected_results(invalid)
+                    with (
+                        patch.object(diagnostic, "_verify_corpus"),
+                        patch.object(
+                            diagnostic,
+                            "_run_with_diagnostics",
+                            return_value=("pass", ("", "")),
+                        ),
+                    ):
+                        with self.assertRaisesRegex(RuntimeError, "results drifted"):
+                            diagnostic.verify_expected_results(arguments)
+                    with (
+                        patch.object(diagnostic, "_verify_corpus"),
+                        patch.object(
+                            diagnostic,
+                            "_run_with_diagnostics",
+                            side_effect=lambda path, failed=failed: (
+                                ("fail", ("TypeError: wrong",))
+                                if relative_test_path(path) in failed
+                                else ("pass", ("", ""))
+                            ),
+                        ),
+                    ):
+                        with self.assertRaisesRegex(
+                            RuntimeError, "failure reasons drifted"
+                        ):
+                            diagnostic.verify_expected_results(arguments)
+                finally:
+                    diagnostic.test262_runner.TEST262 = original_root
+
+    def test_temporal_plain_date_time_formatter_call_ownership_is_exact_live(self):
+        all_files = TEMPORAL_PLAIN_DATE_TIME_SERIALIZATION_ALL_FILES
+        downstream = TEMPORAL_PLAIN_DATE_TIME_SERIALIZATION_DOWNSTREAM_SURFACE
+        test_root = Path(test262_runner.TEST262) / "test"
+        required_roots = (
+            test_root / "built-ins/Temporal",
+            test_root / "intl402/Temporal",
+            test_root.parent / "harness",
+        )
+        try:
+            corpus_available = all(root.is_dir() for root in required_roots)
+        except OSError:
+            if "TEST262" in os.environ:
+                raise
+            corpus_available = False
+        if not corpus_available:
+            if "TEST262" in os.environ:
+                raise FileNotFoundError(required_roots)
+            return
+
+        candidate_counts = _plain_date_time_formatter_candidate_counts(test_root)
+        serialized_candidates = "".join(
+            f"{path}\t{candidate_counts[path][0]}\t{candidate_counts[path][1]}\n"
+            for path in sorted(candidate_counts)
+        )
+        self.assertEqual(
+            (
+                len(candidate_counts),
+                sum(sum(counts) for counts in candidate_counts.values()),
+            ),
+            (94, 243),
+        )
+        self.assertEqual(
+            hashlib.sha256(serialized_candidates.encode()).hexdigest(),
+            "59a2a616e062968623e954d41bb7b69c1c7c8dc426e99ef509453f0306c2cbeb",
+        )
+        self.assertEqual(set(candidate_counts) & all_files, all_files)
+        excluded_homonyms = set(candidate_counts) - all_files
+        self.assertEqual(len(excluded_homonyms), 29)
+        self.assertTrue(
+            all(
+                not test262_runner.temporal_plain_date_time_serialization_path(
+                    test_root / relative
+                )
+                for relative in excluded_homonyms
+            )
+        )
+
+        owned_calls = _plain_date_time_formatter_owned_calls(test_root, all_files)
+        serialized_calls = "".join(
+            f"{path}\t" + "\t".join(map(str, owned_calls[path])) + "\n"
+            for path in sorted(owned_calls)
+        )
+        self.assertEqual(
+            tuple(
+                sum(counts[index] for counts in owned_calls.values())
+                for index in range(6)
+            ),
+            (169, 9, 1, 16, 9, 1),
+        )
+        self.assertEqual(
+            hashlib.sha256(serialized_calls.encode()).hexdigest(),
+            "062d470aa5cec58429496a0ee84dbe43b5fc9f2a9a0916db4fb2805517b5996c",
+        )
+        downstream_path = next(iter(downstream))
+        self.assertEqual(owned_calls[downstream_path], (6, 0, 0, 0, 0, 0))
+
+        helper_tokens = _js_executable_tokens(
+            (test_root.parent / "harness/temporalHelpers.js").read_text()
+        )
+        plain_date_time_body = _js_named_method_body(
+            helper_tokens, "assertPlainDateTime"
+        )
+        self.assertFalse(
+            _js_property_reference_indices(plain_date_time_body, "toString")
+        )
+        self.assertFalse(
+            _js_property_reference_indices(plain_date_time_body, "toJSON")
+        )
+        self.assertFalse(
+            _js_temporal_plain_date_time_alias_call_indices(
+                helper_tokens, "toString"
+            )
+        )
+        self.assertFalse(
+            _js_temporal_plain_date_time_alias_call_indices(helper_tokens, "toJSON")
+        )
 
     def test_temporal_plain_date_time_from_manifest_is_exact_live_disjoint_and_shared(self):
         files = TEMPORAL_PLAIN_DATE_TIME_FROM_FILES

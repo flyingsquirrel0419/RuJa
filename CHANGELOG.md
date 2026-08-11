@@ -4,6 +4,40 @@
 
 ### Changed
 
+- Added Realm-local, non-constructable, length-0
+  `Temporal.PlainDateTime.prototype.toString` and `toJSON`. Both methods brand
+  the receiver before other work and format directly from hidden ISO and
+  calendar slots. `toString` roots its options object, then reads
+  `calendarName`, `fractionalSecondDigits`, `roundingMode`, and `smallestUnit`
+  in specification order through the shared canonical Temporal option parser.
+  It rounds the complete local ISO nanosecond value so rounding can carry
+  across midnight, checks the exclusive PlainDateTime range afterward, and
+  formats the resulting year, time, and calendar annotation. `toJSON` ignores
+  arguments and an overridden public `toString`, using automatic precision,
+  truncation, and automatic calendar annotation directly. Both return a
+  primitive String without allocating a VM heap object. The functions are
+  installer allocations 186 and 187; complete installation uses 187
+  allocations and preflights 184 maximum live pins. Exact local forced
+  execution confirms **57/57** admitted direct files, **57 pass / 7 fail /
+  64** over the complete direct and Intl surface, and **0 pass / 1 fail / 1**
+  downstream; the seven direct blockers require non-ISO calendar support, and
+  the downstream file stops at earlier `until`/`add` support. Local
+  all-target/all-feature release Rust including Criterion, warnings-denied
+  release Clippy, rustfmt/diff/YAML/Python checks, live tooling **238/238**,
+  corpus-unavailable tooling **238 tests / 5 expected skips**, and focused
+  direct/complete/downstream diagnostics pass. Two GPT-5.6 final reviews found
+  and closed an options-root failpoint coverage gap and stale documentation;
+  no runtime or tooling defect remains. Remote CI verification follows the
+  pushed commit.
+
+  [Decision Log]
+  - 목적과 의도: PlainDateTime hidden record를 명세 순서의 option-aware 문자열 직렬화와 비관찰 JSON 직렬화에 연결하면서 Realm 및 sandbox resource 불변식을 보존한다.
+  - 기존 구현 및 제약 조건: shared Temporal option parsing, ISO nanosecond rounding, year/time/calendar formatting helpers는 있었지만 PlainDateTime public formatter가 없었고 non-ISO calendar backend와 일부 arithmetic은 아직 없다.
+  - 검토한 주요 대안: PlainTime 문자열과 PlainDate 문자열을 결합, public toString을 toJSON에서 재호출, complete local ISO nanoseconds를 한 번에 반올림하고 hidden slots에서 직접 format하는 방식을 검토했다.
+  - 선택한 방식: receiver를 먼저 brand-check하고 toString options를 root한 뒤 네 option을 canonical parser로 순서대로 읽는다. complete local ISO nanoseconds를 반올림하고 range를 재검증한 뒤 year/time/calendar를 format하며, toJSON은 auto/trunc/auto 설정으로 hidden record를 직접 직렬화한다.
+  - 다른 대안 대신 이 방식을 선택한 이유: PlainTime 문자열 결합은 자정 carry와 반올림 후 날짜 경계 검증을 잃는다. public toString 재호출은 override와 argument 관찰을 추가해 toJSON 명세를 위반한다.
+  - 장점, 단점 및 영향: ordered getters, midnight carry, exclusive range, hidden calendar annotation, method-Realm errors와 allocation-free primitive 결과가 고정된다. local direct 57개와 full gates는 통과하며 non-ISO Intl 7개와 earlier-arithmetic downstream 1개는 blocker로 남는다.
+
 - Added Realm-local, non-constructable, length-1
   `Temporal.PlainDate.prototype.withCalendar` and
   `Temporal.PlainDateTime.prototype.withCalendar`. Both methods brand the
@@ -27,7 +61,7 @@
 
   [Decision Log]
   - 목적과 의도: PlainDate와 PlainDateTime의 calendar replacement를 hidden ISO record, method Realm 및 sandbox resource 불변식에 맞춰 함께 구현한다.
-  - 기존 구현 및 제약 조건: 두 receiver의 hidden fields와 Realm-local allocators 및 String calendar parser는 있었지만 withCalendar bridge가 없었고, non-ISO calendar field backend와 PlainDateTime formatting은 아직 없다.
+  - 기존 구현 및 제약 조건: 두 receiver의 hidden fields와 Realm-local allocators 및 String calendar parser는 있었지만 withCalendar bridge가 없었고, 이 단위 시점에는 non-ISO calendar field backend와 PlainDateTime formatting도 아직 없었다.
   - 검토한 주요 대안: public getters와 constructors 왕복, mutable globals를 통한 결과 생성, 두 receiver를 별도 단위로 구현, shared hidden-calendar conversion과 paired append를 검토했다.
   - 선택한 방식: receiver를 먼저 brand-check하고 hidden ISO fields를 복사한 뒤 shared calendar conversion을 수행한다. hidden Temporal 값은 five-kind fast path, String은 기존 parser/fuel 경로를 사용하며 결과는 method-Realm intrinsic으로 새로 생성한다.
   - 다른 대안 대신 이 방식을 선택한 이유: visible/global 경로는 명세에 없는 getter, constructor, subclass 관찰과 잘못된 Realm 선택을 만든다. paired 구현은 동일한 conversion 순서와 resource 계약을 두 sibling에 일관되게 적용한다.

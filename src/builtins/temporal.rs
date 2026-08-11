@@ -1513,12 +1513,12 @@ fn write_year(output: &mut String, year: i128) -> Option<()> {
     Some(())
 }
 
-fn format_iso_date_time(
+fn format_iso_date_time_with_rounded(
     epoch_nanoseconds: &BigInt,
     offset_nanoseconds: i128,
     precision: InstantPrecision,
     rounding_mode: InstantRoundingMode,
-) -> Option<String> {
+) -> Option<(String, i128)> {
     let epoch_nanoseconds = epoch_nanoseconds.to_i128()?;
     let increment = rounding_increment(precision)?;
     let rounded = round_as_if_positive(epoch_nanoseconds, increment, rounding_mode)?;
@@ -1531,7 +1531,22 @@ fn format_iso_date_time(
     write_year(&mut output, year)?;
     write!(output, "-{month:02}-{day:02}T").ok()?;
     write_time(&mut output, within_day, precision)?;
-    Some(output)
+    Some((output, rounded))
+}
+
+fn format_iso_date_time(
+    epoch_nanoseconds: &BigInt,
+    offset_nanoseconds: i128,
+    precision: InstantPrecision,
+    rounding_mode: InstantRoundingMode,
+) -> Option<String> {
+    format_iso_date_time_with_rounded(
+        epoch_nanoseconds,
+        offset_nanoseconds,
+        precision,
+        rounding_mode,
+    )
+    .map(|(output, _)| output)
 }
 
 fn write_time(
@@ -1744,6 +1759,24 @@ pub(crate) fn format_plain_date(
     write!(output, "-{month:02}-{day:02}").ok()?;
     write_calendar_annotation(&mut output, calendar_identifier, calendar_name);
     Some(output)
+}
+
+pub(crate) fn format_plain_date_time(
+    fields: IsoDateTimeFields,
+    calendar_identifier: &str,
+    precision: InstantPrecision,
+    rounding_mode: InstantRoundingMode,
+    calendar_name: AnnotationDisplay,
+) -> Option<(String, i128)> {
+    let local_nanoseconds = iso_date_time_to_local_nanoseconds(fields)?;
+    let (mut output, rounded_nanoseconds) = format_iso_date_time_with_rounded(
+        &BigInt::from(local_nanoseconds),
+        0,
+        precision,
+        rounding_mode,
+    )?;
+    write_calendar_annotation(&mut output, calendar_identifier, calendar_name);
+    Some((output, rounded_nanoseconds))
 }
 
 pub(crate) fn format_plain_month_day(

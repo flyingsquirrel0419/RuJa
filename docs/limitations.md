@@ -38,8 +38,9 @@ The following resource limits are enforced:
   hidden-slot construction, subclassing, 22 ISO/calendar accessors,
   `@@toStringTag`, always-throwing `valueOf`, and static `from` for branded
   PlainDateTime/ZonedDateTime values, ISO property bags, and the audited String
-  grammar. Hidden-record `equals` and static lexicographic `compare` are
-  supported; arithmetic, rounding, formatting, and remaining
+  grammar. Hidden-record `equals`, static lexicographic `compare`, and direct
+  hidden-record `toString`/`toJSON` formatting are supported. Arithmetic,
+  prototype `round`/difference operations, locale formatting, and remaining
   conversion methods are not implemented.
   Realm-local `%Temporal.PlainDate%` supports distinct hidden-slot
   construction, subclassing, 16 ISO/calendar accessors, `@@toStringTag`,
@@ -766,8 +767,18 @@ guarantees are required.
   **36 pass / 9 fail / 45** complete direct accounting, and **0 pass / 137
   fail / 137** downstream accounting. Of the downstream failures, 133 are
   earlier non-ISO calendar `RangeError`s and four are missing
-  `Intl.DateTimeFormat` constructor `TypeError`s. PlainDateTime formatting also
-  remains absent as a separate limitation
+  `Intl.DateTimeFormat` constructor `TypeError`s
+- PlainDateTime `toString` and `toJSON` implement hidden-record ISO formatting,
+  ordered canonical options, full local-date-time rounding with midnight
+  carry, post-round exclusive-range validation, and direct JSON serialization
+  that ignores arguments and public `toString`. Exact local forced execution
+  passes all **57/57** admitted direct files. Seven Intl402 files remain
+  blocked by non-ISO calendar construction, and the sole downstream file
+  remains blocked earlier by missing `until`/`add` support; complete local
+  accounting is **57 pass / 7 fail / 64** and **0 pass / 1 fail / 1**. Local
+  release Rust, warnings-denied Clippy, formatting, and live tooling gates pass.
+  Primitive String bytes use host storage and are not charged as a VM heap
+  object
 - PlainYearMonth `toPlainDate` implements complete ISO conversion and default
   constrain semantics. Non-ISO `CalendarMergeFields`/`CalendarDateFromFields`
   remain unavailable; the 87 pinned Intl402 helper callers therefore fail at

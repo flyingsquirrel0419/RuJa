@@ -111,7 +111,17 @@
   validates Temporal limits, and creates a method-Realm intrinsic PlainDate.
   Its complete direct boundary is **12/12**; 87 Intl402 helper callers remain
   separately frozen behind non-ISO calendar construction/conversion.
-  Remaining PlainDate and PlainDateTime arithmetic, formatting, and
+  PlainDateTime now provides Realm-local, length-0, non-constructable
+  `toString` and `toJSON` formatters over its hidden record. `toString` reads
+  ordered canonical options, rounds the complete local ISO nanosecond value
+  with midnight carry, rechecks the exclusive range, and emits year, time, and
+  calendar annotation. `toJSON` ignores arguments and public `toString`, using
+  auto/trunc/auto formatting directly. Both return primitive Strings without a
+  VM heap-object allocation. Exact local forced coverage is **57/57** direct,
+  with seven non-ISO Intl blockers and one earlier-arithmetic downstream
+  blocker. Local release Rust, warnings-denied Clippy, formatting, and live
+  tooling gates pass; remote CI verification follows the pushed commit.
+  Remaining PlainDate and PlainDateTime arithmetic and
   conversion methods beyond these ISO bridges, calendar-relative and zoned
   Duration operations beyond the supported `total` boundary, remaining
   PlainMonthDay/PlainYearMonth

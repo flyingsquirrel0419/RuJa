@@ -6291,7 +6291,7 @@ pub(crate) fn install_temporal_namespace_in_env(
     global: Option<&Value>,
     object_proto: Value,
 ) -> error::Result<Value> {
-    vm.try_reserve_gc_pins(183)?;
+    vm.try_reserve_gc_pins(184)?;
     let mut pin_count = 0;
     let result = (|| {
         let instant_prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
@@ -8107,6 +8107,32 @@ pub(crate) fn install_temporal_namespace_in_env(
                     data_prop(plain_date_time_with_calendar),
                 );
             });
+        let plain_date_time_to_string =
+            Value::Object(vm.new_native_function_in_env_with_gc_retry(
+                "toString",
+                temporal_plain_date_time_to_string,
+                0,
+                env,
+            )?);
+        pin_count += vm.pin(&plain_date_time_to_string);
+        let plain_date_time_to_json = Value::Object(vm.new_native_function_in_env_with_gc_retry(
+            "toJSON",
+            temporal_plain_date_time_to_json,
+            0,
+            env,
+        )?);
+        vm.heap
+            .with_obj(plain_date_time_prototype_index.0, |object| {
+                let mut props = object.props().lock();
+                props.insert(
+                    PropertyKey::from("toString"),
+                    data_prop(plain_date_time_to_string),
+                );
+                props.insert(
+                    PropertyKey::from("toJSON"),
+                    data_prop(plain_date_time_to_json),
+                );
+            });
 
         vm.realm_temporal_instant_constructors
             .insert(env.0, instant_constructor);
@@ -9717,6 +9743,124 @@ fn temporal_plain_date_time_value_of(
     Err(Error::type_err(
         "Temporal.PlainDateTime.prototype.valueOf always throws",
     ))
+}
+
+fn temporal_plain_date_time_format(
+    fields: TemporalPlainDateTimeFields,
+    calendar_identifier: &str,
+    precision: temporal::InstantPrecision,
+    rounding_mode: temporal::InstantRoundingMode,
+    calendar_name: temporal::AnnotationDisplay,
+) -> error::Result<Value> {
+    let formatted = temporal::format_plain_date_time(
+        temporal::IsoDateTimeFields {
+            year: i128::from(fields.year),
+            month: i128::from(fields.month),
+            day: i128::from(fields.day),
+            hour: i128::from(fields.hour),
+            minute: i128::from(fields.minute),
+            second: i128::from(fields.second),
+            millisecond: i128::from(fields.millisecond),
+            microsecond: i128::from(fields.microsecond),
+            nanosecond: i128::from(fields.nanosecond),
+        },
+        calendar_identifier,
+        precision,
+        rounding_mode,
+        calendar_name,
+    )
+    .ok_or_else(|| Error::range("Temporal.PlainDateTime string formatting failed"))?;
+    let limit = i128::from(TEMPORAL_INSTANT_LIMIT_MILLISECONDS)
+        .checked_mul(1_000_000)
+        .and_then(|limit| limit.checked_add(86_400_i128 * 1_000_000_000))
+        .ok_or_else(|| Error::range("Temporal.PlainDateTime string formatting failed"))?;
+    if formatted.1 <= -limit || formatted.1 >= limit {
+        return Err(Error::range(
+            "Temporal.PlainDateTime string rounding is out of range",
+        ));
+    }
+    Ok(Value::String(Arc::from(formatted.0)))
+}
+
+fn temporal_plain_date_time_to_string(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let (fields, calendar_identifier) = temporal_plain_date_time_slots(vm, this)?;
+    let options = args.first().cloned().unwrap_or(Value::Undefined);
+    if !matches!(options, Value::Undefined | Value::Object(_)) {
+        return Err(Error::type_err(
+            "Temporal.PlainDateTime.prototype.toString options must be an object",
+        ));
+    }
+
+    vm.try_reserve_value_roots(std::slice::from_ref(&options))?;
+    let options_pin = vm.pin(&options);
+    let result = (|| {
+        let get_option = |vm: &mut Vm, name: &str| {
+            if options.is_undefined() {
+                Ok(Value::Undefined)
+            } else {
+                vm.get_property(&options, name)
+            }
+        };
+
+        let calendar_name = get_option(vm, "calendarName")?;
+        let calendar_name = if calendar_name.is_undefined() {
+            None
+        } else {
+            Some(temporal_option_to_string(vm, &calendar_name)?)
+        };
+        let calendar_name =
+            temporal_annotation_display(calendar_name.as_deref(), "calendarName", true)?;
+        let fractional_second_digits = match get_option(vm, "fractionalSecondDigits")? {
+            Value::Undefined => InstantFractionalSecondDigits::Auto,
+            Value::Number(number) => InstantFractionalSecondDigits::Number(number),
+            value => InstantFractionalSecondDigits::String(temporal_option_to_string(vm, &value)?),
+        };
+        let fractional_second_digits =
+            temporal_instant_fractional_second_digits(fractional_second_digits)?;
+        let rounding_mode = get_option(vm, "roundingMode")?;
+        let rounding_mode = if rounding_mode.is_undefined() {
+            None
+        } else {
+            Some(temporal_option_to_string(vm, &rounding_mode)?)
+        };
+        let rounding_mode = temporal_instant_rounding_mode(rounding_mode.as_deref())?;
+        let smallest_unit = get_option(vm, "smallestUnit")?;
+        let smallest_unit = if smallest_unit.is_undefined() {
+            None
+        } else {
+            Some(temporal_option_to_string(vm, &smallest_unit)?)
+        };
+        let smallest_unit = temporal_instant_smallest_unit(smallest_unit.as_deref())?;
+        let precision = temporal_instant_precision(fractional_second_digits, smallest_unit)?;
+        temporal_plain_date_time_format(
+            fields,
+            &calendar_identifier,
+            precision,
+            rounding_mode,
+            calendar_name,
+        )
+    })();
+    vm.unpin_many(options_pin);
+    result
+}
+
+fn temporal_plain_date_time_to_json(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let (fields, calendar_identifier) = temporal_plain_date_time_slots(vm, this)?;
+    temporal_plain_date_time_format(
+        fields,
+        &calendar_identifier,
+        temporal::InstantPrecision::Auto,
+        temporal::InstantRoundingMode::Trunc,
+        temporal::AnnotationDisplay::Auto,
+    )
 }
 
 #[derive(Clone, Copy)]

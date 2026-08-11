@@ -5409,11 +5409,48 @@ lookup is introduced.
 ```text
 [Decision Log]
 - 목적과 의도: 두 withCalendar sibling의 receiver ordering, hidden-record copy, Realm intrinsic 선택과 installer resource 경계를 하나의 일관된 구조로 고정한다.
-- 기존 구현 및 제약 조건: PlainDate/PlainDateTime hidden records와 Realm registries, calendar String parser는 있었지만 public bridge가 없었다. non-ISO calendar backend와 PlainDateTime formatter는 아직 없다.
+- 기존 구현 및 제약 조건: PlainDate/PlainDateTime hidden records와 Realm registries, calendar String parser는 있었지만 public bridge가 없었다. 이 단위 시점에는 non-ISO calendar backend와 PlainDateTime formatter도 아직 없었다.
 - 검토한 주요 대안: public getters와 constructors 재호출, receiver별 calendar converter 복제, non-ISO identifier를 ISO fields에 단순 부착, shared converter와 paired append를 검토했다.
 - 선택한 방식: brand-first receiver slot copy 뒤 shared converter를 호출한다. five-kind branded Temporal input은 hidden calendar fast path를 사용하고 String input은 기존 parser/fuel 계약을 재사용하며, fresh result는 method-Realm registry에서 생성한다.
 - 다른 대안 대신 이 방식을 선택한 이유: public/global paths는 getter와 mutable constructor를 관찰하고 result Realm을 바꿀 수 있다. converter 복제는 coercion과 fuel 의미를 분기시키며, non-ISO relabeling은 calendar 계산을 조용히 오염시킨다.
 - 장점, 단점 및 영향: hidden getter 비관찰, brand-before-argument ordering, fresh method-Realm results, stable 184/185 ordinals와 185-allocation/183-pin 경계를 제공한다. non-ISO direct 및 downstream 표면은 backend 구현 전까지 explicit blocker이며 exact local direct/complete/downstream gates가 결과와 failure reason을 고정한다.
+```
+
+### PlainDateTime string formatting
+
+`Temporal.PlainDateTime.prototype.toString` and `toJSON` are Realm-local,
+non-constructable, length-0 native functions. Both first brand-check the
+receiver and copy its hidden ISO date, six time fields, and canonical calendar
+identifier. Brand errors therefore precede options or argument observation and
+belong to the native method Realm.
+
+`toString` validates and roots its options object before the first getter, then
+reads `calendarName`, `fractionalSecondDigits`, `roundingMode`, and
+`smallestUnit` in that exact order. Each value uses the shared canonical
+Temporal option parser, preserving coercion, abrupt completion, and fuel
+behavior. Precision and rounding are applied to the complete local ISO
+nanosecond value rather than to an isolated PlainTime value. The rounded day
+and time are then checked against the exclusive PlainDateTime range before the
+shared year, time, and hidden-calendar annotation formatters publish the
+result. This structure preserves date carry when rounding crosses midnight and
+rejects a rounded value that leaves the representable range.
+
+`toJSON` ignores all arguments and does not call the public `toString` method.
+It serializes the copied hidden record directly with automatic precision,
+truncation, and automatic calendar annotation. Neither method observes public
+date/time/calendar getters. Both return a primitive String, so result
+publication creates no VM heap object. The native functions themselves append
+as installer allocations 186 and 187. Complete Temporal installation uses 187
+allocations and preflights the 184 maximum simultaneously live pins.
+
+```text
+[Decision Log]
+- 목적과 의도: PlainDateTime의 option-aware 및 JSON 문자열화를 hidden record, Realm, root/fuel, range 불변식에 직접 연결한다.
+- 기존 구현 및 제약 조건: canonical option parser와 ISO date/time formatter 및 nanosecond rounding helper는 있었지만 public PlainDateTime formatter가 없었다. non-ISO calendar construction과 일부 date-time arithmetic은 아직 blocker다.
+- 검토한 주요 대안: PlainDate와 PlainTime 문자열을 각각 만들고 결합, PlainTime만 반올림한 뒤 원래 날짜를 유지, toJSON에서 public toString 호출, complete local ISO nanoseconds를 반올림한 hidden-record direct formatting을 검토했다.
+- 선택한 방식: brand-first slot copy, rooted options의 ordered parsing, complete local ISO nanosecond rounding, post-round exclusive-range validation, shared year/time/calendar formatting을 수행한다. toJSON은 auto/trunc/auto 설정으로 같은 hidden formatter를 직접 사용한다.
+- 다른 대안 대신 이 방식을 선택한 이유: PlainTime 또는 문자열 결합은 midnight carry와 반올림 후 날짜 범위를 정확히 전달할 수 없다. public toString 경로는 override, argument, getter 관찰을 추가한다.
+- 장점, 단점 및 영향: option getter 순서, 자정 carry, edge RangeError, hidden calendar annotation, ignored JSON arguments/override, primitive output과 stable 186/187 ordinals가 한 경계에서 유지된다. String 저장소는 host Arc이며 VM heap-object cap에는 포함되지 않는다.
 ```
 
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

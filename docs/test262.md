@@ -15471,14 +15471,60 @@ manifest is reused instead of duplicated. The exact local downstream gate is
 construction or conversion with `RangeError: Invalid Temporal calendar
 identifier`, while four DateTimeFormat files fail with `TypeError: not a
 constructor`. It is not counted as direct method support. PlainDateTime
-formatting remains absent as a separate engine limitation.
+formatting is implemented and accounted independently in the following unit.
 
 ```text
 [Decision Log]
 - 목적과 의도: paired withCalendar의 complete direct denominator와 explicit 및 helper-mediated downstream caller를 분리해 현재 지원 경계를 과장 없이 기록한다.
-- 기존 구현 및 제약 조건: broad Temporal/Intl gates는 direct 45개와 downstream caller를 숨길 수 있고 absent method TypeError는 일부 expected-error fixture를 거짓 통과시킬 수 있었다. non-ISO backend, DateTimeFormat, PlainDateTime formatting은 아직 완전하지 않다.
+- 기존 구현 및 제약 조건: broad Temporal/Intl gates는 direct 45개와 downstream caller를 숨길 수 있고 absent method TypeError는 일부 expected-error fixture를 거짓 통과시킬 수 있었다. non-ISO backend와 DateTimeFormat은 아직 완전하지 않으며 PlainDateTime formatting은 다음 독립 단위에서 계상한다.
 - 검토한 주요 대안: 두 method를 별도 denominator로 관리, built-ins directory prefix 전체 허용, 기존 87 helper files를 새 manifest에 복제, paired exact ownership과 manifest reuse를 검토했다.
 - 선택한 방식: direct 45개를 supported 36개와 non-ISO blocker 9개로 분리하고, downstream은 explicit 50개와 existing helper-owned 87개의 disjoint union 137개로 계상한다. fail-closed future-calendar files만 supported direct set에 포함한다.
 - 다른 대안 대신 이 방식을 선택한 이유: prefix와 aggregate-only 허용은 wrong-error 및 future sibling을 숨긴다. duplicate helper manifests는 소유권과 수치를 분기시키며, direct-only 보고는 실제 137-file dependency surface를 누락한다.
 - 장점, 단점 및 영향: paired method의 36/9/45 direct boundary와 50+87=137 downstream boundary가 명확해진다. exact local forced outcomes, normalized failure reasons와 live tooling이 검증되며 remote CI는 pushed commit에서 같은 literal gates를 재실행한다.
+```
+
+## Temporal PlainDateTime prototype.toString and toJSON
+
+At pinned Test262 revision
+`9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the supported direct surface
+contains all 49 built-ins `toString` files and all eight built-ins `toJSON`
+files. Exact local forced execution confirms **57 pass / 0 fail / 57**. The
+surface covers method shape, branding, option object and coercion order, every
+calendar annotation mode, automatic and fixed fractional precision, every
+rounding mode and supported smallest unit, midnight carry, edge-of-range
+rounding, year formatting, ignored JSON arguments, and hidden-record JSON
+serialization without an observable public `toString` call.
+
+The complete direct and Intl ownership surface contains 64 files. Seven
+Intl402 `toString` companions require non-ISO calendar construction and remain
+outside admission with the earlier calendar `RangeError`; exact local forced
+execution is **57 pass / 7 fail / 64**. One explicit downstream file calls the
+formatter six times but first requires unsupported `until`/`add` behavior, so
+its exact local result remains **0 pass / 1 fail / 1**. The local
+all-target/all-feature release Rust and Criterion gate, warnings-denied release
+Clippy, rustfmt/diff/YAML/Python checks, live tooling **238/238**, and
+corpus-unavailable tooling **238 tests / 5 expected skips** pass; remote CI
+verification follows the pushed commit. Two GPT-5.6 final reviews found no
+remaining runtime or tooling defect after the options-root failpoint test and
+stale gate wording were corrected.
+
+Runtime behavior brands before options work. `toString` roots its options
+object and reads `calendarName`, `fractionalSecondDigits`, `roundingMode`, and
+`smallestUnit` in order through the shared canonical parser. It rounds the
+complete local ISO nanosecond record, allowing date carry across midnight,
+then checks the exclusive PlainDateTime range and formats year, time, and the
+hidden calendar annotation. `toJSON` ignores arguments and public `toString`,
+formatting hidden slots directly with auto/trunc/auto settings. Both are
+Realm-local, length-0, non-constructable methods returning primitive Strings
+without VM heap-object allocation. Installer ordinals are 186 and 187;
+complete installation uses 187 allocations and 184 maximum live pins.
+
+```text
+[Decision Log]
+- 목적과 의도: PlainDateTime toString/toJSON의 complete direct denominator, non-ISO Intl complement와 true downstream dependency를 exact accounting으로 고정한다.
+- 기존 구현 및 제약 조건: broad Temporal gate는 64 direct/Intl files를 숨겼고 inherited Object.prototype.toString으로 일부 shape fixtures가 거짓 통과할 수 있었다. non-ISO calendar construction과 downstream until/add는 아직 없다.
+- 검토한 주요 대안: direct directory prefix admission, aggregate result만 검사, Intl files도 formatter 지원으로 계상, exact 57-file admission과 7-file Intl 및 1-file downstream blocker 분리를 검토했다.
+- 선택한 방식: 49 toString 및 8 toJSON built-ins paths만 admit하고 57/57 forced result를 고정한다. Intl 7개와 downstream 1개는 선행 blocker reason과 함께 complete diagnostics에서 별도 유지한다.
+- 다른 대안 대신 이 방식을 선택한 이유: prefix와 aggregate-only 검사는 wrong-error false positive와 future files를 숨긴다. Intl admission은 아직 생성할 수 없는 non-ISO receiver 지원을 과장하고 downstream omission은 실제 formatter call surface를 누락한다.
+- 장점, 단점 및 영향: local 57/57, complete 57/7/64, downstream 0/1 경계와 구현의 ordered options, midnight carry, range, JSON non-observation, Realm/resource 계약이 함께 기록된다. local full gates는 통과했으며 remote CI는 pushed commit에서 같은 literal 경계를 재검증한다.
 ```

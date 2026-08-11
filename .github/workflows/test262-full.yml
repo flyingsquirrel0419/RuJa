@@ -245,6 +245,8 @@ jobs:
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_year_month_to_plain_date_downstream_surface_is_exact_live_disjoint_and_shared
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_sibling_conversions_are_exact_live_and_shared
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_with_calendar_siblings_are_exact_live_and_shared
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_time_serialization_is_exact_live_and_shared
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_time_formatter_call_ownership_is_exact_live
           -v
       - name: Verify Temporal calendar sibling formatter surface
         working-directory: tools
@@ -1902,6 +1904,7 @@ jobs:
           sparse-checkout: |
             harness
             test/built-ins/Temporal/PlainDateTime
+            test/intl402/Temporal/PlainDateTime/prototype/toString
       - name: Require exact Temporal.PlainDateTime core boundary
         run: |
           mapfile -t files < <(sed -e '/^#/d' -e '/^$/d' \
@@ -1923,6 +1926,37 @@ jobs:
           cat temporal_plain_date_time_core_diagnostic.txt
           grep -q '^RATE=99.1 PASS=105 FAIL=1 SKIP=0 TOTAL=106 RAN=106$' \
             temporal_plain_date_time_core_diagnostic.txt
+      - name: Require exact Temporal.PlainDateTime serialization admission
+        run: |
+          mapfile -t files < <(grep -hEv '^(#|$)' \
+            tools/test262_temporal_plain_date_time_serialization_admission.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_plain_date_time_serialization_diagnostic.py \
+            "${files[@]}" > temporal_plain_date_time_serialization_result.txt 2>&1
+          cat temporal_plain_date_time_serialization_result.txt
+          grep -q '^RATE=100.0 PASS=57 FAIL=0 SKIP=0 TOTAL=57 RAN=57$' \
+            temporal_plain_date_time_serialization_result.txt
+      - name: Require complete Temporal.PlainDateTime serialization surface
+        run: |
+          mapfile -t files < <(grep -hEv '^(#|$)' \
+            tools/test262_temporal_plain_date_time_serialization_admission.txt \
+            tools/test262_temporal_plain_date_time_serialization_blockers.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_plain_date_time_serialization_complete_diagnostic.py \
+            "${files[@]}" > temporal_plain_date_time_serialization_complete_result.txt 2>&1
+          cat temporal_plain_date_time_serialization_complete_result.txt
+          grep -q '^RATE=89.1 PASS=57 FAIL=7 SKIP=0 TOTAL=64 RAN=64$' \
+            temporal_plain_date_time_serialization_complete_result.txt
+      - name: Require Temporal.PlainDateTime serialization downstream
+        run: |
+          mapfile -t files < <(grep -hEv '^(#|$)' \
+            tools/test262_temporal_plain_date_time_serialization_downstream_blockers.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_plain_date_time_serialization_downstream_diagnostic.py \
+            "${files[@]}" > temporal_plain_date_time_serialization_downstream_result.txt 2>&1
+          cat temporal_plain_date_time_serialization_downstream_result.txt
+          grep -q '^RATE=0.0 PASS=0 FAIL=1 SKIP=0 TOTAL=1 RAN=1$' \
+            temporal_plain_date_time_serialization_downstream_result.txt
 
   temporal-plain-date-time-from:
     needs: [build, setup]

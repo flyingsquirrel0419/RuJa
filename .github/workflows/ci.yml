@@ -99,6 +99,9 @@ jobs:
             test/built-ins/Temporal/PlainDate/prototype/toPlainYearMonth
             test/built-ins/Temporal/PlainDate/prototype/withCalendar
             test/built-ins/Temporal/PlainDateTime/prototype/withCalendar
+            test/built-ins/Temporal/PlainDateTime/prototype/toString
+            test/built-ins/Temporal/PlainDateTime/prototype/toJSON
+            test/built-ins/Temporal/PlainDateTime/prototype/until/balance.js
             test/built-ins/Temporal/ZonedDateTime/prototype/withCalendar
             test/built-ins/Temporal/PlainYearMonth
             test/built-ins/Temporal/PlainYearMonth/prototype/toJSON
@@ -129,6 +132,7 @@ jobs:
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_year_month_to_plain_date_downstream_surface_is_exact_live_disjoint_and_shared
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_sibling_conversions_are_exact_live_and_shared
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_with_calendar_siblings_are_exact_live_and_shared
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_time_serialization_is_exact_live_and_shared
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_calendar_siblings_formatter_surface_is_exact
           -v
       - name: Run exact Temporal.Duration.prototype.with admission
@@ -418,6 +422,34 @@ jobs:
             "${files[@]}" | tee temporal_plain_date_with_calendar_siblings_downstream_result.txt
           grep -q '^RATE=0.0 PASS=0 FAIL=137 SKIP=0 TOTAL=137 RAN=137$' \
             temporal_plain_date_with_calendar_siblings_downstream_result.txt
+      - name: Run exact Temporal.PlainDateTime serialization admission
+        run: |
+          mapfile -t files < <(grep -hEv '^(#|$)' \
+            tools/test262_temporal_plain_date_time_serialization_admission.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_plain_date_time_serialization_diagnostic.py \
+            "${files[@]}" | tee temporal_plain_date_time_serialization_result.txt
+          grep -q '^RATE=100.0 PASS=57 FAIL=0 SKIP=0 TOTAL=57 RAN=57$' \
+            temporal_plain_date_time_serialization_result.txt
+      - name: Diagnose complete Temporal.PlainDateTime serialization surface
+        run: |
+          mapfile -t files < <(grep -hEv '^(#|$)' \
+            tools/test262_temporal_plain_date_time_serialization_admission.txt \
+            tools/test262_temporal_plain_date_time_serialization_blockers.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_plain_date_time_serialization_complete_diagnostic.py \
+            "${files[@]}" | tee temporal_plain_date_time_serialization_complete_result.txt
+          grep -q '^RATE=89.1 PASS=57 FAIL=7 SKIP=0 TOTAL=64 RAN=64$' \
+            temporal_plain_date_time_serialization_complete_result.txt
+      - name: Diagnose Temporal.PlainDateTime serialization downstream
+        run: |
+          mapfile -t files < <(grep -hEv '^(#|$)' \
+            tools/test262_temporal_plain_date_time_serialization_downstream_blockers.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_plain_date_time_serialization_downstream_diagnostic.py \
+            "${files[@]}" | tee temporal_plain_date_time_serialization_downstream_result.txt
+          grep -q '^RATE=0.0 PASS=0 FAIL=1 SKIP=0 TOTAL=1 RAN=1$' \
+            temporal_plain_date_time_serialization_downstream_result.txt
       - name: Run exact Temporal.PlainYearMonth.prototype.toPlainDate admission
         run: |
           mapfile -t files < <(grep -hEv '^(#|$)' \

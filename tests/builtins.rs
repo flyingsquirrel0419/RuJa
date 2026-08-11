@@ -29025,6 +29025,93 @@ fn temporal_plain_date_with_calendar_siblings_are_fresh_intrinsic_and_nonconstru
 }
 
 #[test]
+fn temporal_plain_date_time_formatters_use_hidden_slots_and_complete_iso_rounding() {
+    assert_eq!(
+        run(r#"
+            var dateTime = new Temporal.PlainDateTime(
+              1976, 11, 18, 15, 23, 30, 123, 456, 789
+            );
+            var reads = 0;
+            for (var key of ['calendarId', 'year', 'month', 'day', 'hour',
+                             'minute', 'second', 'millisecond', 'microsecond',
+                             'nanosecond']) {
+              Object.defineProperty(dateTime, key, {
+                get: function () { reads++; throw new Error('observed'); }
+              });
+            }
+            var ignored = new Proxy({}, {
+              get: function () { throw new Error('toJSON argument observed'); }
+            });
+            var midnight = new Temporal.PlainDateTime(
+              1999, 12, 31, 23, 59, 59, 999, 999, 999
+            );
+            var negativeYear = new Temporal.PlainDateTime(-1, 8, 7, 6, 54, 32, 100);
+            var defaultString = dateTime.toString();
+            var annotatedString = dateTime.toString({ calendarName: 'always' });
+            var minuteString = dateTime.toString({ smallestUnit: 'minute' });
+            var roundedString = dateTime.toString({
+              fractionalSecondDigits: 3,
+              roundingMode: 'halfExpand'
+            });
+            dateTime.toString = function () { throw new Error('public toString observed'); };
+            var json = Temporal.PlainDateTime.prototype.toJSON.call(dateTime, ignored);
+            [
+              defaultString, annotatedString, minuteString, roundedString,
+              midnight.toString({ fractionalSecondDigits: 8, roundingMode: 'ceil' }),
+              negativeYear.toJSON(), json,
+              reads
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "1976-11-18T15:23:30.123456789|1976-11-18T15:23:30.123456789[u-ca=iso8601]|1976-11-18T15:23|1976-11-18T15:23:30.123|2000-01-01T00:00:00.00000000|-000001-08-07T06:54:32.1|1976-11-18T15:23:30.123456789|0"
+        ))
+    );
+}
+
+#[test]
+fn temporal_plain_date_time_formatters_are_realm_local_and_nonconstructable() {
+    assert_eq!(
+        run(r#"
+            var dateTime = new Temporal.PlainDateTime(2000, 5, 2, 12, 34, 56);
+            var toString = Temporal.PlainDateTime.prototype.toString;
+            var toJSON = Temporal.PlainDateTime.prototype.toJSON;
+            var other = $262.createRealm().global;
+            var foreignToString = other.Temporal.PlainDateTime.prototype.toString;
+            var foreignBrandError = false;
+            var foreignOptionError = false;
+            var foreignRangeError = false;
+            try { foreignToString.call({}, undefined); }
+            catch (error) {
+              foreignBrandError = error instanceof other.TypeError &&
+                !(error instanceof TypeError);
+            }
+            try { foreignToString.call(dateTime, 1); }
+            catch (error) {
+              foreignOptionError = error instanceof other.TypeError &&
+                !(error instanceof TypeError);
+            }
+            try { foreignToString.call(dateTime, { calendarName: 'invalid' }); }
+            catch (error) {
+              foreignRangeError = error instanceof other.RangeError &&
+                !(error instanceof RangeError);
+            }
+            var stringConstructable = true;
+            var jsonConstructable = true;
+            try { new toString(); } catch (error) { stringConstructable = false; }
+            try { new toJSON(); } catch (error) { jsonConstructable = false; }
+            [
+              toString.name, toString.length, toJSON.name, toJSON.length,
+              foreignToString.call(dateTime), foreignBrandError, foreignOptionError,
+              foreignRangeError, stringConstructable, jsonConstructable
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "toString|0|toJSON|0|2000-05-02T12:34:56|true|true|true|false|false"
+        ))
+    );
+}
+
+#[test]
 fn temporal_plain_date_time_conversion_uses_plain_date_slots_at_midnight() {
     assert_eq!(
         run(r#"
