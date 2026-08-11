@@ -49,8 +49,10 @@ A token-aware full-corpus candidate audit freezes one MonthDay and two
 YearMonth Intl402 callers outside the direct directories. All three remain
 **0 pass / 3 fail** before the target methods with exact diagnostics:
 unsupported Chinese/Dangi calendar construction, absent `Intl.DateTimeFormat`,
-and absent `PlainDate.prototype.withCalendar`. The staging removed-methods file
-is textual only. A token-aware scan of every harness JavaScript file excludes
+and non-ISO `PlainDate.prototype.withCalendar` rejection. The third caller now
+reaches the method and fails closed with the exact calendar `RangeError`
+instead of an absent-method `TypeError`. The staging removed-methods file is
+textual only. A token-aware scan of every harness JavaScript file excludes
 comments and literals and freezes zero calls to either sibling conversion.
 
 Runtime coverage independently fixes brand-first hidden-slot conversion,

@@ -1245,6 +1245,7 @@ jobs:
             test/intl402/DateTimeFormat/prototype/formatToParts
             test/built-ins/Temporal/PlainDate/prototype/toPlainMonthDay
             test/built-ins/Temporal/PlainDate/prototype/toPlainYearMonth
+            test/built-ins/Temporal/PlainDate/prototype/toPlainDateTime
             test/built-ins/Temporal/PlainDate/prototype/withCalendar
             test/built-ins/Temporal/PlainDateTime/prototype/withCalendar
             test/built-ins/Temporal/ZonedDateTime/prototype/withCalendar

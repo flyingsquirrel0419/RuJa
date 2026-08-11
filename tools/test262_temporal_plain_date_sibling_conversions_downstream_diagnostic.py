@@ -30,7 +30,7 @@ _EXPECTED_ERRORS = {
     ): "TypeError: not a constructor",
     (
         "intl402/Temporal/PlainYearMonth/prototype/year/epoch-year.js"
-    ): "TypeError: undefined is not a function",
+    ): "RangeError: Invalid Temporal calendar identifier",
 }
 
 
