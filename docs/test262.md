@@ -36,6 +36,38 @@ not a URI semantic change.
 - 장점, 단점 및 영향: decoder의 중간 heap allocation과 unmetered scan이 제거되고 lowercase reserved spelling, malformed UTF-8, sentinel collision이 유지된다. 두 exhaustive timeout은 별도 interpreter throughput 과제로 남는다.
 ```
 
+## Temporal PlainDate sibling conversions
+
+At pinned Test262 revision
+`9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the complete direct surfaces are
+**7/7** for `PlainDate.prototype.toPlainMonthDay` and **8/8** for
+`toPlainYearMonth`, combined **15 pass / 0 fail / 0 skip**. Exact path and
+metadata maps, runner/analyzer admission, and forced diagnostics reject future,
+outside, missing, duplicate, corpus-drift, and result-drift cases.
+
+A token-aware full-corpus candidate audit freezes one MonthDay and two
+YearMonth Intl402 callers outside the direct directories. All three remain
+**0 pass / 3 fail** before the target methods with exact diagnostics:
+unsupported Chinese/Dangi calendar construction, absent `Intl.DateTimeFormat`,
+and absent `PlainDate.prototype.withCalendar`. The staging removed-methods file
+is textual only. A token-aware scan of every harness JavaScript file excludes
+comments and literals and freezes zero calls to either sibling conversion.
+
+Runtime coverage independently fixes brand-first hidden-slot conversion,
+canonical ISO reference components, fresh method-Realm results, mutable-global
+replacement, cross-Realm receivers and errors, installer rollback, result root
+preflight, heap collection/retry, pin restoration, and zero native fuel.
+
+```text
+[Decision Log]
+- 목적과 의도: 두 PlainDate sibling conversion의 complete direct denominator와 실제 downstream blockers를 false-positive 없이 고정한다.
+- 기존 구현 및 제약 조건: broad Temporal gate가 direct 15 files를 숨겼고 absent method TypeError가 nonconstructor assertions를 거짓 통과시킬 수 있었다. 세 Intl402 caller는 method보다 앞선 non-ISO/Intl prerequisites에서 실패한다.
+- 검토한 주요 대안: directory-prefix admission, aggregate pass count만 검사, Intl callers를 direct support로 계상, exact manifests와 lexical candidate/call audit 및 error-reason blocker diagnostic을 검토했다.
+- 선택한 방식: 15 exact paths와 metadata를 admit하고 literal 15/15 gate를 ordinary/full CI에 둔다. 세 callers는 disjoint blocker manifest, path별 call count, exact 0/3 failure reason으로 유지한다.
+- 다른 대안 대신 이 방식을 선택한 이유: prefix와 aggregate-only 검사는 future files, absent-method TypeError, wrong failure reason을 숨긴다. Intl caller를 지원으로 계상하면 아직 도달하지 못한 assertions를 과장한다.
+- 장점, 단점 및 영향: direct 15/15와 downstream 0/3, corpus/metadata/disjointness/call/result/error drift가 재현된다. 관련 non-ISO/Intl prerequisites가 구현되면 blocker diagnostic이 즉시 실패해 재분류를 요구한다.
+```
+
 ## Annex B legacy Date methods
 
 Every Realm installs fresh non-constructable `getYear` and `setYear` methods.

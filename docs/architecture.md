@@ -5351,4 +5351,31 @@ primitives with `TypeError`. Equals is appended at allocation 179;
 - 장점, 단점 및 영향: direct 36/36, hidden getter 비관찰, cross-Realm/subclass branding, method-Realm errors, GC/root/abrupt/fuel, allocation-free result와 181-allocation rollback이 고정된다. Intl 1/3 및 downstream 0/7은 non-ISO backend 책임으로 남는다.
 ```
 
+### PlainDate sibling conversion allocation
+
+`PlainDate.prototype.toPlainMonthDay` and `toPlainYearMonth` copy the branded
+receiver's hidden ISO date and calendar `Arc` before allocating. ISO conversion
+publishes canonical records `(1972, month, day)` and `(year, month, 1)` through
+the native method Realm's prototype registries. Public fields, arguments,
+mutable `Temporal` globals, constructors, and species are never consulted.
+Non-ISO calendars fail closed until calendar field backends exist.
+
+Both functions append after the previous `%Temporal%` allocation, preserving
+all established ordinals as allocations 182 and 183. Installation preflights
+182 root slots, pins provisional `%Temporal%` across both allocations and the
+first function across the second allocation, then publishes both properties
+on the already-pinned PlainDate prototype. Complete installation therefore
+uses 183 allocations and at most 182 live pins. Each result factory separately
+preflights and pins its intrinsic prototype across GC-retrying allocation.
+
+```text
+[Decision Log]
+- 목적과 의도: PlainDate sibling conversion의 hidden-record, Realm, GC/root/fuel/allocation 경계를 기존 Temporal installer와 일치시킨다.
+- 기존 구현 및 제약 조건: target factories와 per-Realm prototype registries는 있었지만 bridge methods가 없었다. installer의 기존 ordinal은 allocation rollback tests와 연결되어 있고 non-ISO calendar field backend는 없다.
+- 검토한 주요 대안: constructor/global lookup, existing batch 중간 삽입, 각 method를 별도 installer batch로 설치, 기존 namespace 뒤 paired append와 registry factory 재사용을 검토했다.
+- 선택한 방식: hidden slot copy와 ISO canonical fields를 registry factory에 전달하고 두 native functions를 namespace 뒤에 append한다. installer는 최대 pin 182를 upfront reserve한다.
+- 다른 대안 대신 이 방식을 선택한 이유: constructor/global lookup은 mutable user state와 잘못된 Realm을 관찰하고 중간 삽입은 모든 후속 ordinal을 바꾼다. paired append는 같은 receiver/factory/resource 경계를 한 번에 원자적으로 publish한다.
+- 장점, 단점 및 영향: intrinsic selection, fresh results, cross-Realm receivers, result-root and heap retry, zero native fuel, exact 183-allocation rollback이 고정된다. non-ISO는 backend가 생길 때까지 explicit RangeError다.
+```
+
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

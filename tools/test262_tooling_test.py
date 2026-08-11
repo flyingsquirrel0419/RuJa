@@ -25,6 +25,8 @@ import test262_temporal_plain_month_day_to_plain_date_intl_diagnostic as tempora
 import test262_temporal_plain_month_day_equals_diagnostic as temporal_month_day_equals_diagnostic
 import test262_temporal_plain_month_day_equals_intl_diagnostic as temporal_month_day_equals_intl_diagnostic
 import test262_temporal_plain_month_day_equals_downstream_diagnostic as temporal_month_day_equals_downstream_diagnostic
+import test262_temporal_plain_date_sibling_conversions_diagnostic as temporal_plain_date_sibling_diagnostic
+import test262_temporal_plain_date_sibling_conversions_downstream_diagnostic as temporal_plain_date_sibling_downstream_diagnostic
 import test262_temporal_plain_year_month_arithmetic_diagnostic as temporal_year_month_arithmetic_diagnostic
 import test262_temporal_plain_year_month_compare_diagnostic as temporal_year_month_compare_diagnostic
 import test262_temporal_plain_year_month_compare_intl_diagnostic as temporal_year_month_compare_intl_diagnostic
@@ -535,6 +537,24 @@ from test262_temporal_plain_date_to_plain_date_time_admission import (
     TEMPORAL_PLAIN_DATE_TO_PLAIN_DATE_TIME_DOWNSTREAM_FILES,
     TEMPORAL_PLAIN_DATE_TO_PLAIN_DATE_TIME_FEATURES,
     TEMPORAL_PLAIN_DATE_TO_PLAIN_DATE_TIME_FILES,
+)
+from test262_temporal_plain_date_sibling_conversions_admission import (
+    TEMPORAL_PLAIN_DATE_SIBLING_CONVERSION_FEATURES,
+    TEMPORAL_PLAIN_DATE_SIBLING_CONVERSION_FILES,
+    TEMPORAL_PLAIN_DATE_SIBLING_CONVERSION_FLAGS,
+    TEMPORAL_PLAIN_DATE_SIBLING_CONVERSION_INCLUDES,
+    TEMPORAL_PLAIN_DATE_SIBLING_CONVERSION_NEGATIVE,
+    TEMPORAL_PLAIN_DATE_TO_PLAIN_MONTH_DAY_FILES,
+    TEMPORAL_PLAIN_DATE_TO_PLAIN_YEAR_MONTH_FILES,
+)
+from test262_temporal_plain_date_sibling_conversions_downstream_admission import (
+    TEMPORAL_PLAIN_DATE_SIBLING_CONVERSION_DOWNSTREAM_BLOCKERS,
+    TEMPORAL_PLAIN_DATE_SIBLING_CONVERSION_DOWNSTREAM_FEATURES,
+    TEMPORAL_PLAIN_DATE_SIBLING_CONVERSION_DOWNSTREAM_FILES,
+    TEMPORAL_PLAIN_DATE_SIBLING_CONVERSION_DOWNSTREAM_FLAGS,
+    TEMPORAL_PLAIN_DATE_SIBLING_CONVERSION_DOWNSTREAM_INCLUDES,
+    TEMPORAL_PLAIN_DATE_SIBLING_CONVERSION_DOWNSTREAM_NEGATIVE,
+    TEMPORAL_PLAIN_DATE_SIBLING_CONVERSION_DOWNSTREAM_SURFACE,
 )
 from test262_temporal_plain_date_to_locale_string_admission import (
     TEMPORAL_PLAIN_DATE_TO_LOCALE_STRING_BLOCKER_FEATURES,
@@ -1552,6 +1572,58 @@ def _plain_month_day_equals_candidate_audit(test_root):
     return frozenset(candidates)
 
 
+_PLAIN_DATE_TO_PLAIN_MONTH_DAY_OUTSIDE = frozenset(
+    {
+        (
+            "intl402/Temporal/PlainMonthDay/from/"
+            "chinese-dangi-leap-month-with-year-from-options-bag.js"
+        ),
+        "staging/Temporal/removed-methods.js",
+    }
+)
+_PLAIN_DATE_TO_PLAIN_YEAR_MONTH_OUTSIDE = frozenset(
+    {
+        (
+            "intl402/Temporal/PlainYearMonth/prototype/toLocaleString/"
+            "calendar-mismatch.js"
+        ),
+        "intl402/Temporal/PlainYearMonth/prototype/year/epoch-year.js",
+        "staging/Temporal/removed-methods.js",
+    }
+)
+
+
+def _plain_date_sibling_conversion_candidate_audit(test_root, method):
+    candidates = set()
+    for path in test_root.rglob("*.js"):
+        if re.search(rf"\b{method}\b", path.read_text()):
+            candidates.add(path.relative_to(test_root).as_posix())
+    return frozenset(candidates)
+
+
+def _plain_date_sibling_conversion_call_counts(test_root, candidates, method):
+    return {
+        path: len(
+            _js_property_call_indices(
+                _js_executable_tokens((test_root / path).read_text()), method
+            )
+        )
+        for path in candidates
+    }
+
+
+def _plain_date_sibling_conversion_harness_call_counts(test262_root, method):
+    counts = {}
+    harness_root = test262_root / "harness"
+    for path in harness_root.rglob("*.js"):
+        count = len(
+            _js_property_call_indices(_js_executable_tokens(path.read_text()), method)
+        )
+        if count:
+            counts[path.relative_to(test262_root).as_posix()] = count
+    return counts
+
+
 _JS_REGEX_PREFIX_TOKENS = frozenset(
     {
         "(",
@@ -1865,12 +1937,12 @@ def _js_executable_tokens(source):
     return tuple(tokens)
 
 
-def _js_equals_call_indices(tokens):
+def _js_property_call_indices(tokens, property_name):
     calls = []
     for index in range(len(tokens)):
         if tokens[index] in (".", "?."):
             end = index + 2
-            if end <= len(tokens) and tokens[index + 1 : end] == ("equals",):
+            if end <= len(tokens) and tokens[index + 1 : end] == (property_name,):
                 if end < len(tokens) and tokens[end] == "?.":
                     end += 1
                 if end < len(tokens) and tokens[end] == "(":
@@ -1879,7 +1951,7 @@ def _js_equals_call_indices(tokens):
         if (
             tokens[index] == "["
             and index + 2 < len(tokens)
-            and tokens[index + 1] == ("string", "equals")
+            and tokens[index + 1] == ("string", property_name)
             and tokens[index + 2] == "]"
         ):
             receiver = index - 1
@@ -1899,6 +1971,10 @@ def _js_equals_call_indices(tokens):
                     continue
                 calls.append(index)
     return tuple(calls)
+
+
+def _js_equals_call_indices(tokens):
+    return _js_property_call_indices(tokens, "equals")
 
 
 def _js_matching_token(tokens, start, opening, closing):
@@ -6492,6 +6568,302 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                     self.assertFalse(tool.temporal_plain_date_to_plain_date_time_path(None))
                 finally:
                     tool.TEST262 = original_root
+
+    def test_temporal_plain_date_sibling_conversions_are_exact_live_and_shared(self):
+        direct = TEMPORAL_PLAIN_DATE_SIBLING_CONVERSION_FILES
+        month_day = TEMPORAL_PLAIN_DATE_TO_PLAIN_MONTH_DAY_FILES
+        year_month = TEMPORAL_PLAIN_DATE_TO_PLAIN_YEAR_MONTH_FILES
+        downstream = TEMPORAL_PLAIN_DATE_SIBLING_CONVERSION_DOWNSTREAM_SURFACE
+        self.assertEqual((len(month_day), len(year_month), len(direct)), (7, 8, 15))
+        self.assertEqual(direct, month_day | year_month)
+        self.assertFalse(month_day & year_month)
+        self.assertFalse(TEMPORAL_PLAIN_DATE_SIBLING_CONVERSION_DOWNSTREAM_FILES)
+        self.assertEqual(
+            downstream,
+            TEMPORAL_PLAIN_DATE_SIBLING_CONVERSION_DOWNSTREAM_BLOCKERS,
+        )
+        self.assertEqual(len(downstream), 3)
+        self.assertEqual(direct, temporal_plain_date_sibling_diagnostic.SURFACE)
+        self.assertEqual(
+            downstream,
+            temporal_plain_date_sibling_downstream_diagnostic.SURFACE,
+        )
+        self.assertTrue(direct.isdisjoint(downstream))
+
+        for metadata_map, surface in (
+            (TEMPORAL_PLAIN_DATE_SIBLING_CONVERSION_FEATURES, direct),
+            (TEMPORAL_PLAIN_DATE_SIBLING_CONVERSION_INCLUDES, direct),
+            (TEMPORAL_PLAIN_DATE_SIBLING_CONVERSION_FLAGS, direct),
+            (TEMPORAL_PLAIN_DATE_SIBLING_CONVERSION_NEGATIVE, direct),
+            (TEMPORAL_PLAIN_DATE_SIBLING_CONVERSION_DOWNSTREAM_FEATURES, downstream),
+            (TEMPORAL_PLAIN_DATE_SIBLING_CONVERSION_DOWNSTREAM_INCLUDES, downstream),
+            (TEMPORAL_PLAIN_DATE_SIBLING_CONVERSION_DOWNSTREAM_FLAGS, downstream),
+            (TEMPORAL_PLAIN_DATE_SIBLING_CONVERSION_DOWNSTREAM_NEGATIVE, downstream),
+        ):
+            self.assertEqual(set(metadata_map), set(surface))
+
+        tools_dir = Path(__file__).resolve().parent
+        manifest = tools_dir / "test262_temporal_plain_date_sibling_conversions_admission.txt"
+        entries = tuple(
+            line
+            for raw_line in manifest.read_text().splitlines()
+            if (line := raw_line.strip()) and not line.startswith("#")
+        )
+        self.assertEqual(entries, tuple(sorted(entries)))
+        self.assertEqual(frozenset(entries), direct)
+        for other_manifest in tools_dir.glob("test262_*_admission.txt"):
+            if other_manifest == manifest:
+                continue
+            existing = {
+                line
+                for raw_line in other_manifest.read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            self.assertTrue(direct.isdisjoint(existing), other_manifest.name)
+            self.assertTrue(downstream.isdisjoint(existing), other_manifest.name)
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        corpus_required = "TEST262" in os.environ
+        try:
+            corpus_available = test_root.is_dir()
+        except OSError:
+            if corpus_required:
+                raise
+            corpus_available = False
+        if corpus_required and not corpus_available:
+            raise FileNotFoundError(test_root)
+        if corpus_available:
+            month_candidates = month_day | _PLAIN_DATE_TO_PLAIN_MONTH_DAY_OUTSIDE
+            year_candidates = year_month | _PLAIN_DATE_TO_PLAIN_YEAR_MONTH_OUTSIDE
+            self.assertEqual(
+                _plain_date_sibling_conversion_candidate_audit(
+                    test_root, "toPlainMonthDay"
+                ),
+                month_candidates,
+            )
+            self.assertEqual(
+                _plain_date_sibling_conversion_candidate_audit(
+                    test_root, "toPlainYearMonth"
+                ),
+                year_candidates,
+            )
+            expected_month_calls = {path: 0 for path in month_candidates}
+            expected_month_calls.update(
+                {
+                    "built-ins/Temporal/PlainDate/prototype/toPlainMonthDay/basic.js": 1,
+                    (
+                        "built-ins/Temporal/PlainDate/prototype/toPlainMonthDay/"
+                        "not-a-constructor.js"
+                    ): 1,
+                    (
+                        "intl402/Temporal/PlainMonthDay/from/"
+                        "chinese-dangi-leap-month-with-year-from-options-bag.js"
+                    ): 1,
+                }
+            )
+            expected_year_calls = {path: 0 for path in year_candidates}
+            expected_year_calls.update(
+                {
+                    "built-ins/Temporal/PlainDate/prototype/toPlainYearMonth/basic.js": 1,
+                    "built-ins/Temporal/PlainDate/prototype/toPlainYearMonth/limits.js": 2,
+                    (
+                        "built-ins/Temporal/PlainDate/prototype/toPlainYearMonth/"
+                        "not-a-constructor.js"
+                    ): 1,
+                    (
+                        "intl402/Temporal/PlainYearMonth/prototype/toLocaleString/"
+                        "calendar-mismatch.js"
+                    ): 3,
+                    (
+                        "intl402/Temporal/PlainYearMonth/prototype/year/epoch-year.js"
+                    ): 1,
+                }
+            )
+            self.assertEqual(
+                _plain_date_sibling_conversion_call_counts(
+                    test_root, month_candidates, "toPlainMonthDay"
+                ),
+                expected_month_calls,
+            )
+            self.assertEqual(
+                _plain_date_sibling_conversion_call_counts(
+                    test_root, year_candidates, "toPlainYearMonth"
+                ),
+                expected_year_calls,
+            )
+            test262_root = test_root.parent
+            self.assertEqual(
+                _plain_date_sibling_conversion_harness_call_counts(
+                    test262_root, "toPlainMonthDay"
+                ),
+                {},
+            )
+            self.assertEqual(
+                _plain_date_sibling_conversion_harness_call_counts(
+                    test262_root, "toPlainYearMonth"
+                ),
+                {},
+            )
+            for metadata_map, surface in (
+                (TEMPORAL_PLAIN_DATE_SIBLING_CONVERSION_FEATURES, direct),
+                (TEMPORAL_PLAIN_DATE_SIBLING_CONVERSION_DOWNSTREAM_FEATURES, downstream),
+            ):
+                for relative in surface:
+                    path = test_root / relative
+                    self.assertTrue(path.is_file(), relative)
+                    metadata = test262_runner.parse_meta(path.read_text())
+                    includes = (
+                        TEMPORAL_PLAIN_DATE_SIBLING_CONVERSION_INCLUDES
+                        if relative in direct
+                        else TEMPORAL_PLAIN_DATE_SIBLING_CONVERSION_DOWNSTREAM_INCLUDES
+                    )
+                    flags = (
+                        TEMPORAL_PLAIN_DATE_SIBLING_CONVERSION_FLAGS
+                        if relative in direct
+                        else TEMPORAL_PLAIN_DATE_SIBLING_CONVERSION_DOWNSTREAM_FLAGS
+                    )
+                    negative = (
+                        TEMPORAL_PLAIN_DATE_SIBLING_CONVERSION_NEGATIVE
+                        if relative in direct
+                        else TEMPORAL_PLAIN_DATE_SIBLING_CONVERSION_DOWNSTREAM_NEGATIVE
+                    )
+                    self.assertEqual(
+                        frozenset(metadata.get("features", [])), metadata_map[relative]
+                    )
+                    self.assertEqual(
+                        frozenset(metadata.get("includes", [])), includes[relative]
+                    )
+                    self.assertEqual(frozenset(metadata.get("flags", [])), flags[relative])
+                    self.assertEqual(metadata.get("negative"), negative[relative])
+                    for tool in (test262_runner, test262_analyze):
+                        if relative in direct:
+                            self.assertTrue(
+                                tool.temporal_plain_date_sibling_conversion_path(path)
+                            )
+                            self.assertEqual(
+                                tool.temporal_plain_date_sibling_conversion_features(path),
+                                metadata_map[relative],
+                            )
+                            self.assertFalse(tool.should_skip(metadata, path), relative)
+                        else:
+                            self.assertFalse(
+                                tool.temporal_plain_date_sibling_conversion_path(path)
+                            )
+                            self.assertEqual(
+                                tool.temporal_plain_date_sibling_conversion_features(path),
+                                frozenset(),
+                            )
+                            self.assertTrue(tool.should_skip(metadata, path), relative)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = (
+                root
+                / "test/built-ins/Temporal/PlainDate/prototype/toPlainMonthDay/future.js"
+            )
+            outside = root / "test/built-ins/Temporal/Other/toPlainMonthDay/basic.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    self.assertFalse(tool.temporal_plain_date_sibling_conversion_path(None))
+                    self.assertEqual(
+                        tool.temporal_plain_date_sibling_conversion_features(None),
+                        frozenset(),
+                    )
+                    for relative, features in (
+                        TEMPORAL_PLAIN_DATE_SIBLING_CONVERSION_FEATURES.items()
+                    ):
+                        path = root / "test" / relative
+                        self.assertTrue(tool.temporal_plain_date_sibling_conversion_path(path))
+                        self.assertEqual(
+                            tool.temporal_plain_date_sibling_conversion_features(path),
+                            features,
+                        )
+                        self.assertFalse(
+                            tool.should_skip({"features": sorted(features)}, path)
+                        )
+                    for path in (future, outside):
+                        self.assertFalse(tool.temporal_plain_date_sibling_conversion_path(path))
+                        self.assertTrue(tool.should_skip({"features": ["Temporal"]}, path))
+                finally:
+                    tool.TEST262 = original_root
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "test").mkdir()
+            direct_runner = temporal_plain_date_sibling_diagnostic.test262_runner
+            original_root = direct_runner.TEST262
+            direct_runner.TEST262 = str(root)
+            arguments = sorted(direct)
+            try:
+                with patch.object(direct_runner, "run_test", return_value="pass"):
+                    temporal_plain_date_sibling_diagnostic.verify_expected_results(arguments)
+                    for invalid in (
+                        arguments[:-1],
+                        arguments[:-1] + [arguments[0]],
+                        arguments + ["built-ins/Temporal/Other/toPlainMonthDay.js"],
+                    ):
+                        with self.assertRaisesRegex(RuntimeError, "exact frozen surface"):
+                            temporal_plain_date_sibling_diagnostic.verify_expected_results(
+                                invalid
+                            )
+                with patch.object(direct_runner, "run_test", return_value="fail"):
+                    with self.assertRaisesRegex(RuntimeError, "results drifted"):
+                        temporal_plain_date_sibling_diagnostic.verify_expected_results(arguments)
+            finally:
+                direct_runner.TEST262 = original_root
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "test").mkdir()
+            diagnostic = temporal_plain_date_sibling_downstream_diagnostic
+            original_root = diagnostic.test262_runner.TEST262
+            diagnostic.test262_runner.TEST262 = str(root)
+            arguments = sorted(downstream)
+            expected_errors = diagnostic._EXPECTED_ERRORS
+            try:
+                def result(path):
+                    relative = Path(path).resolve().relative_to(
+                        (root / "test").resolve()
+                    ).as_posix()
+                    message = expected_errors[relative]
+                    return "fail", (f"{message} (at line 1)", f"{message} (at line 2)")
+
+                with (
+                    patch.object(diagnostic, "_verify_corpus"),
+                    patch.object(diagnostic, "_run_with_diagnostics", side_effect=result),
+                ):
+                    diagnostic.verify_expected_results(arguments)
+                    for invalid in (
+                        arguments[:-1],
+                        arguments[:-1] + [arguments[0]],
+                        arguments + ["intl402/Temporal/Other/toPlainMonthDay.js"],
+                    ):
+                        with self.assertRaisesRegex(RuntimeError, "exact frozen surface"):
+                            diagnostic.verify_expected_results(invalid)
+                with (
+                    patch.object(diagnostic, "_verify_corpus"),
+                    patch.object(
+                        diagnostic,
+                        "_run_with_diagnostics",
+                        return_value=("pass", ("", "")),
+                    ),
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "results drifted"):
+                        diagnostic.verify_expected_results(arguments)
+                with (
+                    patch.object(diagnostic, "_verify_corpus"),
+                    patch.object(
+                        diagnostic,
+                        "_run_with_diagnostics",
+                        return_value=("fail", ("TypeError: wrong",)),
+                    ),
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "failure reasons drifted"):
+                        diagnostic.verify_expected_results(arguments)
+            finally:
+                diagnostic.test262_runner.TEST262 = original_root
 
     def test_temporal_plain_date_time_from_manifest_is_exact_live_disjoint_and_shared(self):
         files = TEMPORAL_PLAIN_DATE_TIME_FROM_FILES

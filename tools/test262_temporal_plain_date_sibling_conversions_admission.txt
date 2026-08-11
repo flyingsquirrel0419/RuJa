@@ -1,0 +1,16 @@
+# Exact Temporal.PlainDate sibling conversion built-ins surface.
+built-ins/Temporal/PlainDate/prototype/toPlainMonthDay/basic.js
+built-ins/Temporal/PlainDate/prototype/toPlainMonthDay/branding.js
+built-ins/Temporal/PlainDate/prototype/toPlainMonthDay/builtin.js
+built-ins/Temporal/PlainDate/prototype/toPlainMonthDay/length.js
+built-ins/Temporal/PlainDate/prototype/toPlainMonthDay/name.js
+built-ins/Temporal/PlainDate/prototype/toPlainMonthDay/not-a-constructor.js
+built-ins/Temporal/PlainDate/prototype/toPlainMonthDay/prop-desc.js
+built-ins/Temporal/PlainDate/prototype/toPlainYearMonth/basic.js
+built-ins/Temporal/PlainDate/prototype/toPlainYearMonth/branding.js
+built-ins/Temporal/PlainDate/prototype/toPlainYearMonth/builtin.js
+built-ins/Temporal/PlainDate/prototype/toPlainYearMonth/length.js
+built-ins/Temporal/PlainDate/prototype/toPlainYearMonth/limits.js
+built-ins/Temporal/PlainDate/prototype/toPlainYearMonth/name.js
+built-ins/Temporal/PlainDate/prototype/toPlainYearMonth/not-a-constructor.js
+built-ins/Temporal/PlainDate/prototype/toPlainYearMonth/prop-desc.js

@@ -1,0 +1,4 @@
+# Exact Intl402 callers blocked before PlainDate sibling conversion methods.
+intl402/Temporal/PlainMonthDay/from/chinese-dangi-leap-month-with-year-from-options-bag.js
+intl402/Temporal/PlainYearMonth/prototype/toLocaleString/calendar-mismatch.js
+intl402/Temporal/PlainYearMonth/prototype/year/epoch-year.js

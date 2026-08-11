@@ -1439,6 +1439,93 @@ fn temporal_namespace_installation_restores_roots_after_plain_month_day_equals_f
 }
 
 #[test]
+fn temporal_namespace_installation_restores_roots_after_plain_date_sibling_conversion_failures() {
+    for (capacity, method) in [(181, "toPlainMonthDay"), (182, "toPlainYearMonth")] {
+        let mut vm = Vm::new().expect("failed to initialize VM");
+        vm.gc();
+        let original = vm.get_global("Temporal");
+        let baseline_pins = vm.gc_pins.len();
+        let baseline_live = vm.heap.live_count();
+        let baseline_registries = realm_registry_counts(&vm);
+        let global = vm.global;
+        let object_proto = vm.object_proto.clone();
+
+        vm.set_max_heap_objects(Some(baseline_live + capacity));
+        let result =
+            crate::builtins::install_temporal_namespace_in_env(&mut vm, global, None, object_proto);
+
+        vm.set_max_heap_objects(None);
+        let error = result.expect_err("PlainDate sibling conversion allocation must hit the cap");
+        assert_eq!(error.kind, crate::error::ErrorKind::Range, "{method}");
+        assert_eq!(error.message, "heap limit exceeded", "{method}");
+        assert_eq!(vm.gc_pins.len(), baseline_pins, "{method}");
+        assert_eq!(vm.get_global("Temporal"), original, "{method}");
+        assert_eq!(realm_registry_counts(&vm), baseline_registries, "{method}");
+        vm.gc();
+        assert_eq!(vm.heap.live_count(), baseline_live, "{method}");
+    }
+}
+
+#[test]
+fn temporal_plain_date_sibling_conversions_retry_result_allocation() {
+    for (method, property, expected) in [
+        ("toPlainMonthDay", "day", Value::Number(29.0)),
+        ("toPlainYearMonth", "year", Value::Number(2020.0)),
+    ] {
+        let mut vm = Vm::new().expect("failed to initialize VM");
+        vm.run("globalThis.siblingDate = new Temporal.PlainDate(2020, 2, 29);")
+            .expect("PlainDate sibling conversion fixture should initialize");
+        vm.gc();
+        let baseline_pins = vm.gc_pins.len();
+        let baseline_live = vm.heap.live_count();
+
+        vm.gc_pin_reservation_failure_countdown = Some(1);
+        let error = vm
+            .run(&format!("siblingDate.{method}();"))
+            .expect_err("result prototype root reservation must be fallible");
+        assert_eq!(error.kind, crate::error::ErrorKind::Range, "{method}");
+        assert_eq!(vm.gc_pin_reservation_failure_countdown, None, "{method}");
+        assert_eq!(vm.gc_pins.len(), baseline_pins, "{method}");
+        assert_eq!(vm.heap.live_count(), baseline_live, "{method}");
+
+        vm.set_max_heap_objects(Some(baseline_live));
+        let error = vm
+            .run(&format!("siblingDate.{method}();"))
+            .expect_err("sibling conversion result must obey the exact heap cap");
+        vm.set_max_heap_objects(None);
+        assert_eq!(error.kind, crate::error::ErrorKind::Range, "{method}");
+        assert_eq!(error.message, "heap limit exceeded", "{method}");
+        assert_eq!(vm.gc_pins.len(), baseline_pins, "{method}");
+        assert_eq!(vm.heap.live_count(), baseline_live, "{method}");
+
+        let _garbage = vm.new_object().expect("garbage allocation should succeed");
+        vm.set_max_heap_objects(Some(vm.heap.live_count()));
+        let result = vm
+            .run(&format!("siblingDate.{method}().{property};"))
+            .expect("sibling conversion should retry after collection");
+        vm.set_max_heap_objects(None);
+        assert_eq!(result, expected, "{method}");
+        assert_eq!(vm.gc_pins.len(), baseline_pins, "{method}");
+
+        let function = vm
+            .run(&format!("Temporal.PlainDate.prototype.{method}"))
+            .expect("sibling conversion method should be readable");
+        let receiver = vm
+            .run("siblingDate")
+            .expect("sibling conversion receiver should be readable");
+        let fixture_pins = vm.pin_many(&[function.clone(), receiver.clone()]);
+        let call_pins = vm.gc_pins.len();
+        vm.set_fuel(Some(0));
+        vm.call_function(&function, &[], Some(receiver))
+            .expect("sibling conversion should consume no native fuel");
+        assert_eq!(vm.fuel_remaining(), Some(0), "{method}");
+        assert_eq!(vm.gc_pins.len(), call_pins, "{method}");
+        vm.set_fuel(None);
+        vm.unpin_many(fixture_pins);
+    }
+}
+
+#[test]
 fn temporal_plain_month_day_equals_is_allocation_free_and_retries_root_failure() {
     let mut vm = Vm::new().expect("failed to initialize VM");
     vm.run(
@@ -1698,11 +1785,11 @@ fn temporal_namespace_installation_rolls_back_last_boundary_on_default_stack() {
     let baseline_registries = realm_registry_counts(&vm);
     let global = vm.global;
 
-    vm.set_max_heap_objects(Some(baseline_live + 180));
+    vm.set_max_heap_objects(Some(baseline_live + 182));
     let object_proto = vm.object_proto.clone();
     let error =
         crate::builtins::install_temporal_namespace_in_env(&mut vm, global, None, object_proto)
-            .expect_err("allocation 181 must fail on the ordinary test stack");
+            .expect_err("allocation 183 must fail on the ordinary test stack");
     vm.set_max_heap_objects(None);
 
     assert_eq!(error.kind, crate::error::ErrorKind::Range);
@@ -1722,9 +1809,9 @@ fn temporal_namespace_installation_covers_every_allocation_boundary_inner() {
     let baseline_live = vm.heap.live_count();
     let global = vm.global;
 
-    // Allocations 18 through 181 cover the method/accessor batches and the
-    // two namespace objects that must publish only after the batch succeeds.
-    for extra_capacity in 17..181 {
+    // Allocations 18 through 183 cover the method/accessor batches, namespace
+    // objects, and appended PlainDate sibling conversion methods.
+    for extra_capacity in 17..183 {
         vm.set_max_heap_objects(Some(baseline_live + extra_capacity));
         let object_proto = vm.object_proto.clone();
         let result =
@@ -1745,16 +1832,16 @@ fn temporal_namespace_installation_covers_every_allocation_boundary_inner() {
         );
     }
 
-    vm.set_max_heap_objects(Some(baseline_live + 181));
+    vm.set_max_heap_objects(Some(baseline_live + 183));
     let object_proto = vm.object_proto.clone();
     let temporal =
         crate::builtins::install_temporal_namespace_in_env(&mut vm, global, None, object_proto)
-            .expect("exact 181-object capacity must install the complete namespace");
+            .expect("exact 183-object capacity must install the complete namespace");
     vm.set_max_heap_objects(None);
     assert_eq!(vm.gc_pins.len(), baseline_pins);
     assert_eq!(vm.get_global("Temporal"), temporal);
     assert_eq!(
-        vm.run("typeof Temporal.Duration.from === 'function' && typeof Temporal.Duration.prototype.with === 'function' && typeof Temporal.Duration.prototype.abs === 'function' && typeof Temporal.Duration.prototype.negated === 'function' && typeof Temporal.Duration.prototype.total === 'function' && typeof Temporal.Duration.prototype.toString === 'function' && typeof Temporal.Duration.prototype.toJSON === 'function' && typeof Temporal.Duration.prototype.valueOf === 'function' && typeof Temporal.PlainDate === 'function' && typeof Temporal.PlainDate.from === 'function' && typeof Temporal.PlainDate.compare === 'function' && typeof Temporal.PlainDate.prototype.equals === 'function' && typeof Temporal.PlainDate.prototype.toPlainDateTime === 'function' && typeof Temporal.PlainDate.prototype.toString === 'function' && typeof Temporal.PlainDate.prototype.toJSON === 'function' && typeof Temporal.PlainMonthDay === 'function' && typeof Temporal.PlainMonthDay.prototype.with === 'function' && typeof Temporal.PlainMonthDay.prototype.toString === 'function' && typeof Temporal.PlainMonthDay.prototype.toJSON === 'function' && typeof Temporal.PlainMonthDay.prototype.toPlainDate === 'function' && typeof Temporal.PlainMonthDay.prototype.equals === 'function' && typeof Temporal.PlainMonthDay.prototype.valueOf === 'function' && typeof Temporal.PlainYearMonth === 'function' && typeof Temporal.PlainYearMonth.compare === 'function' && typeof Temporal.PlainYearMonth.prototype.with === 'function' && typeof Temporal.PlainYearMonth.prototype.add === 'function' && typeof Temporal.PlainYearMonth.prototype.subtract === 'function' && typeof Temporal.PlainYearMonth.prototype.equals === 'function' && typeof Temporal.PlainYearMonth.prototype.toString === 'function' && typeof Temporal.PlainYearMonth.prototype.toJSON === 'function' && typeof Temporal.PlainYearMonth.prototype.toPlainDate === 'function' && typeof Temporal.PlainYearMonth.prototype.valueOf === 'function' && typeof Temporal.PlainTime === 'function' && typeof Temporal.PlainTime.from === 'function' && typeof Temporal.PlainTime.compare === 'function' && typeof Temporal.PlainTime.prototype.equals === 'function' && typeof Temporal.PlainTime.prototype.toString === 'function' && typeof Temporal.PlainTime.prototype.toJSON === 'function' && typeof Temporal.PlainTime.prototype.round === 'function' && typeof Temporal.PlainTime.prototype.with === 'function' && typeof Temporal.PlainTime.prototype.add === 'function' && typeof Temporal.PlainTime.prototype.subtract === 'function' && typeof Temporal.PlainTime.prototype.valueOf === 'function' && typeof Temporal.PlainDateTime.compare === 'function' && typeof Temporal.PlainDateTime.prototype.equals")
+        vm.run("typeof Temporal.Duration.from === 'function' && typeof Temporal.Duration.prototype.with === 'function' && typeof Temporal.Duration.prototype.abs === 'function' && typeof Temporal.Duration.prototype.negated === 'function' && typeof Temporal.Duration.prototype.total === 'function' && typeof Temporal.Duration.prototype.toString === 'function' && typeof Temporal.Duration.prototype.toJSON === 'function' && typeof Temporal.Duration.prototype.valueOf === 'function' && typeof Temporal.PlainDate === 'function' && typeof Temporal.PlainDate.from === 'function' && typeof Temporal.PlainDate.compare === 'function' && typeof Temporal.PlainDate.prototype.equals === 'function' && typeof Temporal.PlainDate.prototype.toPlainDateTime === 'function' && typeof Temporal.PlainDate.prototype.toPlainMonthDay === 'function' && typeof Temporal.PlainDate.prototype.toPlainYearMonth === 'function' && typeof Temporal.PlainDate.prototype.toString === 'function' && typeof Temporal.PlainDate.prototype.toJSON === 'function' && typeof Temporal.PlainMonthDay === 'function' && typeof Temporal.PlainMonthDay.prototype.with === 'function' && typeof Temporal.PlainMonthDay.prototype.toString === 'function' && typeof Temporal.PlainMonthDay.prototype.toJSON === 'function' && typeof Temporal.PlainMonthDay.prototype.toPlainDate === 'function' && typeof Temporal.PlainMonthDay.prototype.equals === 'function' && typeof Temporal.PlainMonthDay.prototype.valueOf === 'function' && typeof Temporal.PlainYearMonth === 'function' && typeof Temporal.PlainYearMonth.compare === 'function' && typeof Temporal.PlainYearMonth.prototype.with === 'function' && typeof Temporal.PlainYearMonth.prototype.add === 'function' && typeof Temporal.PlainYearMonth.prototype.subtract === 'function' && typeof Temporal.PlainYearMonth.prototype.equals === 'function' && typeof Temporal.PlainYearMonth.prototype.toString === 'function' && typeof Temporal.PlainYearMonth.prototype.toJSON === 'function' && typeof Temporal.PlainYearMonth.prototype.toPlainDate === 'function' && typeof Temporal.PlainYearMonth.prototype.valueOf === 'function' && typeof Temporal.PlainTime === 'function' && typeof Temporal.PlainTime.from === 'function' && typeof Temporal.PlainTime.compare === 'function' && typeof Temporal.PlainTime.prototype.equals === 'function' && typeof Temporal.PlainTime.prototype.toString === 'function' && typeof Temporal.PlainTime.prototype.toJSON === 'function' && typeof Temporal.PlainTime.prototype.round === 'function' && typeof Temporal.PlainTime.prototype.with === 'function' && typeof Temporal.PlainTime.prototype.add === 'function' && typeof Temporal.PlainTime.prototype.subtract === 'function' && typeof Temporal.PlainTime.prototype.valueOf === 'function' && typeof Temporal.PlainDateTime.compare === 'function' && typeof Temporal.PlainDateTime.prototype.equals")
             .expect("installed namespace should remain usable"),
         Value::String(Arc::from("function"))
     );

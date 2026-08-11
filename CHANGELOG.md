@@ -4,6 +4,27 @@
 
 ### Changed
 
+- Added Realm-local, non-constructable, length-0
+  `Temporal.PlainDate.prototype.toPlainMonthDay` and `toPlainYearMonth`.
+  Both brand and copy hidden PlainDate slots without observing arguments or
+  public getters, publish canonical ISO reference year `1972` or day `1`, and
+  allocate fresh results with the native method Realm intrinsic prototype.
+  Mutable `Temporal` globals, constructors, species, subclasses, and
+  cross-Realm receivers cannot alter result selection. Root reservation,
+  heap-GC retry, pin restoration, and zero additional native fuel are covered.
+  Exact pinned direct coverage is **15/15**; three Intl402 callers remain
+  exact earlier non-ISO/Intl blockers. Existing ordinals remain stable: the
+  methods are allocations 182 and 183, complete installation uses 183
+  allocations, and root preflight covers all 182 maximum live pins.
+
+  [Decision Log]
+  - 목적과 의도: PlainDate hidden ISO date를 canonical PlainMonthDay/PlainYearMonth record로 변환하면서 method Realm과 sandbox resource 불변식을 완결한다.
+  - 기존 구현 및 제약 조건: 두 target hidden record와 Realm registry allocator는 있었지만 PlainDate bridge가 없었고, non-ISO CalendarISOToDate/CalendarYearMonthFromFields backend는 아직 없다.
+  - 검토한 주요 대안: public getters와 constructors 왕복, mutable globals를 통한 생성, ISO 결과를 모든 calendar에 적용, 두 ISO direct methods와 exact blocker accounting을 함께 추가하는 방식을 검토했다.
+  - 선택한 방식: brand-first slot copy 뒤 ISO calendar만 허용하고 `(1972, month, day)` 또는 `(year, month, 1)`을 method-Realm registry allocator로 생성한다. 두 functions는 existing `%Temporal%` 뒤에 append하고 installer root capacity를 182로 preflight한다.
+  - 다른 대안 대신 이 방식을 선택한 이유: visible/global paths는 명세에 없는 getter와 override를 관찰하고 Realm을 잘못 선택한다. ISO 계산의 non-ISO 재사용은 성공처럼 보이는 calendar 오계산이며, backend 없이 이를 숨길 수 없다.
+  - 장점, 단점 및 영향: direct 15/15, fresh identity, canonical references, cross-Realm branding/prototypes/errors, root/heap retry, zero native fuel과 183-allocation rollback이 재현된다. Intl402 0/3은 non-ISO calendar와 DateTimeFormat/withCalendar 구현 뒤 재감사한다.
+
 - Added Realm-local, non-constructable, length-1
   `Temporal.PlainMonthDay.prototype.equals`. It brands before argument
   observation, fully converts branded values, property bags, and strings, and

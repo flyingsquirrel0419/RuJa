@@ -58,8 +58,10 @@
   property bags, and audited strings, hidden-record `equals`, RFC 9557
   `toString` with calendar annotation control, hidden-record `toJSON` with
   automatic calendar annotation, static ISO-date `compare`, plus getter-free
-  midnight conversion
-  through the shared PlainDateTime `from`/`equals`/`compare` boundary.
+  midnight conversion through the shared PlainDateTime
+  `from`/`equals`/`compare` boundary. Getter-free sibling conversion creates
+  canonical ISO PlainMonthDay and PlainYearMonth records in the method Realm;
+  the exact direct boundary is **15/15**.
   Realm-local `Temporal.ZonedDateTime`
   supports hidden-slot construction for UTC/fixed offsets, exact epoch and
   identifier accessors, all ISO civil/calendar/offset accessors, subclassing,
@@ -110,8 +112,9 @@
   Its complete direct boundary is **12/12**; 87 Intl402 helper callers remain
   separately frozen behind non-ISO calendar construction/conversion.
   Remaining PlainDate and PlainDateTime arithmetic, formatting, and
-  conversion methods, calendar-relative and zoned Duration operations beyond
-  the supported `total` boundary, remaining PlainMonthDay/PlainYearMonth
+  conversion methods beyond these ISO bridges, calendar-relative and zoned
+  Duration operations beyond the supported `total` boundary, remaining
+  PlainMonthDay/PlainYearMonth
   conversion beyond the ISO `toPlainDate` bridge, arithmetic beyond
   PlainYearMonth `add`/`subtract`, locale and non-ISO calendar methods, named
   IANA timezone

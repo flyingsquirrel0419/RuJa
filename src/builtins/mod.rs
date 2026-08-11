@@ -6291,7 +6291,7 @@ pub(crate) fn install_temporal_namespace_in_env(
     global: Option<&Value>,
     object_proto: Value,
 ) -> error::Result<Value> {
-    vm.try_reserve_gc_pins(180)?;
+    vm.try_reserve_gc_pins(182)?;
     let mut pin_count = 0;
     let result = (|| {
         let instant_prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
@@ -8043,6 +8043,39 @@ pub(crate) fn install_temporal_namespace_in_env(
             private_fields: Mutex::new(std::collections::HashMap::new()),
             primitive: Mutex::new(None),
         }))?);
+
+        // Append after the existing namespace allocations so every established
+        // installer ordinal remains stable.
+        pin_count += vm.pin(&temporal);
+        let plain_date_to_plain_month_day =
+            Value::Object(vm.new_native_function_in_env_with_gc_retry(
+                "toPlainMonthDay",
+                temporal_plain_date_to_plain_month_day,
+                0,
+                env,
+            )?);
+        pin_count += vm.pin(&plain_date_to_plain_month_day);
+        let plain_date_to_plain_year_month =
+            Value::Object(vm.new_native_function_in_env_with_gc_retry(
+                "toPlainYearMonth",
+                temporal_plain_date_to_plain_year_month,
+                0,
+                env,
+            )?);
+        let Value::Object(plain_date_prototype_index) = plain_date_prototype.clone() else {
+            unreachable!()
+        };
+        vm.heap.with_obj(plain_date_prototype_index.0, |object| {
+            let mut props = object.props().lock();
+            props.insert(
+                PropertyKey::from("toPlainMonthDay"),
+                data_prop(plain_date_to_plain_month_day),
+            );
+            props.insert(
+                PropertyKey::from("toPlainYearMonth"),
+                data_prop(plain_date_to_plain_year_month),
+            );
+        });
 
         vm.realm_temporal_instant_constructors
             .insert(env.0, instant_constructor);
@@ -13057,6 +13090,46 @@ fn temporal_plain_date_to_plain_date_time(
     })?;
     let realm = vm.native_callee_closure().unwrap_or(vm.global);
     create_temporal_plain_date_time_in_realm(vm, fields, calendar_identifier, realm)
+}
+
+fn temporal_plain_date_to_plain_month_day(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let (date, calendar_identifier) = temporal_plain_date_slots(vm, this)?;
+    if calendar_identifier.as_ref() != "iso8601" {
+        return Err(Error::range(
+            "Temporal.PlainDate.prototype.toPlainMonthDay requires a supported calendar",
+        ));
+    }
+    let fields = TemporalPlainMonthDayFields {
+        reference_iso_year: 1972,
+        month: date.month,
+        day: date.day,
+    };
+    let realm = vm.native_callee_closure().unwrap_or(vm.global);
+    create_temporal_plain_month_day_in_realm(vm, fields, calendar_identifier, realm)
+}
+
+fn temporal_plain_date_to_plain_year_month(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let (date, calendar_identifier) = temporal_plain_date_slots(vm, this)?;
+    if calendar_identifier.as_ref() != "iso8601" {
+        return Err(Error::range(
+            "Temporal.PlainDate.prototype.toPlainYearMonth requires a supported calendar",
+        ));
+    }
+    let fields = TemporalPlainYearMonthFields {
+        year: date.year,
+        month: date.month,
+        reference_iso_day: 1,
+    };
+    let realm = vm.native_callee_closure().unwrap_or(vm.global);
+    create_temporal_plain_year_month_in_realm(vm, fields, calendar_identifier, realm)
 }
 
 fn temporal_plain_date_format(

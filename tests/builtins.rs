@@ -28840,6 +28840,97 @@ fn temporal_plain_date_to_plain_date_time_validates_time_strings_and_limits() {
 }
 
 #[test]
+fn temporal_plain_date_sibling_conversions_use_hidden_records_and_method_realm() {
+    assert_eq!(
+        run(r#"
+            class CustomDate extends Temporal.PlainDate {}
+            var date = new CustomDate(2020, 2, 29);
+            var reads = 0;
+            for (var key of ['calendarId', 'day', 'month', 'monthCode', 'year']) {
+              Object.defineProperty(date, key, {
+                get: function () { reads++; throw new Error('observed'); }
+              });
+            }
+            var ignored = new Proxy({}, {
+              get: function () { throw new Error('argument observed'); }
+            });
+            var monthDay = date.toPlainMonthDay(ignored);
+            var yearMonth = date.toPlainYearMonth(ignored);
+            var other = $262.createRealm().global;
+            var foreignMonthDay = other.Temporal.PlainDate.prototype.toPlainMonthDay.call(date);
+            var foreignYearMonth = other.Temporal.PlainDate.prototype.toPlainYearMonth.call(date);
+            var foreignDate = new other.Temporal.PlainDate(1999, 12, 31);
+            var localFromForeignMonthDay = Temporal.PlainDate.prototype.toPlainMonthDay.call(foreignDate);
+            var localFromForeignYearMonth = Temporal.PlainDate.prototype.toPlainYearMonth.call(foreignDate);
+            var foreignError = false;
+            try { other.Temporal.PlainDate.prototype.toPlainMonthDay.call({}); }
+            catch (error) {
+              foreignError = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            [
+              reads,
+              monthDay.equals(new Temporal.PlainMonthDay(2, 29, 'iso8601', 1972)),
+              monthDay.equals(new Temporal.PlainMonthDay(2, 29, 'iso8601', 2020)),
+              yearMonth.equals(new Temporal.PlainYearMonth(2020, 2, 'iso8601', 1)),
+              yearMonth.equals(new Temporal.PlainYearMonth(2020, 2, 'iso8601', 29)),
+              Object.getPrototypeOf(monthDay) === Temporal.PlainMonthDay.prototype,
+              Object.getPrototypeOf(yearMonth) === Temporal.PlainYearMonth.prototype,
+              Object.getPrototypeOf(foreignMonthDay) === other.Temporal.PlainMonthDay.prototype,
+              Object.getPrototypeOf(foreignYearMonth) === other.Temporal.PlainYearMonth.prototype,
+              Object.getPrototypeOf(localFromForeignMonthDay) === Temporal.PlainMonthDay.prototype,
+              Object.getPrototypeOf(localFromForeignYearMonth) === Temporal.PlainYearMonth.prototype,
+              localFromForeignMonthDay.toString(), localFromForeignYearMonth.toString(),
+              foreignError
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "0|true|false|true|false|true|true|true|true|true|true|12-31|1999-12|true"
+        ))
+    );
+}
+
+#[test]
+fn temporal_plain_date_sibling_conversions_are_fresh_and_use_intrinsics() {
+    assert_eq!(
+        run(r#"
+            var date = new Temporal.PlainDate(2020, 2, 29);
+            var toMonthDay = Temporal.PlainDate.prototype.toPlainMonthDay;
+            var toYearMonth = Temporal.PlainDate.prototype.toPlainYearMonth;
+            var monthDayPrototype = Temporal.PlainMonthDay.prototype;
+            var yearMonthPrototype = Temporal.PlainYearMonth.prototype;
+            var firstMonthDay = toMonthDay.call(date);
+            var secondMonthDay = toMonthDay.call(date);
+            var firstYearMonth = toYearMonth.call(date);
+            var secondYearMonth = toYearMonth.call(date);
+            Temporal.PlainMonthDay = function ReplacementMonthDay() {};
+            Temporal.PlainYearMonth = function ReplacementYearMonth() {};
+            globalThis.Temporal = {};
+            var afterReplacementMonthDay = toMonthDay.call(date);
+            var afterReplacementYearMonth = toYearMonth.call(date);
+            var monthDayNonconstructable = false;
+            var yearMonthNonconstructable = false;
+            try { new toMonthDay(); }
+            catch (error) { monthDayNonconstructable = error instanceof TypeError; }
+            try { new toYearMonth(); }
+            catch (error) { yearMonthNonconstructable = error instanceof TypeError; }
+            [
+              toMonthDay.name, toMonthDay.length,
+              toYearMonth.name, toYearMonth.length,
+              firstMonthDay !== secondMonthDay,
+              firstYearMonth !== secondYearMonth,
+              Object.getPrototypeOf(afterReplacementMonthDay) === monthDayPrototype,
+              Object.getPrototypeOf(afterReplacementYearMonth) === yearMonthPrototype,
+              afterReplacementMonthDay.toString(), afterReplacementYearMonth.toString(),
+              monthDayNonconstructable, yearMonthNonconstructable
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "toPlainMonthDay|0|toPlainYearMonth|0|true|true|true|true|02-29|2020-02|true|true"
+        ))
+    );
+}
+
+#[test]
 fn temporal_plain_date_time_conversion_uses_plain_date_slots_at_midnight() {
     assert_eq!(
         run(r#"

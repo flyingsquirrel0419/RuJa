@@ -50,8 +50,11 @@ The following resource limits are enforced:
   ISO field ordering. `toString` supports ISO date formatting and all four
   calendar annotation modes; `toJSON` serializes the same hidden date/calendar
   record with automatic calendar annotation and ignores its arguments.
-  Arithmetic, locale formatting, and remaining prototype conversion methods
-  are not implemented. In particular, `PlainDate.prototype.toLocaleString`
+  `toPlainMonthDay` and `toPlainYearMonth` copy hidden ISO fields into fresh
+  method-Realm intrinsic results with canonical reference year `1972` and day
+  `1`. Non-ISO sibling conversion, arithmetic, locale formatting, and the
+  remaining prototype conversion methods are not implemented. In particular,
+  `PlainDate.prototype.toLocaleString`
   remains absent until full ECMA-402 `Intl.DateTimeFormat` semantics exist;
   exposing an ISO-only fallback alongside RuJa's partial `%Intl%` would
   overstate locale support.
@@ -746,6 +749,12 @@ guarantees are required.
   `ToTimeRecordOrMidnight` semantics, including the PlainTime hidden-slot fast
   path. Non-ISO calendar mutation remains unsupported, so the related Intl402
   epoch-year downstream caller is not admitted
+- PlainDate `toPlainMonthDay` and `toPlainYearMonth` implement their complete
+  ISO direct surfaces (**7/7** and **8/8**) with canonical reference
+  components and method-Realm intrinsic allocation. Three pinned Intl402
+  callers remain blocked earlier by Chinese/Dangi construction, missing
+  `Intl.DateTimeFormat`, or missing `PlainDate.prototype.withCalendar`; no
+  non-ISO result is admitted as sibling-conversion support
 - PlainYearMonth `toPlainDate` implements complete ISO conversion and default
   constrain semantics. Non-ISO `CalendarMergeFields`/`CalendarDateFromFields`
   remain unavailable; the 87 pinned Intl402 helper callers therefore fail at
