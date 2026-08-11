@@ -25624,6 +25624,43 @@ fn temporal_duration_total_resolves_plain_and_fixed_offset_relative_dates() {
 }
 
 #[test]
+fn temporal_duration_total_requires_string_offset_primitives() {
+    assert_eq!(
+        run(r#"
+            var duration = new Temporal.Duration();
+            var results = [];
+            for (var offset of [0, null, true, 1000n]) {
+              try {
+                duration.total({
+                  unit: 'days',
+                  relativeTo: { year: 2021, month: 10, day: 28, offset, timeZone: 'UTC' }
+                });
+                results.push(false);
+              } catch (error) {
+                results.push(error instanceof TypeError);
+              }
+            }
+            var order = [];
+            var converted = duration.total({
+              unit: 'days',
+              relativeTo: {
+                year: 2021,
+                month: 10,
+                day: 28,
+                offset: {
+                  toString: function () { order.push('toString'); return '+00:00'; },
+                  valueOf: function () { order.push('valueOf'); return 0; }
+                },
+                timeZone: 'UTC'
+              }
+            });
+            [results.join(','), converted, order.join(',')].join('|');
+        "#),
+        Value::String(Arc::from("true,true,true,true|0|toString"))
+    );
+}
+
+#[test]
 fn temporal_duration_total_observes_options_in_order_and_uses_hidden_slots() {
     assert_eq!(
         run(r#"

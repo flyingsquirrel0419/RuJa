@@ -5335,18 +5335,20 @@ date but is not retained as identity.
 The Boolean result allocates no VM heap object. Property-bag rooting precedes
 the first getter and remains active through calendar/day/month/monthCode/year
 conversion; String byte lengths and String-field coercions consume fuel.
-`temporal_string_primitive` now performs `ToString` after string-hint
-`ToPrimitive`, preserving abrupt identity while accepting non-String
-primitives for later field parsing. Equals is appended at allocation 179;
+MonthCode conversion now performs full `ToString`, preserving abrupt identity
+while accepting non-String primitives for later field parsing. The separate
+offset path still requires string-hint `ToPrimitive` to produce a String, so
+non-String primitive offsets retain their required `TypeError`. Equals is
+appended at allocation 179;
 `Temporal.Now` and `%Temporal%` become 180 and 181. Complete installation uses
 181 allocations and 180 maximum live pins.
 
 ```text
 [Decision Log]
 - 목적과 의도: PlainMonthDay full hidden identity와 complete input conversion을 연결하면서 Realm/resource 불변식을 보존한다.
-- 기존 구현 및 제약 조건: shared converter와 hidden slots는 있었지만 equality API가 없었고 String-field helper는 ToString 단계를 생략했다. non-ISO calendar date-from-fields backend는 아직 없다.
+- 기존 구현 및 제약 조건: shared converter와 hidden slots는 있었지만 equality API가 없었다. monthCode는 ToString이 필요하지만 offset은 ToPrimitive 결과의 String type을 요구한다. non-ISO calendar date-from-fields backend는 아직 없다.
 - 검토한 주요 대안: visible accessors/serialization 비교, month/day pair-only 비교, dedicated equals parser, shared converter와 full record/calendar compare를 검토했다.
-- 선택한 방식: brand-first slot copy 뒤 existing converter를 호출하고 hidden record 전체와 canonical calendar를 비교한다. shared String-field path는 ToPrimitive(string), ToString, byte fuel 순서를 따른다.
+- 선택한 방식: brand-first slot copy 뒤 existing converter를 호출하고 hidden record 전체와 canonical calendar를 비교한다. monthCode는 ToString과 byte fuel을 적용하고 offset의 strict String primitive conversion은 별도 경계로 유지한다.
 - 다른 대안 대신 이 방식을 선택한 이유: visible/pair-only 경로는 reference year, calendar, getter 비관찰을 잃고 parser 복제는 from과 equals conversion을 분기시킨다.
 - 장점, 단점 및 영향: direct 36/36, hidden getter 비관찰, cross-Realm/subclass branding, method-Realm errors, GC/root/abrupt/fuel, allocation-free result와 181-allocation rollback이 고정된다. Intl 1/3 및 downstream 0/7은 non-ISO backend 책임으로 남는다.
 ```
