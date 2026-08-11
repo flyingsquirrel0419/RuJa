@@ -40,6 +40,49 @@ and field-level metadata audit gaps were closed.
 - 장점, 단점 및 영향: direct 결과와 전체 caller 부재를 함께 증명한다. 향후 Intl/downstream 파일이 추가되거나 기존 homonym ownership이 변하면 CI가 재감사를 요구한다.
 ```
 
+## Temporal PlainDateTime prototype.with
+
+At pinned Test262 revision
+`9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the built-ins directory contains
+30 files. Exact admission and forced execution cover **29 pass / 0 fail / 0
+skip**. `calendar-temporal-object-throws.js` is retained as a direct dependency
+blocker because its fixture calls the still-missing
+`Temporal.Now.plainDateTimeISO`, `plainDateISO`, and `plainTimeISO` before the
+`with` assertion; its exact failure remains
+`TypeError: undefined is not a function`.
+
+The complete direct and Intl402 method surface contains 100 files. All 70
+Intl402 files fail earlier at non-ISO calendar construction with the exact
+`RangeError: Invalid Temporal calendar identifier`, producing a forced
+**29 pass / 71 fail / 0 skip / 100** boundary. Five direct absent-method
+TypeError false positives are frozen explicitly so a missing or miswired
+method cannot satisfy the admission policy.
+
+Full pinned `test+harness` executable-token ownership contains **176 candidate
+files / 176 ownership rows**: 29 admitted direct, one direct dependency, 70
+Intl blockers, 75 PlainDate/PlainMonthDay/PlainTime/PlainYearMonth/
+ZonedDateTime homonyms, and `temporalHelpers.js`. The audit freezes candidate
+and ownership digests, all 100 files' feature/include/flag/negative metadata,
+direct and computed-string references/calls, generic harness computed calls,
+directory identities, and dirty-corpus state. Runner and analyzer share only
+the 29-path waiver. Separate diagnostics require exact argument sets, results,
+normalized blocker errors, and a digest of every variant-specific failure
+location; ordinary and dedicated full CI execute both the 29-file direct and
+100-file complete boundaries. Local all-target/
+all-feature release Rust including Criterion, warnings-denied release Clippy,
+rustfmt/diff, Python/YAML, live tooling **252/252**, corpus-unavailable tooling
+**252 tests / 5 skips**, and both exact diagnostics pass.
+
+```text
+[Decision Log]
+- 목적과 의도: PlainDateTime.with의 실제 direct support, earlier dependency, non-ISO complement, homonym ownership을 하나의 fail-closed Test262 계약으로 고정한다.
+- 기존 구현 및 제약 조건: broad Temporal gate는 100 files를 숨기며 absent method TypeError가 direct five files를 거짓 통과시킬 수 있다. 한 direct fixture는 with보다 먼저 Temporal.Now methods를 요구한다.
+- 검토한 주요 대안: direct directory prefix 전체 admission, forced pass 자동 admission, Intl files 제외, exact manifests와 full-tree executable-token ownership을 검토했다.
+- 선택한 방식: direct 29, dependency 1, Intl 70, homonym 75 manifests를 분리하고 exact metadata/result/error 및 176-row ownership digests를 runner/analyzer와 CI에서 공유한다.
+- 다른 대안 대신 이 방식을 선택한 이유: prefix/automatic admission은 future 및 wrong-error false positives를 숨기고 Intl 제외는 complete denominator를 축소한다. raw grep은 comments, literals, homonyms, computed calls를 구분하지 못한다.
+- 장점, 단점 및 영향: direct 29/29와 complete 29/71/100, exact blocker reasons, future/outside paths, alias/computed/harness drift가 재현된다. Temporal.Now 및 non-ISO calendar 구현 후 complement를 intended assertions까지 다시 측정해야 한다.
+```
+
 ## Temporal PlainDateTime ISO arithmetic
 
 Pinned Test262 `9e61c12835c5e4a3bdba93850427e6742c4f64c4`

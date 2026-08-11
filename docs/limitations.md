@@ -47,7 +47,10 @@ The following resource limits are enforced:
   date-time rounding, including BCE direction, midnight carry, all rounding
   modes, and method-Realm results. Non-ISO calendar arithmetic, prototype
   difference operations, locale formatting, and remaining conversion methods
-  are not implemented.
+  are not implemented. `with` supports the complete ISO partial-field merge,
+  overflow, hidden-slot, and method-Realm behavior. Its one direct
+  `Temporal.Now`-fixture dependency and 70 Intl402 non-ISO calendar files stay
+  outside admission until those prerequisite APIs exist.
   Realm-local `%Temporal.PlainDate%` supports distinct hidden-slot
   construction, subclassing, 16 ISO/calendar accessors, `@@toStringTag`,
   always-throwing `valueOf`, static `from` for branded Temporal values, ISO

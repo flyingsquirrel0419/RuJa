@@ -8211,6 +8211,19 @@ pub(crate) fn install_temporal_namespace_in_env(
                     .lock()
                     .insert(PropertyKey::from("round"), data_prop(plain_date_time_round));
             });
+        let plain_date_time_with = Value::Object(vm.new_native_function_in_env_with_gc_retry(
+            "with",
+            temporal_plain_date_time_with,
+            1,
+            env,
+        )?);
+        vm.heap
+            .with_obj(plain_date_time_prototype_index.0, |object| {
+                object
+                    .props()
+                    .lock()
+                    .insert(PropertyKey::from("with"), data_prop(plain_date_time_with));
+            });
 
         vm.realm_temporal_instant_constructors
             .insert(env.0, instant_constructor);
@@ -10223,6 +10236,199 @@ fn temporal_plain_date_time_round_unit(value: &str) -> error::Result<temporal::T
     } else {
         temporal_plain_time_round_unit(value)
     }
+}
+
+struct TemporalPlainDateTimePartialFields {
+    day: Option<BigInt>,
+    hour: Option<BigInt>,
+    microsecond: Option<BigInt>,
+    millisecond: Option<BigInt>,
+    minute: Option<BigInt>,
+    month: Option<BigInt>,
+    month_code: Option<(u8, bool)>,
+    nanosecond: Option<BigInt>,
+    second: Option<BigInt>,
+    year: Option<BigInt>,
+}
+
+fn temporal_plain_date_time_partial_fields(
+    vm: &mut Vm,
+    item: &Value,
+) -> error::Result<TemporalPlainDateTimePartialFields> {
+    let numeric = |vm: &mut Vm, name: &str| -> error::Result<Option<BigInt>> {
+        match vm.get_property(item, name)? {
+            Value::Undefined => Ok(None),
+            value => temporal_integer_with_truncation(vm, value).map(Some),
+        }
+    };
+    let positive = |vm: &mut Vm, name: &str| -> error::Result<Option<BigInt>> {
+        match vm.get_property(item, name)? {
+            Value::Undefined => Ok(None),
+            value => temporal_positive_integer_with_truncation(vm, value).map(Some),
+        }
+    };
+    let day = positive(vm, "day")?;
+    let hour = numeric(vm, "hour")?;
+    let microsecond = numeric(vm, "microsecond")?;
+    let millisecond = numeric(vm, "millisecond")?;
+    let minute = numeric(vm, "minute")?;
+    let month = positive(vm, "month")?;
+    let month_code = match vm.get_property(item, "monthCode")? {
+        Value::Undefined => None,
+        value => Some(temporal_month_code(vm, value)?),
+    };
+    let nanosecond = numeric(vm, "nanosecond")?;
+    let second = numeric(vm, "second")?;
+    let year = numeric(vm, "year")?;
+    if day.is_none()
+        && hour.is_none()
+        && microsecond.is_none()
+        && millisecond.is_none()
+        && minute.is_none()
+        && month.is_none()
+        && month_code.is_none()
+        && nanosecond.is_none()
+        && second.is_none()
+        && year.is_none()
+    {
+        return Err(Error::type_err(
+            "Temporal.PlainDateTime.prototype.with requires at least one field",
+        ));
+    }
+    Ok(TemporalPlainDateTimePartialFields {
+        day,
+        hour,
+        microsecond,
+        millisecond,
+        minute,
+        month,
+        month_code,
+        nanosecond,
+        second,
+        year,
+    })
+}
+
+fn temporal_plain_date_time_with(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let (receiver, calendar_identifier) = temporal_plain_date_time_slots(vm, this)?;
+    let item = args.first().cloned().unwrap_or(Value::Undefined);
+    let options = args.get(1).cloned().unwrap_or(Value::Undefined);
+    if !matches!(item, Value::Object(_)) {
+        return Err(Error::type_err(
+            "Temporal.PlainDateTime.prototype.with requires an object",
+        ));
+    }
+
+    vm.try_reserve_value_roots(&[item.clone(), options.clone()])?;
+    let pins = vm.pin_many(&[item.clone(), options.clone()]);
+    let result = (|| {
+        temporal_reject_partial_calendar_or_time_zone(vm, &item, "PlainDateTime")?;
+        let partial = temporal_plain_date_time_partial_fields(vm, &item)?;
+        let overflow = temporal_from_overflow(vm, Some(&options))?;
+
+        if let Some((month_code, leap)) = partial.month_code {
+            if leap || !(1..=12).contains(&month_code) {
+                return Err(Error::range("Invalid monthCode for ISO 8601 calendar"));
+            }
+            if partial
+                .month
+                .as_ref()
+                .is_some_and(|month| month != &BigInt::from(month_code))
+            {
+                return Err(Error::range("month and monthCode do not agree"));
+            }
+        }
+
+        let year = partial.year.unwrap_or_else(|| BigInt::from(receiver.year));
+        let mut month = partial.month.unwrap_or_else(|| {
+            partial.month_code.map_or_else(
+                || BigInt::from(receiver.month),
+                |month_code| BigInt::from(month_code.0),
+            )
+        });
+        let day = partial.day.unwrap_or_else(|| BigInt::from(receiver.day));
+        if month <= BigInt::zero() {
+            return Err(Error::range("Temporal month is out of range"));
+        }
+        if month > BigInt::from(12) {
+            match overflow {
+                TemporalOverflow::Constrain if partial.month_code.is_none() => {
+                    month = BigInt::from(12)
+                }
+                TemporalOverflow::Constrain | TemporalOverflow::Reject => {
+                    return Err(Error::range("Temporal month is out of range"));
+                }
+            }
+        }
+        if day <= BigInt::zero() {
+            return Err(Error::range("Temporal day is out of range"));
+        }
+        let year = year
+            .to_i128()
+            .ok_or_else(|| Error::range("Temporal year is out of range"))?;
+        let month = month
+            .to_i128()
+            .ok_or_else(|| Error::range("Temporal month is out of range"))?;
+        let maximum_day = temporal::days_in_month(year, month)
+            .ok_or_else(|| Error::range("Temporal month is out of range"))?;
+        let day = if day > BigInt::from(maximum_day) {
+            match overflow {
+                TemporalOverflow::Constrain => maximum_day,
+                TemporalOverflow::Reject => {
+                    return Err(Error::range("Temporal day is out of range"));
+                }
+            }
+        } else {
+            day.to_i128()
+                .ok_or_else(|| Error::range("Temporal day is out of range"))?
+        };
+        let date = temporal_plain_date_fields([
+            BigInt::from(year),
+            BigInt::from(month),
+            BigInt::from(day),
+        ])
+        .ok_or_else(|| Error::range("Temporal.PlainDateTime date is out of range"))?;
+        let time = temporal_plain_time_fields(
+            [
+                partial.hour.unwrap_or_else(|| BigInt::from(receiver.hour)),
+                partial
+                    .minute
+                    .unwrap_or_else(|| BigInt::from(receiver.minute)),
+                partial
+                    .second
+                    .unwrap_or_else(|| BigInt::from(receiver.second)),
+                partial
+                    .millisecond
+                    .unwrap_or_else(|| BigInt::from(receiver.millisecond)),
+                partial
+                    .microsecond
+                    .unwrap_or_else(|| BigInt::from(receiver.microsecond)),
+                partial
+                    .nanosecond
+                    .unwrap_or_else(|| BigInt::from(receiver.nanosecond)),
+            ],
+            overflow,
+        )?;
+        Ok(TemporalPlainDateTimeFields {
+            year: date.year,
+            month: date.month,
+            day: date.day,
+            hour: time.hour,
+            minute: time.minute,
+            second: time.second,
+            millisecond: time.millisecond,
+            microsecond: time.microsecond,
+            nanosecond: time.nanosecond,
+        })
+    })();
+    vm.unpin_many(pins);
+    let fields = result?;
+    let realm = vm.native_callee_closure().unwrap_or(vm.global);
+    create_temporal_plain_date_time_in_realm(vm, fields, calendar_identifier, realm)
 }
 
 #[derive(Clone, Copy)]

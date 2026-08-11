@@ -312,6 +312,9 @@ jobs:
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_time_round_surface_is_exact_live_and_shared
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_time_round_audit_is_token_aware_and_closed
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_time_round_diagnostic_is_exact
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_time_with_surface_is_exact_live_and_shared
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_time_with_audit_is_token_aware_and_closed
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_time_with_diagnostics_are_exact
           -v
       - name: Verify exact Temporal.PlainDateTime.from admission
         working-directory: tools
@@ -2101,6 +2104,59 @@ jobs:
           cat temporal_plain_date_time_round_result.txt
           grep -q '^RATE=100.0 PASS=45 FAIL=0 SKIP=0 TOTAL=45 RAN=45$' \
             temporal_plain_date_time_round_result.txt
+
+  temporal-plain-date-time-with:
+    needs: [build, setup]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download RuJa binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ruja-release
+          path: target/release/
+      - run: chmod +x target/release/ruja
+      - name: Checkout pinned PlainDateTime with corpus and homonyms
+        uses: actions/checkout@v4
+        with:
+          repository: tc39/test262
+          ref: ${{ env.TEST262_REV }}
+          path: test262
+          sparse-checkout: |
+            harness
+            test/built-ins/Temporal/PlainDateTime/prototype/with
+            test/intl402/Temporal/PlainDateTime/prototype/with
+            test/built-ins/Temporal/PlainDate/prototype/with
+            test/built-ins/Temporal/PlainMonthDay/prototype/with
+            test/built-ins/Temporal/PlainTime/prototype/with
+            test/built-ins/Temporal/PlainYearMonth/prototype/with
+            test/built-ins/Temporal/ZonedDateTime/prototype/with
+            test/intl402/Temporal/PlainDateTime/prototype/year
+            test/intl402/Temporal/ZonedDateTime/prototype/with
+      - name: Require exact Temporal.PlainDateTime with (29/29)
+        run: |
+          mapfile -t files < <(grep -hEv '^(#|$)' \
+            tools/test262_temporal_plain_date_time_with_admission.txt)
+          test "${#files[@]}" -eq 29
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_plain_date_time_with_diagnostic.py \
+            "${files[@]}" > temporal_plain_date_time_with_result.txt 2>&1
+          cat temporal_plain_date_time_with_result.txt
+          grep -q '^RATE=100.0 PASS=29 FAIL=0 SKIP=0 TOTAL=29 RAN=29$' \
+            temporal_plain_date_time_with_result.txt
+      - name: Diagnose complete Temporal.PlainDateTime with (29/71/100)
+        run: |
+          mapfile -t files < <(grep -hEv '^(#|$)' \
+            tools/test262_temporal_plain_date_time_with_admission.txt \
+            tools/test262_temporal_plain_date_time_with_direct_blockers.txt \
+            tools/test262_temporal_plain_date_time_with_intl_blockers.txt)
+          test "${#files[@]}" -eq 100
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_plain_date_time_with_complete_diagnostic.py \
+            "${files[@]}" > temporal_plain_date_time_with_complete_result.txt 2>&1
+          cat temporal_plain_date_time_with_complete_result.txt
+          grep -q '^RATE=29.0 PASS=29 FAIL=71 SKIP=0 TOTAL=100 RAN=100$' \
+            temporal_plain_date_time_with_complete_result.txt
 
   temporal-plain-date-time-from:
     needs: [build, setup]

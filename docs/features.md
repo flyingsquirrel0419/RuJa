@@ -146,6 +146,14 @@
   date carry, complete range validation, and fresh method-Realm results. Its
   pinned direct surface is **45/45**; a complete token-aware ownership audit
   finds no Intl direct or true downstream caller outside the directory.
+  PlainDateTime `with` performs ordered partial-field replacement while
+  preserving every missing hidden receiver slot. It rejects Temporal
+  date/time objects as partial bags without observing public getters, merges
+  ISO `month` and `monthCode`, applies constrain/reject overflow, rechecks the
+  complete range, and creates a fresh method-Realm result. Exact direct
+  coverage is **29/29**; one earlier `Temporal.Now` dependency and 70 non-ISO
+  Intl402 callers remain explicit blockers in the complete **29/71/100**
+  boundary.
   Remaining PlainDate arithmetic and PlainDateTime difference and
   conversion methods beyond these bridges, calendar-relative and zoned
   Duration operations beyond the supported `total` boundary, remaining

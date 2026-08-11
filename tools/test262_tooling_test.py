@@ -42,6 +42,9 @@ import test262_temporal_plain_date_time_arithmetic_complete_diagnostic as tempor
 import test262_temporal_plain_date_time_arithmetic_diagnostic as temporal_plain_date_time_arithmetic_diagnostic
 import test262_temporal_plain_date_time_round_admission as temporal_plain_date_time_round_admission
 import test262_temporal_plain_date_time_round_diagnostic as temporal_plain_date_time_round_diagnostic
+import test262_temporal_plain_date_time_with_admission as temporal_plain_date_time_with_admission
+import test262_temporal_plain_date_time_with_complete_diagnostic as temporal_plain_date_time_with_complete_diagnostic
+import test262_temporal_plain_date_time_with_diagnostic as temporal_plain_date_time_with_diagnostic
 import test262_temporal_plain_year_month_arithmetic_diagnostic as temporal_year_month_arithmetic_diagnostic
 import test262_temporal_plain_year_month_compare_diagnostic as temporal_year_month_compare_diagnostic
 import test262_temporal_plain_year_month_compare_intl_diagnostic as temporal_year_month_compare_intl_diagnostic
@@ -8602,6 +8605,279 @@ computedAlias.call(value, "minute");
                         diagnostic.verify_expected_results(arguments)
             finally:
                 diagnostic.test262_runner.TEST262 = original_root
+
+    def test_temporal_plain_date_time_with_surface_is_exact_live_and_shared(self):
+        admission = temporal_plain_date_time_with_admission
+        direct = admission.TEMPORAL_PLAIN_DATE_TIME_WITH_FILES
+        direct_blockers = admission.TEMPORAL_PLAIN_DATE_TIME_WITH_DIRECT_BLOCKERS
+        intl = admission.TEMPORAL_PLAIN_DATE_TIME_WITH_INTL_BLOCKERS
+        homonyms = admission.TEMPORAL_PLAIN_DATE_TIME_WITH_HOMONYMS
+        complete = admission.TEMPORAL_PLAIN_DATE_TIME_WITH_COMPLETE_FILES
+        self.assertEqual(
+            (len(direct), len(direct_blockers), len(intl), len(homonyms), len(complete)),
+            (29, 1, 70, 75, 100),
+        )
+        self.assertEqual(complete, direct | direct_blockers | intl)
+        surfaces = (direct, direct_blockers, intl, homonyms)
+        for index, left in enumerate(surfaces):
+            for right in surfaces[index + 1 :]:
+                self.assertTrue(left.isdisjoint(right))
+        self.assertEqual(
+            set(admission.TEMPORAL_PLAIN_DATE_TIME_WITH_FEATURES), direct
+        )
+        self.assertEqual(
+            set(admission.TEMPORAL_PLAIN_DATE_TIME_WITH_INCLUDES), direct
+        )
+        self.assertEqual(set(admission.TEMPORAL_PLAIN_DATE_TIME_WITH_FLAGS), direct)
+        self.assertEqual(
+            set(admission.TEMPORAL_PLAIN_DATE_TIME_WITH_NEGATIVE), direct
+        )
+        self.assertTrue(
+            admission.TEMPORAL_PLAIN_DATE_TIME_WITH_PREIMPLEMENTATION_FALSE_POSITIVES
+            <= direct
+        )
+        manifest_names = (
+            "test262_temporal_plain_date_time_with_admission.txt",
+            "test262_temporal_plain_date_time_with_direct_blockers.txt",
+            "test262_temporal_plain_date_time_with_intl_blockers.txt",
+            "test262_temporal_plain_date_time_with_homonyms.txt",
+        )
+        for name, expected in zip(manifest_names, surfaces):
+            manifest = Path(__file__).resolve().with_name(name)
+            entries = tuple(
+                line
+                for raw_line in manifest.read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            )
+            self.assertEqual(entries, tuple(sorted(entries)))
+            self.assertEqual(len(entries), len(set(entries)))
+            self.assertEqual(frozenset(entries), expected)
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        corpus_root = test_root.parent
+        corpus_required = "TEST262" in os.environ
+        try:
+            corpus_available = (
+                (test_root / admission.DIRECT_PREFIX).is_dir()
+                and (test_root / admission.INTL_PREFIX).is_dir()
+                and (corpus_root / "harness").is_dir()
+            )
+        except OSError:
+            if corpus_required:
+                raise
+            corpus_available = False
+        if corpus_required and not corpus_available:
+            raise FileNotFoundError(corpus_root)
+        if corpus_available:
+            candidates = admission.audit_corpus(corpus_root, test262_runner.parse_meta)
+            self.assertEqual(len(candidates), 176)
+            self.assertEqual(len(admission._ownership_rows(candidates)), 176)
+            for relative in direct:
+                path = test_root / relative
+                metadata = test262_runner.parse_meta(path.read_text())
+                expected = admission.TEMPORAL_PLAIN_DATE_TIME_WITH_FEATURES[relative]
+                for tool in (test262_runner, test262_analyze):
+                    self.assertTrue(tool.temporal_plain_date_time_with_path(path))
+                    self.assertEqual(
+                        tool.temporal_plain_date_time_with_features(path), expected
+                    )
+                    self.assertFalse(tool.should_skip(metadata, path), relative)
+            for relative in direct_blockers | intl:
+                path = test_root / relative
+                metadata = test262_runner.parse_meta(path.read_text())
+                for tool in (test262_runner, test262_analyze):
+                    self.assertFalse(tool.temporal_plain_date_time_with_path(path))
+                    self.assertTrue(tool.should_skip(metadata, path), relative)
+
+            def drift_metadata(source):
+                metadata = test262_runner.parse_meta(source)
+                metadata["features"] = list(metadata.get("features", [])) + ["future"]
+                return metadata
+
+            with self.assertRaisesRegex(RuntimeError, "metadata fields drifted"):
+                admission.audit_corpus(corpus_root, drift_metadata)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = root / "test" / admission.DIRECT_PREFIX / "future.js"
+            outside = root / "test/built-ins/Temporal/Other/with/basic.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, features in admission.TEMPORAL_PLAIN_DATE_TIME_WITH_FEATURES.items():
+                        path = root / "test" / relative
+                        self.assertTrue(tool.temporal_plain_date_time_with_path(path))
+                        self.assertEqual(
+                            tool.temporal_plain_date_time_with_features(path), features
+                        )
+                    for path in (future, outside, None, object()):
+                        self.assertFalse(tool.temporal_plain_date_time_with_path(path))
+                        self.assertEqual(
+                            tool.temporal_plain_date_time_with_features(path), frozenset()
+                        )
+                    for path in (future, outside):
+                        self.assertTrue(tool.should_skip({"features": ["Temporal"]}, path))
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_temporal_plain_date_time_with_audit_is_token_aware_and_closed(self):
+        admission = temporal_plain_date_time_with_admission
+        source = r'''
+const comment = "value.with()";
+const regexp = /value\.with\(\)/;
+const template = `ignored.with(${value.with({ day: 2 })})`;
+// ignored.with();
+const value = new Temporal.PlainDateTime(2000, 1, 1);
+value.with({ day: 2 });
+value?.with?.({ day: 3 });
+value["with"]({ day: 4 });
+const alias = value.with;
+alias.call(value, { day: 5 });
+'''
+        path = "built-ins/Temporal/PlainDateTime/prototype/with/synthetic.js"
+        candidates = admission._candidate_stats({path: source})
+        counts, tokens = candidates[path]
+        self.assertEqual(counts[2:4], (5, 4))
+        self.assertEqual(len(admission.property_reference_indices(tokens)), 5)
+        self.assertEqual(len(admission.property_call_indices(tokens, "with")), 4)
+        with self.assertRaisesRegex(RuntimeError, "candidate surface drifted"):
+            admission.verify_candidate_contract(candidates)
+        with self.assertRaises(FileNotFoundError):
+            admission.audit_corpus(
+                "/definitely/missing/test262", test262_runner.parse_meta
+            )
+
+    def test_temporal_plain_date_time_with_diagnostics_are_exact(self):
+        direct = temporal_plain_date_time_with_diagnostic
+        complete = temporal_plain_date_time_with_complete_diagnostic
+        self.assertEqual(
+            direct.SURFACE,
+            temporal_plain_date_time_with_admission.TEMPORAL_PLAIN_DATE_TIME_WITH_FILES,
+        )
+        self.assertEqual(
+            complete.SURFACE,
+            temporal_plain_date_time_with_admission.TEMPORAL_PLAIN_DATE_TIME_WITH_COMPLETE_FILES,
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "test").mkdir()
+            original_direct_root = direct.test262_runner.TEST262
+            original_complete_root = complete.test262_runner.TEST262
+            direct.test262_runner.TEST262 = str(root)
+            complete.test262_runner.TEST262 = str(root)
+            try:
+                direct_arguments = sorted(direct.SURFACE)
+                with (
+                    patch.object(direct, "audit_corpus"),
+                    patch.object(direct.test262_runner, "run_test", return_value="pass"),
+                ):
+                    direct.verify_expected_results(direct_arguments)
+                    for invalid in (
+                        direct_arguments[:-1],
+                        direct_arguments[:-1] + [direct_arguments[0]],
+                        direct_arguments + ["built-ins/Temporal/Other/future.js"],
+                    ):
+                        with self.assertRaisesRegex(
+                            RuntimeError, "exact frozen 29-file surface"
+                        ):
+                            direct.verify_expected_results(invalid)
+                with (
+                    patch.object(direct, "audit_corpus"),
+                    patch.object(direct.test262_runner, "run_test", return_value="fail"),
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "results drifted"):
+                        direct.verify_expected_results(direct_arguments)
+
+                complete_arguments = sorted(complete.SURFACE)
+
+                def expected_complete(path):
+                    relative = path.relative_to(root / "test").as_posix()
+                    if relative in complete.DIRECT:
+                        return "pass", ("",)
+                    message = (
+                        complete._MISSING_METHOD_ERROR
+                        if relative in complete.DIRECT_BLOCKERS
+                        else complete._CALENDAR_ERROR
+                    )
+                    return "fail", (
+                        message + " (at line 100)",
+                        message + " (at line 101)",
+                    )
+
+                expected_diagnostics = {
+                    path: expected_complete(root / "test" / path)
+                    for path in complete.SURFACE
+                }
+                expected_digest = complete._failure_diagnostic_digest(
+                    expected_diagnostics
+                )
+
+                with (
+                    patch.object(complete, "audit_corpus"),
+                    patch.object(
+                        complete,
+                        "_EXPECTED_FAILURE_DIAGNOSTIC_DIGEST",
+                        expected_digest,
+                    ),
+                    patch.object(
+                        complete, "_run_with_diagnostics", side_effect=expected_complete
+                    ),
+                ):
+                    complete.verify_expected_results(complete_arguments)
+                    for invalid in (
+                        complete_arguments[:-1],
+                        complete_arguments[:-1] + [complete_arguments[0]],
+                        complete_arguments + ["built-ins/Temporal/Other/future.js"],
+                    ):
+                        with self.assertRaisesRegex(
+                            RuntimeError, "exact frozen 100-file surface"
+                        ):
+                            complete.verify_expected_results(invalid)
+
+                def wrong_location(path):
+                    status, messages = expected_complete(path)
+                    relative = path.relative_to(root / "test").as_posix()
+                    if relative == min(complete.DIRECT_BLOCKERS):
+                        messages = tuple(
+                            message.replace("line 100", "line 102")
+                            for message in messages
+                        )
+                    return status, messages
+
+                with (
+                    patch.object(complete, "audit_corpus"),
+                    patch.object(
+                        complete,
+                        "_EXPECTED_FAILURE_DIAGNOSTIC_DIGEST",
+                        expected_digest,
+                    ),
+                    patch.object(
+                        complete,
+                        "_run_with_diagnostics",
+                        side_effect=wrong_location,
+                    ),
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "locations drifted"):
+                        complete.verify_expected_results(complete_arguments)
+                with (
+                    patch.object(complete, "audit_corpus"),
+                    patch.object(
+                        complete,
+                        "_run_with_diagnostics",
+                        side_effect=lambda path: (
+                            ("pass", ("",))
+                            if path.relative_to(root / "test").as_posix()
+                            in complete.DIRECT
+                            else ("fail", ("TypeError: wrong",))
+                        ),
+                    ),
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "failure reasons drifted"):
+                        complete.verify_expected_results(complete_arguments)
+            finally:
+                direct.test262_runner.TEST262 = original_direct_root
+                complete.test262_runner.TEST262 = original_complete_root
 
     def test_temporal_plain_date_time_arithmetic_surface_is_exact_live_and_shared(self):
         admission = temporal_plain_date_time_arithmetic_admission

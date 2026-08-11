@@ -5529,4 +5529,36 @@ remain ordinarily mutable from JavaScript.
 - 장점, 단점 및 영향: negative floor carry, huge subsecond values, month ambiguity, exclusive limits, GC/root/heap/fuel, immediate publication과 stable 191/192 ordinals가 고정된다. non-ISO calendar dispatch는 명시적 RangeError로 남는다.
 ```
 
+### PlainDateTime partial-field replacement
+
+`Temporal.PlainDateTime.prototype.with` is a Realm-local, non-constructable,
+length-1 native function. Receiver branding precedes argument checks. The
+input and options are reserved and pinned before any getter can run; branded
+PlainDate, PlainMonthDay, PlainTime, PlainDateTime, PlainYearMonth, and
+ZonedDateTime inputs are rejected from hidden kinds without observing public
+`calendar` or `timeZone` properties.
+
+A dedicated optional-field collector reads `day`, `hour`, `microsecond`,
+`millisecond`, `minute`, `month`, `monthCode`, `nanosecond`, `second`, and
+`year` in order. Unlike the complete PlainDateTime bag converter, it does not
+default missing time fields to zero. After all field conversions, `overflow`
+is observed and the partial record is merged with copied receiver slots.
+`month` and `monthCode` must agree when both are present; ISO date and time
+fields are constrained or rejected, and the combined exclusive
+PlainDateTime range is checked by the shared method-Realm allocator.
+
+Installer ordinals 1..193 remain unchanged. `with` is allocation 194 and is
+published immediately on the provisional prototype, preserving the existing
+186 maximum-live-pin preflight and transactional rollback at every boundary.
+
+```text
+[Decision Log]
+- 목적과 의도: partial ISO date-time field replacement를 complete bag conversion과 분리해 receiver preservation 및 명세 observation order를 보존한다.
+- 기존 구현 및 제약 조건: complete collector는 missing time을 zero-default하고 non-ISO calendar merge backend는 없다. Temporal date/time inputs must be rejected before public getter observation.
+- 검토한 주요 대안: public accessors로 receiver bag 생성, complete collector mode flag, field별 direct machine-integer conversion, optional BigInt record와 hidden-slot merge를 검토했다.
+- 선택한 방식: rooted input/options 위에서 전용 optional BigInt fields를 수집하고 overflow 이후 hidden receiver record에 merge한다. semantic date/time regulation과 final allocation은 기존 ISO helpers를 재사용한다.
+- 다른 대안 대신 이 방식을 선택한 이유: public bag은 getter/species/Realm을 관찰하고 mode flag는 absent와 default-zero 의미를 혼합한다. BigInt intermediate는 options 이전 finite large Number truncation과 error ordering을 보존한다.
+- 장점, 단점 및 영향: exact getter/coercion order, missing-field identity, month/monthCode agreement, range, GC/root/heap retry와 stable allocation 194가 고정된다. non-ISO calendar merge는 backend 도입 전 fail-closed다.
+```
+
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

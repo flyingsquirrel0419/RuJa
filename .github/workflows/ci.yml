@@ -105,12 +105,15 @@ jobs:
             test/built-ins/Temporal/PlainDate/prototype/toPlainDateTime
             test/built-ins/Temporal/PlainDate/prototype/toPlainMonthDay
             test/built-ins/Temporal/PlainDate/prototype/toPlainYearMonth
+            test/built-ins/Temporal/PlainDate/prototype/with
             test/built-ins/Temporal/PlainDate/prototype/withCalendar
             test/built-ins/Temporal/PlainDateTime/prototype/withCalendar
             test/built-ins/Temporal/PlainDateTime/prototype/toString
             test/built-ins/Temporal/PlainDateTime/prototype/toJSON
             test/built-ins/Temporal/PlainDateTime/prototype/until/balance.js
             test/built-ins/Temporal/ZonedDateTime/prototype/withCalendar
+            test/built-ins/Temporal/ZonedDateTime/prototype/with
+            test/intl402/Temporal/ZonedDateTime/prototype/with
             test/built-ins/Temporal/PlainYearMonth
             test/built-ins/Temporal/PlainYearMonth/prototype/toJSON
             test/built-ins/Temporal/PlainYearMonth/prototype/toPlainDate
@@ -154,6 +157,9 @@ jobs:
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_time_round_surface_is_exact_live_and_shared
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_time_round_audit_is_token_aware_and_closed
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_time_round_diagnostic_is_exact
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_time_with_surface_is_exact_live_and_shared
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_time_with_audit_is_token_aware_and_closed
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_time_with_diagnostics_are_exact
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_calendar_siblings_formatter_surface_is_exact
           -v
       - name: Run exact Temporal.Duration.prototype.with admission
@@ -524,6 +530,28 @@ jobs:
             "${files[@]}" | tee temporal_plain_date_time_round_result.txt
           grep -q '^RATE=100.0 PASS=45 FAIL=0 SKIP=0 TOTAL=45 RAN=45$' \
             temporal_plain_date_time_round_result.txt
+      - name: Require exact Temporal.PlainDateTime with (29/29)
+        run: |
+          mapfile -t files < <(grep -hEv '^(#|$)' \
+            tools/test262_temporal_plain_date_time_with_admission.txt)
+          test "${#files[@]}" -eq 29
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_plain_date_time_with_diagnostic.py \
+            "${files[@]}" | tee temporal_plain_date_time_with_result.txt
+          grep -q '^RATE=100.0 PASS=29 FAIL=0 SKIP=0 TOTAL=29 RAN=29$' \
+            temporal_plain_date_time_with_result.txt
+      - name: Diagnose complete Temporal.PlainDateTime with (29/71/100)
+        run: |
+          mapfile -t files < <(grep -hEv '^(#|$)' \
+            tools/test262_temporal_plain_date_time_with_admission.txt \
+            tools/test262_temporal_plain_date_time_with_direct_blockers.txt \
+            tools/test262_temporal_plain_date_time_with_intl_blockers.txt)
+          test "${#files[@]}" -eq 100
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_plain_date_time_with_complete_diagnostic.py \
+            "${files[@]}" | tee temporal_plain_date_time_with_complete_result.txt
+          grep -q '^RATE=29.0 PASS=29 FAIL=71 SKIP=0 TOTAL=100 RAN=100$' \
+            temporal_plain_date_time_with_complete_result.txt
       - name: Run exact Temporal.PlainYearMonth.prototype.toPlainDate admission
         run: |
           mapfile -t files < <(grep -hEv '^(#|$)' \

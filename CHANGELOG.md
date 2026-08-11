@@ -5,6 +5,38 @@
 ### Changed
 
 - Added Realm-local, non-constructable, length-1
+  `Temporal.PlainDateTime.prototype.with`. It brands before observing input,
+  rejects branded date/time Temporal objects without public getter access,
+  reads `calendar`, `timeZone`, and the ten partial fields in specification
+  order, then observes `overflow`. Missing fields preserve hidden receiver
+  slots; ISO `month`/`monthCode` agreement, constrain/reject regulation, and
+  the complete exclusive PlainDateTime range are validated before allocating
+  a fresh method-Realm intrinsic. Existing ordinals 1..193 remain stable;
+  `with` is allocation 194 and complete installation uses exactly 194
+  allocations with 186 maximum live pins. Pinned direct Test262 is **29/29**.
+  One direct file remains an exact earlier missing-`Temporal.Now` dependency,
+  and 70 Intl402 files remain exact non-ISO calendar blockers, so forced
+  complete execution is **29 pass / 71 fail / 100**. Full pinned ownership
+  freezes **176 candidates / 176 rows**, including 75 PlainDate,
+  PlainMonthDay, PlainTime, PlainYearMonth, and ZonedDateTime homonyms plus the
+  generic harness owner. Exact metadata, executable-token counts, results,
+  blocker errors and variant-specific failure locations, aliases/computed
+  calls, false positives, Realm behavior, observable GC, root preflight, exact
+  heap-cap retry, and installer rollback are covered by local and CI gates.
+  All-target/all-feature release Rust
+  including Criterion, warnings-denied release Clippy, rustfmt/diff,
+  Python/YAML, live tooling **252/252**, corpus-unavailable tooling **252 tests
+  / 5 skips**, direct **29/29**, and complete **29/71/100** diagnostics pass.
+
+  [Decision Log]
+  - 목적과 의도: PlainDateTime partial-field replacement를 hidden-slot, observation-order, Realm, resource 계약까지 완결하고 실제 direct 29 files만 supported 경계로 전환한다.
+  - 기존 구현 및 제약 조건: complete PlainDateTime bag collector는 누락 time fields를 0으로 채워 receiver 값을 지우므로 재사용할 수 없다. non-ISO calendar backend와 Temporal.Now factory methods는 아직 없다.
+  - 검토한 주요 대안: public getter/property-bag round trip, complete collector에 mode flag 추가, direct directory 30개 전체 admission, 전용 optional-field collector와 exact complement를 검토했다.
+  - 선택한 방식: ten optional BigInt-backed fields를 명세 순서로 수집하고 receiver hidden slots에 merge한 뒤 overflow를 적용한다. 29 pass, 1 Temporal.Now dependency, 70 Intl blockers와 75 homonyms를 별도 manifests 및 full-tree token audit로 고정한다.
+  - 다른 대안 대신 이 방식을 선택한 이유: public 경로는 hidden getter 비관찰과 method Realm을 깨고 mode flag는 required/default semantics를 숨긴다. 30-file prefix admission은 missing dependency TypeError와 future files를 실제 method 지원으로 오계상한다.
+  - 장점, 단점 및 영향: exact field preservation, month ambiguity, range, getter/coercion order, GC/root/heap, stable allocation 194가 고정된다. Temporal.Now와 non-ISO calendar 지원 뒤 71 blockers를 intended assertion까지 재감사해야 한다.
+
+- Added Realm-local, non-constructable, length-1
   `Temporal.PlainDateTime.prototype.round`. The method brands before observing
   its argument, accepts String shorthand or ordered options, supports day
   through nanosecond units, all nine rounding modes, valid divisibility

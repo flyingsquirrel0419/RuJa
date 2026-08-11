@@ -29364,6 +29364,123 @@ fn temporal_plain_date_time_round_is_hidden_realm_local_and_ordered() {
 }
 
 #[test]
+fn temporal_plain_date_time_with_merges_partial_fields_and_regulates_overflow() {
+    assert_eq!(
+        run(r#"
+            var value = new Temporal.PlainDateTime(
+              2000, 5, 31, 12, 34, 56, 987, 654, 321
+            );
+            var constrained = value.with({
+              monthCode: 'M02', hour: 25, nanosecond: -1
+            });
+            var preserved = value.with({ day: 8, hour: 10, year: undefined });
+            var rejected = false;
+            try { value.with({ month: 2 }, { overflow: 'reject' }); }
+            catch (error) { rejected = error instanceof RangeError; }
+            var mismatch = false;
+            try { value.with({ month: 5, monthCode: 'M06' }); }
+            catch (error) { mismatch = error instanceof RangeError; }
+            var minimum = new Temporal.PlainDateTime(
+              -271821, 4, 19, 0, 0, 0, 0, 0, 1
+            );
+            var range = false;
+            try { minimum.with({ nanosecond: 0 }); }
+            catch (error) { range = error instanceof RangeError; }
+            [
+              constrained.year, constrained.month, constrained.day,
+              constrained.hour, constrained.nanosecond,
+              preserved.year, preserved.month, preserved.day,
+              preserved.hour, preserved.minute, preserved.second,
+              rejected, mismatch, range
+            ].join('|');
+        "#),
+        Value::String(Arc::from("2000|2|29|23|0|2000|5|8|10|34|56|true|true|true"))
+    );
+}
+
+#[test]
+fn temporal_plain_date_time_with_is_hidden_realm_local_and_ordered() {
+    assert_eq!(
+        run(r#"
+            var receiver = new Temporal.PlainDateTime(2000, 5, 2, 12, 34, 56);
+            var receiverReads = 0;
+            for (var key of ['year', 'month', 'day', 'hour', 'calendarId']) {
+              Object.defineProperty(receiver, key, {
+                get: function () { receiverReads++; throw new Error('receiver observed'); }
+              });
+            }
+            var log = [];
+            var fields = {};
+            for (var name of [
+              'calendar', 'timeZone', 'day', 'hour', 'microsecond',
+              'millisecond', 'minute', 'month', 'monthCode', 'nanosecond',
+              'second', 'year'
+            ]) {
+              Object.defineProperty(fields, name, {
+                get: (function (field) { return function () {
+                  log.push('get ' + field);
+                  if (field === 'day') return {
+                    valueOf: function () { log.push('day value'); return 3; }
+                  };
+                  return undefined;
+                }; })(name)
+              });
+            }
+            var options = {};
+            Object.defineProperty(options, 'overflow', {
+              get: function () {
+                log.push('get overflow');
+                return { toString: function () {
+                  log.push('overflow string'); return 'constrain';
+                } };
+              }
+            });
+            var other = $262.createRealm().global;
+            var with_ = other.Temporal.PlainDateTime.prototype.with;
+            var result = with_.call(receiver, fields, options);
+            var temporalRejects = 0;
+            var temporalObjects = [
+              new Temporal.PlainDate(2000, 5, 2),
+              new Temporal.PlainMonthDay(5, 2),
+              new Temporal.PlainTime(12),
+              new Temporal.PlainDateTime(2000, 5, 2, 12),
+              new Temporal.PlainYearMonth(2000, 5),
+              new Temporal.ZonedDateTime(0n, 'UTC')
+            ];
+            for (var temporalObject of temporalObjects) {
+              for (var forbidden of ['calendar', 'timeZone']) {
+                Object.defineProperty(temporalObject, forbidden, {
+                  get: function () { throw new Error('temporal object observed'); }
+                });
+              }
+              try { with_.call(receiver, temporalObject); }
+              catch (error) {
+                if (error instanceof other.TypeError &&
+                    error.message.indexOf('observed') < 0) temporalRejects++;
+              }
+            }
+            var brandFirst = false;
+            try { with_.call({}, { get calendar() { throw new Error('observed'); } }); }
+            catch (error) {
+              brandFirst = error instanceof other.TypeError &&
+                !(error instanceof TypeError) && error.message.indexOf('observed') < 0;
+            }
+            var constructable = true;
+            try { new with_(); } catch (_) { constructable = false; }
+            [
+              with_.name, with_.length,
+              Object.getPrototypeOf(result) === other.Temporal.PlainDateTime.prototype,
+              result.day, result.hour, receiverReads, temporalRejects,
+              brandFirst, constructable, log.join(',')
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "with|1|true|3|12|0|6|true|false|get calendar,get timeZone,get day,day value,get hour,get microsecond,get millisecond,get minute,get month,get monthCode,get nanosecond,get second,get year,get overflow,overflow string"
+        ))
+    );
+}
+
+#[test]
 fn temporal_plain_date_time_conversion_uses_plain_date_slots_at_midnight() {
     assert_eq!(
         run(r#"
