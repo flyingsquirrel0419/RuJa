@@ -93,6 +93,7 @@ jobs:
             test/built-ins/Temporal/PlainTime
             test/built-ins/Temporal/PlainDate/prototype/toPlainDateTime
             test/built-ins/Temporal/PlainYearMonth
+            test/built-ins/Temporal/PlainYearMonth/prototype/toJSON
             test/intl402/Temporal/PlainYearMonth/compare
       - name: Verify live Temporal.PlainYearMonth tooling
         working-directory: tools
@@ -102,6 +103,7 @@ jobs:
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_year_month_arithmetic_surface_is_exact_live_and_shared
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_year_month_compare_surface_is_exact_live_disjoint_and_shared
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_year_month_compare_intl_surface_is_exact_live_disjoint_and_shared
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_year_month_to_json_surface_is_exact_live_disjoint_and_shared
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_calendar_siblings_formatter_surface_is_exact
           -v
       - name: Run exact Temporal.Duration.prototype.with admission
@@ -271,6 +273,15 @@ jobs:
             "${files[@]}" | tee temporal_plain_year_month_compare_intl_result.txt
           grep -q '^RATE=25.0 PASS=1 FAIL=3 SKIP=0 TOTAL=4 RAN=4$' \
             temporal_plain_year_month_compare_intl_result.txt
+      - name: Run exact Temporal.PlainYearMonth.prototype.toJSON admission
+        run: |
+          mapfile -t files < <(grep -hEv '^(#|$)' \
+            tools/test262_temporal_plain_year_month_to_json_admission.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_plain_year_month_to_json_diagnostic.py \
+            "${files[@]}" | tee temporal_plain_year_month_to_json_result.txt
+          grep -q '^RATE=100.0 PASS=8 FAIL=0 SKIP=0 TOTAL=8 RAN=8$' \
+            temporal_plain_year_month_to_json_result.txt
       - name: Diagnose complete Temporal calendar sibling formatter surface
         run: |
           mapfile -t files < <(grep -hEv '^(#|$)' \

@@ -86,12 +86,19 @@
   returns allocation-free primitive `-1`, `+0`, or `1`, preserves method-Realm
   errors and per-argument GC/fuel boundaries, and passes all **39/39** pinned
   built-ins tests. The Intl402 companion is **1 pass / 3 non-ISO calendar
-  blockers**.
+  blockers**. Realm-local, length-0, non-constructable
+  `PlainYearMonth.prototype.toJSON` serializes hidden slots directly with
+  `calendarName = auto`, ignoring arguments, public getters, and overridden
+  `toString`. Cross-Realm branded receivers work, brand errors use the method
+  Realm, and the primitive String result allocates no GC heap object. Its
+  complete pinned direct boundary is **8/8**, with no downstream or Intl402
+  caller.
   Remaining PlainDate and PlainDateTime arithmetic, formatting, and
   conversion methods, calendar-relative and zoned Duration operations beyond
   the supported `total` boundary, remaining PlainMonthDay/PlainYearMonth
-  conversion, arithmetic beyond PlainYearMonth `add`/`subtract`,
-  serialization, locale, and non-ISO calendar methods, named IANA timezone
+  conversion, PlainMonthDay JSON serialization, arithmetic beyond
+  PlainYearMonth `add`/`subtract`, locale and non-ISO calendar methods, named
+  IANA timezone
   transitions, the remaining RFC 9557 grammar, and `Temporal.Now` methods
   remain outside the supported boundary.
 - `class`/`extends`/`super`

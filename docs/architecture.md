@@ -5212,4 +5212,31 @@ pins.
 - 장점, 단점 및 영향: hidden getter 비관찰, first-abrupt short circuit, method-Realm errors, 양쪽 argument의 observable GC/root retry, per-string fuel, allocation-free branded compare와 176-allocation rollback이 고정된다. built-ins 39/39가 통과하고 Intl402는 1 pass/3 non-ISO blocker로 분리된다. Gregorian construction/era conversion은 comparator 밖의 후속 calendar subsystem 책임이다.
 ```
 
+`Temporal.PlainYearMonth.prototype.toJSON` is a Realm-local,
+non-constructable, length-0 native function. It brand-checks the receiver,
+copies its hidden year, month, reference ISO day, and calendar identifier, and
+passes that record directly to the shared PlainYearMonth formatter with
+`calendarName` fixed to `auto`. ISO records serialize as `YYYY-MM`, omitting
+the hidden reference day and annotation. A non-ISO hidden record serializes
+the complete reference date and automatic calendar annotation.
+
+The method never reads its arguments, public accessors, or an own or inherited
+`toString`; JSON.stringify's key argument is therefore also inert. Branded
+receivers from another Realm remain valid, while incompatible-receiver
+`TypeError`s are created from the method Realm. Formatting returns a primitive
+String and performs no GC heap-object allocation or additional pin
+reservation. The function is installer allocation 175, after `compare`;
+`Temporal.Now` and `%Temporal%` move to 176 and 177. Complete namespace
+installation therefore uses 177 allocations and 176 maximum live pins.
+
+```text
+[Decision Log]
+- 목적과 의도: PlainYearMonth JSON serialization을 hidden reference record와 automatic calendar annotation에 직접 연결하면서 Realm/resource 불변식을 보존한다.
+- 기존 구현 및 제약 조건: shared formatter는 auto mode를 이미 지원했지만 public method는 option-aware toString뿐이었다. toJSON은 arguments와 user-visible getters/toString을 관찰하면 안 되며 기존 compare allocation ordinal도 보존해야 한다.
+- 검토한 주요 대안: `this.toString()` 호출, getters로 record 복원, synthetic options를 넣어 toString native를 재호출, hidden slots와 shared formatter를 직접 연결하는 방식을 검토했다.
+- 선택한 방식: brand-first hidden-slot copy 뒤 `AnnotationDisplay::Auto` formatter를 직접 호출하고 primitive String을 publish한다. 신규 function allocation은 compare 뒤 175에 배치한다.
+- 다른 대안 대신 이 방식을 선택한 이유: public 호출과 getter 복원은 override, coercion, abrupt completion 및 Realm 관찰을 추가한다. direct formatter는 reference day와 non-ISO annotation을 보존하면서 GC object/root 비용을 만들지 않는다.
+- 장점, 단점 및 영향: ignored arguments/getters/toString, cross-Realm branded receiver, method-Realm brand errors, extended year, allocation-free primitive result와 177-allocation/176-pin rollback이 고정된다. pinned direct 8/8이며 downstream built-ins와 Intl402 caller는 없다.
+```
+
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

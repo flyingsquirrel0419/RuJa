@@ -4,6 +4,27 @@
 
 ### Changed
 
+- Added Realm-local, non-constructable, length-0
+  `Temporal.PlainYearMonth.prototype.toJSON`. It brands the receiver and
+  serializes copied hidden year, month, reference ISO day, and calendar slots
+  directly with `calendarName` fixed to `auto`. ISO records omit the hidden
+  reference day and calendar annotation; non-ISO records retain both. All
+  arguments, public getters, and an overridden `toString` are ignored.
+  Cross-Realm branded receivers work in either direction, while incompatible
+  receiver `TypeError`s belong to the method Realm. The result is a primitive
+  String and allocates no GC heap object. Exact pinned direct Test262 coverage
+  is **8/8**, with no downstream built-ins or Intl402 caller. The function is
+  installer allocation 175; complete installation uses 177 allocations and
+  176 maximum live pins.
+
+  [Decision Log]
+  - 목적과 의도: PlainYearMonth JSON serialization을 hidden reference record, automatic calendar annotation, Realm 및 sandbox resource 경계까지 완결한다.
+  - 기존 구현 및 제약 조건: hidden-record formatter와 option-aware toString은 있었지만 toJSON이 없었다. public toString 호출은 override와 options를 관찰하며 broad Temporal gate는 direct 8개를 숨겼다.
+  - 검토한 주요 대안: `this.toString()` 호출, public getters로 record 재구성, toString 구현에 synthetic options 전달, hidden slots를 `calendarName = auto`로 직접 포맷하는 방식을 검토했다.
+  - 선택한 방식: receiver를 method Realm에서 brand-check한 뒤 copied hidden slots를 shared formatter의 `auto` mode로 직렬화하고 primitive String을 반환한다. 인수와 visible properties는 전혀 관찰하지 않는다.
+  - 다른 대안 대신 이 방식을 선택한 이유: public method/getter 경로는 명세에 없는 override, accessor, coercion 및 abrupt completion을 만든다. hidden direct formatting만 branded reference day와 calendar annotation 규칙을 보존한다.
+  - 장점, 단점 및 영향: ignored arguments/getters/toString, cross-Realm receiver와 method-Realm brand errors, extended year, allocation-free GC result, exact direct 8/8 및 177-allocation rollback이 재현된다. pinned downstream 및 Intl402 caller가 없어 별도 transition/blocker 수치는 없다.
+
 - Added Realm-local, non-constructable, length-2 static
   `Temporal.PlainYearMonth.compare`. It completely converts the first input
   before observing the second, then lexicographically compares the hidden

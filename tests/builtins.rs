@@ -27371,6 +27371,68 @@ fn temporal_plain_year_month_compare_roots_each_argument_across_observable_gc() 
 }
 
 #[test]
+fn temporal_plain_year_month_to_json_formats_hidden_record_and_ignores_arguments() {
+    assert_eq!(
+        run(r#"
+            var value = new Temporal.PlainYearMonth(2000, 5, 'iso8601', 17);
+            var reads = 0;
+            for (var key of ['calendarId', 'month', 'monthCode', 'year']) {
+              Object.defineProperty(value, key, {
+                get: function () { reads++; throw new Error('observed'); }
+              });
+            }
+            value.toString = function () { throw new Error('delegated'); };
+            var ignored = new Proxy({}, {
+              get: function () { throw new Error('argument observed'); }
+            });
+            [
+              Temporal.PlainYearMonth.prototype.toJSON.name,
+              Temporal.PlainYearMonth.prototype.toJSON.length,
+              value.toJSON(ignored), reads,
+              new Temporal.PlainYearMonth(-1, 8).toJSON(),
+              new Temporal.PlainYearMonth(10000, 6).toJSON(),
+              JSON.stringify({ yearMonth: value })
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "toJSON|0|2000-05|0|-000001-08|+010000-06|{\"yearMonth\":\"2000-05\"}"
+        ))
+    );
+}
+
+#[test]
+fn temporal_plain_year_month_to_json_brands_and_uses_function_realm() {
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var foreignToJSON = other.Temporal.PlainYearMonth.prototype.toJSON;
+            var localToJSON = Temporal.PlainYearMonth.prototype.toJSON;
+            var main = new Temporal.PlainYearMonth(2000, 5);
+            var foreign = new other.Temporal.PlainYearMonth(2000, 5);
+            var mainResult = foreignToJSON.call(main);
+            var foreignResult = foreignToJSON.call(foreign);
+            var localOnForeign = localToJSON.call(foreign);
+            var argumentObserved = false;
+            var ignored = new Proxy({}, {
+              get: function () { argumentObserved = true; throw new Error('observed'); }
+            });
+            var receiverRealm = false;
+            try { foreignToJSON.call(new Proxy({}, {}), ignored); } catch (error) {
+              receiverRealm = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            var nonconstructable = false;
+            try { new Temporal.PlainYearMonth.prototype.toJSON(); }
+            catch (error) { nonconstructable = error instanceof TypeError; }
+            [
+              mainResult, foreignResult, localOnForeign,
+              receiverRealm, argumentObserved, nonconstructable
+            ].join('|');
+        "#),
+        Value::String(Arc::from("2000-05|2000-05|2000-05|true|false|true"))
+    );
+}
+
+#[test]
 fn temporal_plain_time_with_merges_partial_fields_and_regulates_overflow() {
     assert_eq!(
         run(r#"

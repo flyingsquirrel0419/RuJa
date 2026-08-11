@@ -6291,7 +6291,7 @@ pub(crate) fn install_temporal_namespace_in_env(
     global: Option<&Value>,
     object_proto: Value,
 ) -> error::Result<Value> {
-    vm.try_reserve_gc_pins(175)?;
+    vm.try_reserve_gc_pins(176)?;
     let mut pin_count = 0;
     let result = (|| {
         let instant_prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
@@ -7303,6 +7303,11 @@ pub(crate) fn install_temporal_namespace_in_env(
             env,
         )?);
         pin_count += vm.pin(&plain_year_month_compare);
+        alloc_plain_year_month_native!(
+            plain_year_month_to_json,
+            "toJSON",
+            temporal_plain_year_month_to_json
+        );
 
         let Value::Object(instant_constructor_index) = instant_constructor.clone() else {
             unreachable!()
@@ -7907,6 +7912,10 @@ pub(crate) fn install_temporal_namespace_in_env(
                 props.insert(
                     PropertyKey::from("toString"),
                     data_prop(plain_year_month_to_string),
+                );
+                props.insert(
+                    PropertyKey::from("toJSON"),
+                    data_prop(plain_year_month_to_json),
                 );
                 props.insert(PropertyKey::from("with"), data_prop(plain_year_month_with));
                 props.insert(PropertyKey::from("add"), data_prop(plain_year_month_add));
@@ -12100,6 +12109,24 @@ fn temporal_plain_year_month_to_string(
     .map(Arc::<str>::from)
     .map(Value::String)
     .ok_or_else(|| Error::range("Temporal.PlainYearMonth string formatting failed"))
+}
+
+fn temporal_plain_year_month_to_json(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let (fields, calendar_identifier) = temporal_plain_year_month_slots(vm, this)?;
+    temporal::format_plain_year_month(
+        fields.year,
+        fields.month,
+        fields.reference_iso_day,
+        &calendar_identifier,
+        temporal::AnnotationDisplay::Auto,
+    )
+    .map(Arc::<str>::from)
+    .map(Value::String)
+    .ok_or_else(|| Error::range("Temporal.PlainYearMonth JSON formatting failed"))
 }
 
 fn temporal_plain_time_slots(

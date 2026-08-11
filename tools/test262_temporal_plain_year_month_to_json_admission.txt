@@ -1,0 +1,9 @@
+# Complete built-ins Temporal.PlainYearMonth.prototype.toJSON surface.
+built-ins/Temporal/PlainYearMonth/prototype/toJSON/basic.js
+built-ins/Temporal/PlainYearMonth/prototype/toJSON/branding.js
+built-ins/Temporal/PlainYearMonth/prototype/toJSON/builtin.js
+built-ins/Temporal/PlainYearMonth/prototype/toJSON/length.js
+built-ins/Temporal/PlainYearMonth/prototype/toJSON/name.js
+built-ins/Temporal/PlainYearMonth/prototype/toJSON/not-a-constructor.js
+built-ins/Temporal/PlainYearMonth/prototype/toJSON/prop-desc.js
+built-ins/Temporal/PlainYearMonth/prototype/toJSON/year-format.js

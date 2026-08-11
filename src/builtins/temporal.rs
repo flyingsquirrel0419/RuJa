@@ -1969,6 +1969,10 @@ mod tests {
             format_plain_year_month(2000, 5, 7, "gregory", AnnotationDisplay::Never).as_deref(),
             Some("2000-05-07")
         );
+        assert_eq!(
+            format_plain_year_month(2000, 5, 7, "gregory", AnnotationDisplay::Auto).as_deref(),
+            Some("2000-05-07[u-ca=gregory]")
+        );
     }
 
     #[test]

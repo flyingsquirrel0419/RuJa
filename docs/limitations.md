@@ -82,9 +82,16 @@ The following resource limits are enforced:
   directory is complete **39/39**. The Intl402 companion is **1 pass / 3
   blockers**: the passing future-calendar test confirms unsupported IDs fail
   closed, while Gregorian construction and era-field conversion prevent the
-  other three files from reaching their intended assertions. JSON
-  serialization, date conversion, remaining arithmetic/difference, locale
-  formatting, and non-ISO calendars remain unsupported.
+  other three files from reaching their intended assertions.
+  `PlainYearMonth.prototype.toJSON` is a Realm-local, length-0,
+  non-constructable method that serializes hidden slots with automatic
+  calendar annotation. Arguments, public getters, and overridden `toString`
+  are ignored; cross-Realm branded receivers work and brand failures use the
+  method Realm. Its primitive String result allocates no GC heap object. The
+  pinned direct directory is complete **8/8**, with no downstream or Intl402
+  caller. PlainMonthDay JSON serialization, date conversion, remaining
+  arithmetic/difference, locale formatting, and non-ISO calendars remain
+  unsupported.
   Realm-local `%Temporal.PlainTime%` supports six-field hidden-slot
   construction, subclassing, branded accessors, `@@toStringTag`, static
   `from` and lexicographic `compare`, hidden-record `equals`, and

@@ -15212,3 +15212,39 @@ comparison, and each String position's byte-proportional exact fuel boundary.
 - 다른 대안 대신 이 방식을 선택한 이유: prefix는 future sibling을 자동 허용하고 built-ins-only 보고는 전체 compare caller 표면을 숨긴다. Intl 전체 admission은 아직 없는 Gregorian/era object model을 지원한다고 과장한다.
 - 장점, 단점 및 영향: built-ins 39/0/39와 Intl 1/3/4, metadata/disjointness/corpus/future/result drift 및 runtime Realm/GC/fuel 계약이 독립 재현된다. calendar conversion 구현 후 세 blocker를 재실행해 admission으로 이동해야 한다.
 ```
+
+## Temporal PlainYearMonth prototype.toJSON
+
+At pinned Test262 revision
+`9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the complete built-ins
+`Temporal.PlainYearMonth.prototype.toJSON` directory contains eight files.
+Exact admission and forced execution are both **8 pass / 0 fail / 0 skip**.
+The surface covers the Realm-local method's name, length 0, property
+descriptor, nonconstruction, branding, hidden-record basic serialization, and
+extended ISO year formatting.
+
+The exact manifest freezes all eight path identities plus live features,
+includes, empty flags, and empty negative metadata. The diagnostic requires
+the complete argument set and exact per-file outcomes, rejecting duplicates,
+missing or outside-root paths, inaccessible corpora, future siblings, and
+result drift. Runtime tests separately freeze `calendarName = auto` hidden-slot
+serialization, ignored arguments/public getters/overridden `toString`,
+cross-Realm branded receivers and method-Realm brand errors, and a primitive
+String result with no GC heap-object allocation. Installer tests fix the new
+function at allocation 175 and complete installation at 177 allocations with
+176 maximum live pins.
+
+Pinned-corpus caller discovery finds no downstream built-ins file outside the
+direct directory and no Intl402 caller. This unit therefore needs no
+transition, companion, or blocker manifest; its complete owned denominator is
+the direct **8/8** surface.
+
+```text
+[Decision Log]
+- 목적과 의도: PlainYearMonth.toJSON의 complete direct denominator와 absence of downstream/Intl callers를 exact supported accounting으로 고정한다.
+- 기존 구현 및 제약 조건: broad Temporal gate가 direct 8개를 숨겼고 absent method의 TypeError만으로는 not-a-constructor 같은 expected-error fixture의 intended assertion 도달을 증명할 수 없었다. pinned corpus에는 method 외부 caller가 없다.
+- 검토한 주요 대안: toString admission에 편입, directory prefix 허용, forced aggregate 자동 수용, dedicated exact manifest와 caller absence audit을 검토했다.
+- 선택한 방식: eight-file identity와 live metadata를 독립 admission으로 freeze하고 diagnostic이 exact argument/result map을 강제한다. pinned built-ins/Intl402 caller audit의 empty 결과를 별도 경계로 기록한다.
+- 다른 대안 대신 이 방식을 선택한 이유: prefix는 future sibling을 검토 없이 허용하고 toString 편입은 own method shape, branding, nonconstruction을 분리하지 못한다. aggregate-only 결과는 wrong failure의 false positive를 숨길 수 있다.
+- 장점, 단점 및 영향: exact/forced 8/0/0, metadata/corpus/future/result drift와 runtime hidden-slot/Realm/allocation 계약이 재현된다. downstream 및 Intl402 transition 수치는 0이며 새 caller가 생기면 admission 소유권을 다시 감사해야 한다.
+```
