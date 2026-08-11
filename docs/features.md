@@ -92,11 +92,17 @@
   `toString`. Cross-Realm branded receivers work, brand errors use the method
   Realm, and the primitive String result allocates no GC heap object. Its
   complete pinned direct boundary is **8/8**, with no downstream or Intl402
-  caller.
+  caller. Realm-local, length-1, non-constructable
+  `PlainYearMonth.prototype.toPlainDate` combines the hidden ISO year/month
+  with only the input object's `day`, truncates and constrains it to the month,
+  validates Temporal limits, and creates a method-Realm intrinsic PlainDate.
+  Its complete direct boundary is **12/12**; 87 Intl402 helper callers remain
+  separately frozen behind non-ISO calendar construction/conversion.
   Remaining PlainDate and PlainDateTime arithmetic, formatting, and
   conversion methods, calendar-relative and zoned Duration operations beyond
   the supported `total` boundary, remaining PlainMonthDay/PlainYearMonth
-  conversion, PlainMonthDay JSON serialization, arithmetic beyond
+  conversion beyond the ISO `toPlainDate` bridge, PlainMonthDay JSON
+  serialization, arithmetic beyond
   PlainYearMonth `add`/`subtract`, locale and non-ISO calendar methods, named
   IANA timezone
   transitions, the remaining RFC 9557 grammar, and `Temporal.Now` methods

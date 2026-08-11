@@ -4,6 +4,29 @@
 
 ### Changed
 
+- Added Realm-local, non-constructable, length-1
+  `Temporal.PlainYearMonth.prototype.toPlainDate`. It brands the receiver
+  before argument observation, requires an object, reads only `day`, performs
+  truncating Temporal integer conversion, and always applies the method's
+  default `constrain` overflow behavior against the receiver's hidden ISO
+  year/month. Missing day and invalid or out-of-range results fail with the
+  required method-Realm errors. Receiver accessors and unrelated input fields
+  remain unobserved; the input stays rooted across getter/valueOf GC, and the
+  result uses the method Realm `%Temporal.PlainDate.prototype%`. Exact pinned
+  direct Test262 coverage is **12/12**. A separate live helper-call audit
+  freezes **87 Intl402 downstream callers**, all still blocked before this
+  method by non-ISO calendar/era/monthCode conversion. The function is
+  installer allocation 176; complete installation uses 178 allocations and
+  177 maximum live pins.
+
+  [Decision Log]
+  - 목적과 의도: PlainYearMonth의 hidden ISO year/month와 caller의 day를 명세 순서로 결합해 PlainDate bridge, Realm 및 sandbox resource 경계를 완결한다.
+  - 기존 구현 및 제약 조건: PlainYearMonth hidden record와 PlainDate allocator는 있었지만 public bridge가 없었다. 현재 calendar backend는 ISO-only이며 Intl402의 87개 helper caller는 non-ISO construction/conversion에서 먼저 실패한다.
+  - 검토한 주요 대안: public year/month getters를 읽어 PlainDate constructor 호출, generic property-bag merge 재사용, non-ISO도 ISO처럼 계산, ISO direct method와 exact downstream blocker accounting을 분리하는 방식을 검토했다.
+  - 선택한 방식: brand-first hidden-slot copy 뒤 rooted object의 `day`만 읽고 truncation, positivity, month constrain, Temporal date limits를 검사한 다음 method-Realm intrinsic PlainDate를 생성한다. non-ISO hidden records는 calendar backend가 생길 때까지 명시적으로 거부한다.
+  - 다른 대안 대신 이 방식을 선택한 이유: visible getter/constructor 왕복은 명세에 없는 관찰과 prototype 선택을 만들고 generic merge는 `day` 외 필드를 잘못 읽는다. ISO 계산을 non-ISO에 재사용하면 calendar semantics를 조용히 오계산한다.
+  - 장점, 단점 및 영향: direct 12/12, brand/order/constrain/limits, cross-Realm result/error, observable GC, root-preflight와 heap retry, exact fuel, 178-allocation rollback이 재현된다. 87개 downstream은 지원으로 admit하지 않으며 non-ISO backend 도입 뒤 실제 helper 단계까지 다시 검증해야 한다.
+
 - Added Realm-local, non-constructable, length-0
   `Temporal.PlainYearMonth.prototype.toJSON`. It brands the receiver and
   serializes copied hidden year, month, reference ISO day, and calendar slots

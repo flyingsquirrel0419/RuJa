@@ -89,7 +89,13 @@ The following resource limits are enforced:
   are ignored; cross-Realm branded receivers work and brand failures use the
   method Realm. Its primitive String result allocates no GC heap object. The
   pinned direct directory is complete **8/8**, with no downstream or Intl402
-  caller. PlainMonthDay JSON serialization, date conversion, remaining
+  caller. `PlainYearMonth.prototype.toPlainDate` supports the complete ISO
+  direct surface (**12/12**): it observes only `day`, constrains overflow,
+  preserves hidden receiver fields, and returns a method-Realm PlainDate.
+  The exact 87 Intl402 `assertPlainYearMonth(..., null)` callers remain
+  blockers because non-ISO calendar/era/monthCode construction fails before
+  the helper reaches `toPlainDate`; they are not admitted as method support.
+  PlainMonthDay JSON serialization, non-ISO date conversion, remaining
   arithmetic/difference, locale formatting, and non-ISO calendars remain
   unsupported.
   Realm-local `%Temporal.PlainTime%` supports six-field hidden-slot
@@ -726,6 +732,10 @@ guarantees are required.
   `ToTimeRecordOrMidnight` semantics, including the PlainTime hidden-slot fast
   path. Non-ISO calendar mutation remains unsupported, so the related Intl402
   epoch-year downstream caller is not admitted
+- PlainYearMonth `toPlainDate` implements complete ISO conversion and default
+  constrain semantics. Non-ISO `CalendarMergeFields`/`CalendarDateFromFields`
+  remain unavailable; the 87 pinned Intl402 helper callers therefore fail at
+  their earlier non-ISO construction/conversion step
 - Wrapper objects (`new String(x)`, `new Number(x)`, `new Boolean(x)`,
   `Object(x)`) now store the wrapped primitive, so `.valueOf()` and
   `ToPrimitive` resolve to it (`new Number(5) + 1 === 6`). Boxed-string

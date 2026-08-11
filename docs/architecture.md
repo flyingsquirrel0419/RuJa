@@ -5239,4 +5239,33 @@ installation therefore uses 177 allocations and 176 maximum live pins.
 - 장점, 단점 및 영향: ignored arguments/getters/toString, cross-Realm branded receiver, method-Realm brand errors, extended year, allocation-free primitive result와 177-allocation/176-pin rollback이 고정된다. pinned direct 8/8이며 downstream built-ins와 Intl402 caller는 없다.
 ```
 
+`Temporal.PlainYearMonth.prototype.toPlainDate` is a Realm-local,
+non-constructable, length-1 native function. Receiver branding completes
+before argument observation. The argument must be an Object; the method roots
+it before reading only `day`, leaving `calendar`, `year`, `month`, and
+`monthCode` unobserved. `day` uses the shared truncating Temporal integer
+conversion. Missing day is a `TypeError`; nonpositive or nonfinite values are
+`RangeError`s; values above the receiver's hidden ISO month length are
+constrained because this method has no overflow option.
+
+The constrained hidden `(year, month, day)` record passes through the shared
+PlainDate range validator and is allocated with the native method Realm's
+immutable `%Temporal.PlainDate.prototype%`. Root preflight happens before the
+day getter, the input remains pinned through getter/valueOf re-entry, and
+result allocation obeys the exact heap cap and retry contract. Non-ISO hidden
+records fail closed rather than applying ISO month rules to another calendar.
+The function is installer allocation 176, after `toJSON`; `Temporal.Now` and
+`%Temporal%` move to 177 and 178. Complete namespace installation uses 178
+allocations and 177 maximum live pins.
+
+```text
+[Decision Log]
+- 목적과 의도: PlainYearMonth hidden ISO record를 day-only input과 결합해 명세의 PlainDate bridge, Realm 및 resource 불변식을 구현한다.
+- 기존 구현 및 제약 조건: hidden year/month/reference-day slots와 Realm-local PlainDate allocator는 있었지만 bridge가 없었다. non-ISO CalendarMergeFields/CalendarDateFromFields backend는 아직 없다.
+- 검토한 주요 대안: public getters와 PlainDate constructor 왕복, generic YearMonth property reader 재사용, 모든 calendar에 ISO constrain 적용, ISO direct path와 explicit non-ISO rejection을 검토했다.
+- 선택한 방식: brand-first receiver slot copy, object/root preflight, `day` 단독 관찰과 truncation, hidden ISO month constrain, shared date-limit validation, method-Realm intrinsic allocation을 순서대로 수행한다.
+- 다른 대안 대신 이 방식을 선택한 이유: public/generic paths는 명세에 없는 fields와 getters를 관찰하고 constructor Realm을 잘못 선택한다. non-ISO에 ISO 규칙을 적용하면 성공처럼 보이는 잘못된 날짜를 만든다.
+- 장점, 단점 및 영향: direct 12/12, brand/order/limits, getter/valueOf GC, root/heap retry, cross-Realm result/error, exact fuel과 178-allocation rollback이 고정된다. exact 87 Intl402 callers는 non-ISO 선행 blocker로 유지되며 calendar backend 이후 재검증해야 한다.
+```
+
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

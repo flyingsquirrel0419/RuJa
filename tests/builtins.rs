@@ -27433,6 +27433,118 @@ fn temporal_plain_year_month_to_json_brands_and_uses_function_realm() {
 }
 
 #[test]
+fn temporal_plain_year_month_to_plain_date_merges_hidden_fields_in_spec_order() {
+    assert_eq!(
+        run(r#"
+            var yearMonth = new Temporal.PlainYearMonth(2023, 2, 'iso8601', 17);
+            var receiverReads = 0;
+            for (var key of ['calendarId', 'month', 'monthCode', 'year']) {
+              Object.defineProperty(yearMonth, key, {
+                get: function () { receiverReads++; throw new Error('receiver observed'); }
+              });
+            }
+            var order = [];
+            var fields = {
+              get calendar() { order.push('calendar'); throw new Error('calendar observed'); },
+              get year() { order.push('year'); throw new Error('year observed'); },
+              get month() { order.push('month'); throw new Error('month observed'); },
+              get monthCode() { order.push('monthCode'); throw new Error('monthCode observed'); },
+              get day() {
+                order.push('get day');
+                return {
+                  valueOf: function () { order.push('valueOf day'); return 29.9; }
+                };
+              }
+            };
+            var constrained = yearMonth.toPlainDate(fields);
+            var exact = new Temporal.PlainYearMonth(2002, 1).toPlainDate({ day: 22 });
+            [
+              constrained.year, constrained.month, constrained.day,
+              exact.year, exact.month, exact.day,
+              constrained.calendarId, receiverReads, order.join(',')
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "2023|2|28|2002|1|22|iso8601|0|get day,valueOf day"
+        ))
+    );
+}
+
+#[test]
+fn temporal_plain_year_month_to_plain_date_brands_first_and_uses_function_realm() {
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var foreignMethod = other.Temporal.PlainYearMonth.prototype.toPlainDate;
+            var local = new Temporal.PlainYearMonth(2000, 5);
+            var foreign = new other.Temporal.PlainYearMonth(2000, 5);
+            var foreignResult = foreignMethod.call(local, { day: 2 });
+            var localResult = Temporal.PlainYearMonth.prototype.toPlainDate.call(
+              foreign, { day: 3 }
+            );
+            var argumentObserved = false;
+            var observed = new Proxy({}, {
+              get: function () { argumentObserved = true; throw new Error('observed'); }
+            });
+            var receiverRealm = false;
+            try { foreignMethod.call({}, observed); } catch (error) {
+              receiverRealm = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            var argumentRealm = false;
+            try { foreignMethod.call(local, undefined); } catch (error) {
+              argumentRealm = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            var resultRealm = Object.getPrototypeOf(foreignResult) === other.Temporal.PlainDate.prototype;
+            var localResultRealm = Object.getPrototypeOf(localResult) === Temporal.PlainDate.prototype;
+            var nonconstructable = false;
+            try { new Temporal.PlainYearMonth.prototype.toPlainDate(); }
+            catch (error) { nonconstructable = error instanceof TypeError; }
+            [
+              foreignResult.toString(), localResult.toString(),
+              receiverRealm, argumentObserved, argumentRealm,
+              resultRealm, localResultRealm, nonconstructable
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "2000-05-02|2000-05-03|true|false|true|true|true|true"
+        ))
+    );
+}
+
+#[test]
+fn temporal_plain_year_month_to_plain_date_roots_input_across_observable_gc() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+    assert_eq!(
+        vm.run(
+            r#"
+            var fields = {
+              marker: 7,
+              get day() {
+                forceGc();
+                if (this.marker !== 7) throw new Error('lost input');
+                return {
+                  valueOf: function () { forceGc(); return 4; }
+                };
+              }
+            };
+            new Temporal.PlainYearMonth(2000, 5).toPlainDate(fields).toString();
+            "#,
+        )
+        .expect("PlainYearMonth.toPlainDate input should survive observable GC"),
+        Value::String(Arc::from("2000-05-04"))
+    );
+}
+
+#[test]
 fn temporal_plain_time_with_merges_partial_fields_and_regulates_overflow() {
     assert_eq!(
         run(r#"

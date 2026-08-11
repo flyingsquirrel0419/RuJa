@@ -15248,3 +15248,43 @@ the direct **8/8** surface.
 - 다른 대안 대신 이 방식을 선택한 이유: prefix는 future sibling을 검토 없이 허용하고 toString 편입은 own method shape, branding, nonconstruction을 분리하지 못한다. aggregate-only 결과는 wrong failure의 false positive를 숨길 수 있다.
 - 장점, 단점 및 영향: exact/forced 8/0/0, metadata/corpus/future/result drift와 runtime hidden-slot/Realm/allocation 계약이 재현된다. downstream 및 Intl402 transition 수치는 0이며 새 caller가 생기면 admission 소유권을 다시 감사해야 한다.
 ```
+
+## Temporal PlainYearMonth prototype.toPlainDate
+
+At pinned Test262 revision
+`9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the complete direct
+`Temporal.PlainYearMonth.prototype.toPlainDate` directory contains 12 files.
+Exact admission and forced execution are **12 pass / 0 fail / 0 skip**. The
+surface covers builtin shape, branding and nonconstruction, object-only
+arguments, day-only observation and conversion order, default constrain
+behavior, infinity, and both Temporal date limits. Runner and analyzer share
+the same exact path-scoped feature removal.
+
+Pinned helper-call discovery parses all 1,432
+`TemporalHelpers.assertPlainYearMonth` calls in the PlainYearMonth built-ins
+and Intl402 trees. It finds 501 calls with fewer than eight arguments, 39 with
+an explicit non-null reference day, and 892 calls in 87 files whose eighth
+argument is literal `null`. Only those 87 calls execute
+`yearMonth.toPlainDate({ day: 1 })`. Their forced result is **0 pass / 87 fail
+/ 0 skip** because every file first fails non-ISO calendar/era/monthCode
+construction with `RangeError: Invalid Temporal calendar identifier`. They
+remain an exact blocker manifest and are not removed from the shared feature
+gate.
+
+Live tooling verifies direct-directory identity, all direct/downstream
+metadata, manifest disjointness, exact helper-call categories, future and
+outside paths, inaccessible corpus, duplicate/missing diagnostic arguments,
+and per-file result drift. Runtime tests independently cover hidden receiver
+getter non-observation, day-only ordering and constrain, method-Realm
+prototype/errors, observable GC in getter/valueOf, root preflight, exact heap
+retry, installer rollback, and long-String fuel boundaries.
+
+```text
+[Decision Log]
+- 목적과 의도: toPlainDate의 complete direct denominator와 helper가 실제 호출하는 downstream non-ISO denominator를 분리해 지원 범위를 정확히 고정한다.
+- 기존 구현 및 제약 조건: broad Temporal/Intl gates가 direct 12개와 helper callers를 숨겼고 argument-not-object는 absent method TypeError로 거짓 통과했다. 87 downstream 파일은 method보다 이른 non-ISO construction/conversion에서 실패한다.
+- 검토한 주요 대안: direct directory prefix admission, aggregate pass만 검사, assertPlainYearMonth 문자열 포함 파일 전체 계상, eighth argument가 literal null인 호출만 parser로 감사하고 exact manifests로 분리하는 방식을 검토했다.
+- 선택한 방식: direct 12-path metadata를 admission하고 exact 12-pass diagnostic을 강제한다. helper arguments를 balanced scan해 87-file blocker surface를 재발견하고 forced 0/87 결과를 별도 diagnostic으로 고정한다.
+- 다른 대안 대신 이 방식을 선택한 이유: prefix와 aggregate-only 검사는 future 또는 wrong-error false positive를 숨긴다. helper 이름만 검색하면 default/non-null reference-day 호출 540개를 downstream으로 과대계상한다.
+- 장점, 단점 및 영향: direct 12/0/12와 downstream 0/87/87, live 1,432-call 분류, metadata/disjointness/corpus/result drift가 ordinary/full CI에서 재현된다. calendar backend가 생기면 87개를 재실행해 실제 toPlainDate helper 단계와 후속 withCalendar까지 검증해야 한다.
+```
