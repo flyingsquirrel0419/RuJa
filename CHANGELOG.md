@@ -11,10 +11,9 @@
   identity without allocating a result object. Branded arguments bypass public
   getters; cross-Realm/subclass values, observable GC, root failure/retry,
   abrupt identity, and long-String fuel boundaries are covered. Shared
-  Temporal monthCode conversion now performs the required `ToString`, so
-  numeric values reach parse-time `RangeError` and object `toString` results
-  are accepted. Offset conversion remains string-hint `ToPrimitive` followed
-  by a String type requirement, preserving primitive offset `TypeError`s.
+  Temporal monthCode and offset conversion use string-hint `ToPrimitive` and
+  require a String result, preserving primitive `TypeError`s while accepting
+  object `toString` results that are Strings.
   Exact pinned built-ins coverage is **36/36**; Intl402 is **1 pass / 3
   non-ISO blockers**,
   and seven downstream non-ISO callers remain exact blockers. Existing
@@ -23,10 +22,10 @@
 
   [Decision Log]
   - 목적과 의도: PlainMonthDay identity를 hidden reference ISO date와 calendar에 연결하고 complete input conversion, Realm 및 sandbox resource 경계를 완결한다.
-  - 기존 구현 및 제약 조건: shared PlainMonthDay converter는 branded/property-bag/String 경로를 제공했지만 equals가 없었다. monthCode는 ToString이 필요하지만 offset은 ToPrimitive 결과가 String이어야 하며 non-ISO calendar backend는 아직 없다.
+  - 기존 구현 및 제약 조건: shared PlainMonthDay converter는 branded/property-bag/String 경로와 strict String-valued field conversion을 제공했지만 equals가 없었고 non-ISO calendar backend는 아직 없다.
   - 검토한 주요 대안: month/day만 비교, public getters/toString 비교, equals 전용 converter 복제, shared converter와 full hidden-record 비교 및 shared ToString 수정을 검토했다.
-  - 선택한 방식: brand-first receiver slot copy 뒤 existing converter로 argument를 완전 변환하고 `(referenceISOYear, month, day, calendar)`를 비교한다. monthCode는 ToString과 fuel charging을 수행하고 offset의 strict String primitive path는 분리 유지한다.
-  - 다른 대안 대신 이 방식을 선택한 이유: month/day-only는 branded reference year 차이를 잃고 visible paths는 명세에 없는 getter/override 관찰을 만든다. converter 복제는 from/equals 의미를 분기시키며 monthCode의 primitive-String 요구는 ToString 명세와 다르다.
+  - 선택한 방식: brand-first receiver slot copy 뒤 existing converter로 argument를 완전 변환하고 `(referenceISOYear, month, day, calendar)`를 비교한다. monthCode와 offset은 string-hint ToPrimitive 결과의 String type과 byte fuel을 함께 검증한다.
+  - 다른 대안 대신 이 방식을 선택한 이유: month/day-only는 branded reference year 차이를 잃고 visible paths는 명세에 없는 getter/override 관찰을 만든다. converter 복제는 from/equals 의미를 분기시키고 generic ToString은 non-String primitive fields를 잘못 허용한다.
   - 장점, 단점 및 영향: direct 36/36, hidden getter 비관찰, property order, Realm/GC/root/fuel/allocation 불변식, String-field coercion이 재현된다. Intl 1/3과 downstream 0/7은 non-ISO backend 도입 뒤 재감사한다.
 
 - Added Realm-local, non-constructable, length-1

@@ -10464,13 +10464,13 @@ fn temporal_positive_integer_with_truncation(vm: &mut Vm, value: Value) -> error
     Ok(integer)
 }
 
-fn temporal_offset_string(vm: &mut Vm, value: Value) -> error::Result<Arc<str>> {
+fn temporal_string_primitive(vm: &mut Vm, value: Value, field: &str) -> error::Result<Arc<str>> {
     temporal_with_rooted_value(vm, value, |vm, value| {
         let primitive = vm.to_primitive_hint(value, true)?;
         let Value::String(source) = primitive else {
-            return Err(Error::type_err(
-                "Temporal offset must convert to a String".to_string(),
-            ));
+            return Err(Error::type_err(format!(
+                "Temporal {field} must convert to a String"
+            )));
         };
         vm.consume_fuel_units(source.len().min(i64::MAX as usize) as i64)?;
         Ok(source)
@@ -10478,11 +10478,7 @@ fn temporal_offset_string(vm: &mut Vm, value: Value) -> error::Result<Arc<str>> 
 }
 
 fn temporal_month_code(vm: &mut Vm, value: Value) -> error::Result<(u8, bool)> {
-    let source = temporal_with_rooted_value(vm, value, |vm, value| {
-        let source = vm.to_string(value)?;
-        vm.consume_fuel_units(source.len().min(i64::MAX as usize) as i64)?;
-        Ok(source)
-    })?;
+    let source = temporal_string_primitive(vm, value, "monthCode")?;
     let bytes = source.as_bytes();
     let leap = bytes.len() == 4 && bytes[3] == b'L';
     if !((bytes.len() == 3 || leap)
@@ -13259,7 +13255,7 @@ fn temporal_zoned_date_time_property_fields(
         let offset_nanoseconds = match vm.get_property(item, "offset")? {
             Value::Undefined => None,
             value => {
-                let source = temporal_offset_string(vm, value)?;
+                let source = temporal_string_primitive(vm, value, "offset")?;
                 Some(
                     temporal::parse_offset_string(&source)
                         .ok_or_else(|| Error::range("Invalid Temporal offset string"))?,

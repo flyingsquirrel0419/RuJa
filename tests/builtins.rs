@@ -27667,9 +27667,9 @@ fn temporal_plain_month_day_equals_compares_hidden_records_and_converts_argument
               });
             }
             var canonical = new Temporal.PlainMonthDay(11, 18);
-            var numericMonthCodeRange = false;
+            var numericMonthCodeType = false;
             try { canonical.equals({ monthCode: 5, day: 18 }); }
-            catch (error) { numericMonthCodeRange = error instanceof RangeError; }
+            catch (error) { numericMonthCodeType = error instanceof TypeError; }
             var monthCodeOrder = [];
             var coercedMonthCode = canonical.equals({
               day: 18,
@@ -27688,7 +27688,7 @@ fn temporal_plain_month_day_equals_compares_hidden_records_and_converts_argument
               canonical.equals({ month: 11, day: 18 }),
               canonical.equals('11-18'),
               canonical.equals('12-18'),
-              numericMonthCodeRange, coercedMonthCode, monthCodeOrder.join(',')
+              numericMonthCodeType, coercedMonthCode, monthCodeOrder.join(',')
             ].join('|');
         "#),
         Value::String(Arc::from(
