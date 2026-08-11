@@ -132,7 +132,15 @@
   non-ISO calendar blocker at **0/1**. Release Rust/Clippy, formatting,
   live/unavailable tooling, exact direct/Intl diagnostics, and independent
   runtime/tooling reviews pass.
-  Remaining PlainDate and PlainDateTime arithmetic and
+  PlainDateTime `add` and `subtract` also support complete ISO Duration
+  arithmetic across years through nanoseconds, constrain/reject overflow,
+  signed midnight carry, adjusted-duration sandbox validation, and fresh
+  method-Realm results. Exact direct coverage is **84/84**; 155 non-ISO
+  calendar callers and four earlier `since`/`until` downstream blockers remain
+  explicitly outside admission. Release Rust/Clippy, formatting,
+  live/unavailable tooling, exact direct/complete diagnostics, and independent
+  runtime/tooling reviews pass.
+  Remaining PlainDate arithmetic and PlainDateTime round/difference and
   conversion methods beyond these bridges, calendar-relative and zoned
   Duration operations beyond the supported `total` boundary, remaining
   PlainMonthDay/PlainYearMonth

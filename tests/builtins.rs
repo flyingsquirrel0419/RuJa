@@ -29202,6 +29202,88 @@ fn temporal_plain_date_time_date_time_bridges_are_realm_local_and_nonconstructab
 }
 
 #[test]
+fn temporal_plain_date_time_arithmetic_balances_time_and_iso_date_units() {
+    assert_eq!(
+        run(r#"
+            var start = new Temporal.PlainDateTime(
+              2020, 1, 31, 23, 30, 40, 500, 600, 700
+            );
+            var added = start.add({ months: 1, hours: 25, nanoseconds: 400 });
+            var restored = added.subtract({ months: 1, hours: 25, nanoseconds: 400 });
+            var negative = start.add({ hours: -24 });
+            var rejected = false;
+            try { start.add({ months: 1 }, { overflow: 'reject' }); }
+            catch (error) { rejected = error instanceof RangeError; }
+            [
+              added.year, added.month, added.day, added.hour, added.minute,
+              added.second, added.millisecond, added.microsecond,
+              added.nanosecond,
+              restored.year, restored.month, restored.day, restored.hour,
+              negative.year, negative.month, negative.day, negative.hour,
+              rejected
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "2020|3|2|0|30|40|500|601|100|2020|1|31|23|2020|1|30|23|true"
+        ))
+    );
+}
+
+#[test]
+fn temporal_plain_date_time_arithmetic_is_hidden_realm_local_and_ordered() {
+    assert_eq!(
+        run(r#"
+            var receiver = new Temporal.PlainDateTime(2000, 5, 2, 12);
+            var duration = new Temporal.Duration(0, 0, 0, 1, 2);
+            var reads = 0;
+            for (var key of ['year', 'month', 'day', 'hour', 'calendarId']) {
+              Object.defineProperty(receiver, key, {
+                get: function () { reads++; throw new Error('receiver getter observed'); }
+              });
+            }
+            Object.defineProperty(duration, 'days', {
+              get: function () { reads++; throw new Error('duration getter observed'); }
+            });
+            var other = $262.createRealm().global;
+            var add = other.Temporal.PlainDateTime.prototype.add;
+            var subtract = other.Temporal.PlainDateTime.prototype.subtract;
+            var added = add.call(receiver, duration);
+            var subtracted = subtract.call(receiver, duration);
+            var brandBeforeArgument = false;
+            try { add.call({}, { get days() { throw new Error('observed'); } }); }
+            catch (error) {
+              brandBeforeArgument = error instanceof other.TypeError &&
+                !(error instanceof TypeError) && error.message.indexOf('observed') < 0;
+            }
+            var optionAfterDuration = [];
+            var bag = {
+              get days() { optionAfterDuration.push('days'); return 104249991374; }
+            };
+            var options = {
+              get overflow() { optionAfterDuration.push('overflow'); return 'constrain'; }
+            };
+            try { add.call(receiver, bag, options); } catch (_) {}
+            var constructable = [];
+            for (var method of [add, subtract]) {
+              try { new method(); constructable.push(true); }
+              catch (_) { constructable.push(false); }
+            }
+            [
+              add.name, add.length, subtract.name, subtract.length,
+              Object.getPrototypeOf(added) === other.Temporal.PlainDateTime.prototype,
+              Object.getPrototypeOf(subtracted) === other.Temporal.PlainDateTime.prototype,
+              added.day, added.hour, subtracted.day, subtracted.hour,
+              reads, brandBeforeArgument, optionAfterDuration.join(','),
+              constructable.join(',')
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "add|1|subtract|1|true|true|3|14|1|10|0|true|days,overflow|false,false"
+        ))
+    );
+}
+
+#[test]
 fn temporal_plain_date_time_conversion_uses_plain_date_slots_at_midnight() {
     assert_eq!(
         run(r#"

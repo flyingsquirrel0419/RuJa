@@ -8172,6 +8172,32 @@ pub(crate) fn install_temporal_namespace_in_env(
                     data_prop(plain_date_time_with_plain_time),
                 );
             });
+        let plain_date_time_add = Value::Object(vm.new_native_function_in_env_with_gc_retry(
+            "add",
+            temporal_plain_date_time_add,
+            1,
+            env,
+        )?);
+        vm.heap
+            .with_obj(plain_date_time_prototype_index.0, |object| {
+                object
+                    .props()
+                    .lock()
+                    .insert(PropertyKey::from("add"), data_prop(plain_date_time_add));
+            });
+        let plain_date_time_subtract = Value::Object(vm.new_native_function_in_env_with_gc_retry(
+            "subtract",
+            temporal_plain_date_time_subtract,
+            1,
+            env,
+        )?);
+        vm.heap
+            .with_obj(plain_date_time_prototype_index.0, |object| {
+                object.props().lock().insert(
+                    PropertyKey::from("subtract"),
+                    data_prop(plain_date_time_subtract),
+                );
+            });
 
         vm.realm_temporal_instant_constructors
             .insert(env.0, instant_constructor);
@@ -9062,6 +9088,24 @@ fn temporal_duration_iso_date_add(
     weeks: i128,
     days: i128,
 ) -> error::Result<i128> {
+    temporal_iso_date_add(
+        date,
+        years,
+        months,
+        weeks,
+        days,
+        TemporalOverflow::Constrain,
+    )
+}
+
+fn temporal_iso_date_add(
+    date: TemporalPlainDateFields,
+    years: i128,
+    months: i128,
+    weeks: i128,
+    days: i128,
+    overflow: TemporalOverflow,
+) -> error::Result<i128> {
     let month_index = i128::from(date.year)
         .checked_mul(12)
         .and_then(|value| value.checked_add(i128::from(date.month) - 1))
@@ -9070,10 +9114,15 @@ fn temporal_duration_iso_date_add(
         .ok_or_else(|| Error::range("Temporal relative date is out of range"))?;
     let year = month_index.div_euclid(12);
     let month = month_index.rem_euclid(12) + 1;
-    let day = i128::from(date.day).min(
-        temporal::days_in_month(year, month)
-            .ok_or_else(|| Error::range("Temporal relative date is out of range"))?,
-    );
+    let maximum_day = temporal::days_in_month(year, month)
+        .ok_or_else(|| Error::range("Temporal relative date is out of range"))?;
+    let day = match overflow {
+        TemporalOverflow::Constrain => i128::from(date.day).min(maximum_day),
+        TemporalOverflow::Reject if i128::from(date.day) <= maximum_day => i128::from(date.day),
+        TemporalOverflow::Reject => {
+            return Err(Error::range("Temporal date arithmetic overflow"));
+        }
+    };
     let epoch_day = temporal::days_from_civil(year, month, day)
         .and_then(|value| value.checked_add(weeks.checked_mul(7)?))
         .and_then(|value| value.checked_add(days))
@@ -9965,6 +10014,96 @@ fn temporal_plain_date_time_with_plain_time(
     };
     let realm = vm.native_callee_closure().unwrap_or(vm.global);
     create_temporal_plain_date_time_in_realm(vm, fields, calendar_identifier, realm)
+}
+
+fn temporal_plain_date_time_add_or_subtract(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+    subtract: bool,
+) -> error::Result<Value> {
+    let (receiver, calendar_identifier) = temporal_plain_date_time_slots(vm, this)?;
+    let duration_like = args.first().cloned().unwrap_or(Value::Undefined);
+    let options = args.get(1).cloned().unwrap_or(Value::Undefined);
+    vm.try_reserve_value_roots(&[duration_like.clone(), options.clone()])?;
+    let pins = vm.pin_many(&[duration_like.clone(), options.clone()]);
+    let result = (|| {
+        let duration = to_temporal_duration_fields(vm, &duration_like)?;
+        let mut values = temporal_duration_integer_values(duration)?;
+        if subtract {
+            for value in &mut values {
+                *value = value
+                    .checked_neg()
+                    .ok_or_else(|| Error::range("Temporal.Duration fields are out of range"))?;
+            }
+        }
+        let overflow = temporal_from_overflow(vm, Some(&options))?;
+        let signed_duration = temporal_duration_fields_from_integer_values(values)?;
+        let time_nanoseconds = temporal_duration_time_nanoseconds(signed_duration)?;
+        let (day_carry, hour, minute, second, millisecond, microsecond, nanosecond) =
+            temporal::add_plain_time_with_day_carry(
+                receiver.hour,
+                receiver.minute,
+                receiver.second,
+                receiver.millisecond,
+                receiver.microsecond,
+                receiver.nanosecond,
+                time_nanoseconds,
+            )
+            .ok_or_else(|| Error::range("Temporal.PlainDateTime time arithmetic failed"))?;
+        let days = values[3]
+            .checked_add(day_carry)
+            .ok_or_else(|| Error::range("Temporal.PlainDateTime date arithmetic failed"))?;
+        temporal_duration_fields_from_integer_values([
+            values[0], values[1], values[2], days, 0, 0, 0, 0, 0, 0,
+        ])
+        .map_err(|_| Error::range("Temporal.PlainDateTime date duration is out of range"))?;
+        if calendar_identifier.as_ref() != "iso8601" {
+            return Err(Error::range(
+                "Temporal.PlainDateTime arithmetic requires the ISO 8601 calendar",
+            ));
+        }
+        let date = TemporalPlainDateFields {
+            year: receiver.year,
+            month: receiver.month,
+            day: receiver.day,
+        };
+        let epoch_day =
+            temporal_iso_date_add(date, values[0], values[1], values[2], days, overflow)?;
+        let (year, month, day) = temporal::civil_from_days(epoch_day)
+            .ok_or_else(|| Error::range("Temporal.PlainDateTime result is out of range"))?;
+        temporal_plain_date_time_fields_from_iso(temporal::IsoDateTimeFields {
+            year,
+            month,
+            day,
+            hour: i128::from(hour),
+            minute: i128::from(minute),
+            second: i128::from(second),
+            millisecond: i128::from(millisecond),
+            microsecond: i128::from(microsecond),
+            nanosecond: i128::from(nanosecond),
+        })
+    })();
+    vm.unpin_many(pins);
+    let fields = result?;
+    let realm = vm.native_callee_closure().unwrap_or(vm.global);
+    create_temporal_plain_date_time_in_realm(vm, fields, calendar_identifier, realm)
+}
+
+fn temporal_plain_date_time_add(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    temporal_plain_date_time_add_or_subtract(vm, args, this, false)
+}
+
+fn temporal_plain_date_time_subtract(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    temporal_plain_date_time_add_or_subtract(vm, args, this, true)
 }
 
 #[derive(Clone, Copy)]

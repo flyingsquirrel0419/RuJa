@@ -5492,4 +5492,41 @@ the final function is published before any subsequent VM allocation.
 - 장점, 단점 및 영향: fresh intrinsic identity, hidden getter 비관찰, complete direct input surface, exact String fuel, result allocation retry와 append-only 188..190 ordinals가 고정된다. future installer allocations before publication would require pinning the final function.
 ```
 
+### PlainDateTime ISO duration arithmetic
+
+`Temporal.PlainDateTime.prototype.add` and `subtract` are Realm-local,
+non-constructable, length-1 functions sharing one hidden-record algorithm.
+Receiver branding happens before Duration or options observation. Duration
+conversion accepts branded hidden slots, ordered property bags, and audited
+Strings. Subtraction exact-negates the converted ten-field record rather than
+calling mutable public methods. Options are rooted and `overflow` is observed
+after conversion but before arithmetic validation.
+
+Time units are normalized first. `add_plain_time_with_day_carry` returns both
+the within-day fields and a signed Euclidean day carry; the existing PlainTime
+wrapper intentionally discards only that carry. The carry is added to Duration
+days, and the resulting date-only duration is revalidated against the same
+sandbox duration bounds before calendar dispatch. ISO date addition moves
+year/month, applies constrain or reject to the original day, then adds weeks,
+days, and time carry. Final civil fields pass the complete exclusive
+PlainDateTime range validator. Non-ISO calendars fail closed until calendar
+date-add backends exist.
+
+Installer ordinals 1..190 remain unchanged. `add` is allocation 191 and is
+published immediately on the already-rooted provisional prototype before
+allocation 192 creates `subtract`; this keeps maximum simultaneous pins and
+preflight at 186 while preserving transactional Realm rollback. Both results
+use registry-captured method-Realm intrinsic prototypes; the prototype objects
+remain ordinarily mutable from JavaScript.
+
+```text
+[Decision Log]
+- 목적과 의도: ISO PlainDateTime에 calendar-aware date units와 exact wall-clock time units를 명세 순서로 결합하고 add/subtract를 독립 public methods로 완결한다.
+- 기존 구현 및 제약 조건: Duration converter와 date/time primitives는 존재했지만 modulo-day PlainTime helper는 carry를 버렸고 ISO date-add는 constrain만 지원했다. non-ISO calendar arithmetic backend는 없다.
+- 검토한 주요 대안: public Temporal 객체 조합, epoch-like flat nanoseconds, add 구현 후 subtract delegation, 별도 duplicated algorithms, shared hidden-record pipeline을 검토했다.
+- 선택한 방식: Duration/options를 순서대로 변환하고 signed time carry를 date days에 합친 뒤 adjusted date-duration을 재검증한다. ISO month/year overflow 후 week/day/carry를 적용하고 full range-check 후 method-Realm 객체를 만든다.
+- 다른 대안 대신 이 방식을 선택한 이유: public/flat paths는 observable getter·Realm·month overflow를 깨며 delegation은 mutable public method와 잘못된 brand/error 경계를 만든다. shared pipeline만 두 methods의 exact conversion, carry, overflow, resource semantics를 일치시킨다.
+- 장점, 단점 및 영향: negative floor carry, huge subsecond values, month ambiguity, exclusive limits, GC/root/heap/fuel, immediate publication과 stable 191/192 ordinals가 고정된다. non-ISO calendar dispatch는 명시적 RangeError로 남는다.
+```
+
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

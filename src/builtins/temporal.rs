@@ -1351,6 +1351,29 @@ pub(crate) fn add_plain_time(
     nanosecond: u16,
     duration_nanoseconds: i128,
 ) -> Option<(u8, u8, u8, u16, u16, u16)> {
+    let (_, hour, minute, second, millisecond, microsecond, nanosecond) =
+        add_plain_time_with_day_carry(
+            hour,
+            minute,
+            second,
+            millisecond,
+            microsecond,
+            nanosecond,
+            duration_nanoseconds,
+        )?;
+    Some((hour, minute, second, millisecond, microsecond, nanosecond))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn add_plain_time_with_day_carry(
+    hour: u8,
+    minute: u8,
+    second: u8,
+    millisecond: u16,
+    microsecond: u16,
+    nanosecond: u16,
+    duration_nanoseconds: i128,
+) -> Option<(i128, u8, u8, u8, u16, u16, u16)> {
     let time_nanoseconds =
         (((((i128::from(hour) * 60 + i128::from(minute)) * 60 + i128::from(second)) * 1_000
             + i128::from(millisecond))
@@ -1359,9 +1382,9 @@ pub(crate) fn add_plain_time(
             * 1_000)
             + i128::from(nanosecond);
     let day_nanoseconds = SECONDS_PER_DAY.checked_mul(NS_PER_SECOND)?;
-    let mut remainder = time_nanoseconds
-        .checked_add(duration_nanoseconds)?
-        .rem_euclid(day_nanoseconds);
+    let total = time_nanoseconds.checked_add(duration_nanoseconds)?;
+    let day_carry = total.div_euclid(day_nanoseconds);
+    let mut remainder = total.rem_euclid(day_nanoseconds);
 
     let result_hour = remainder / (3_600 * NS_PER_SECOND);
     remainder %= 3_600 * NS_PER_SECOND;
@@ -1375,6 +1398,7 @@ pub(crate) fn add_plain_time(
     let result_nanosecond = remainder % 1_000;
 
     Some((
+        day_carry,
         u8::try_from(result_hour).ok()?,
         u8::try_from(result_minute).ok()?,
         u8::try_from(result_second).ok()?,

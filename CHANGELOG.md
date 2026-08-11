@@ -4,6 +4,38 @@
 
 ### Changed
 
+- Added Realm-local, non-constructable, length-1
+  `Temporal.PlainDateTime.prototype.add` and `subtract`. Both brand the
+  receiver before argument observation, completely convert Duration inputs,
+  then read `overflow`. Subtraction negates every exact duration field without
+  consulting public `Duration.prototype.negated`. Shared arithmetic adds time
+  first, retains signed midnight carry, revalidates the adjusted date-duration
+  record, applies ISO year/month overflow before weeks/days/carry, and validates
+  the exclusive PlainDateTime range before allocating a fresh method-Realm
+  intrinsic. Branded Duration slots, property bags, and audited Duration
+  Strings are supported; non-ISO calendars remain fail-closed. Existing
+  ordinals 1..190 remain stable; `add` and `subtract` are allocations 191 and
+  192, complete installation uses 192 allocations, and immediate prototype
+  publication keeps the maximum live-pin preflight at 186. Pinned direct
+  Test262 is **42/42 + 42/42 = 84/84**. Complete ownership is **84 pass / 159
+  exact blockers / 243**: 148 Intl direct and seven Intl downstream files fail
+  at non-ISO calendar construction, while four built-ins downstream files fail
+  at earlier missing `since`/`until`. Exact admission/tooling, focused Rust,
+  runtime resource tests, all-target/all-feature release Rust including
+  Criterion, warnings-denied release Clippy, rustfmt/diff, Python/YAML, live
+  tooling **246/246**, corpus-unavailable tooling **246 tests / 5 skips**, and
+  direct/complete diagnostics pass. Independent GPT-5.6 runtime and
+  tooling/docs reviews are clean after adjusted-duration and full-corpus
+  ownership gaps were closed.
+
+  [Decision Log]
+  - 목적과 의도: PlainDateTime의 calendar-date와 wall-clock time 산술을 하나의 complete ISO add/subtract 경계로 구현하고 direct 84 files를 실제 지원으로 전환한다.
+  - 기존 구현 및 제약 조건: Duration 변환, PlainTime modulo-day 산술, ISO date-add, PlainDateTime range/Realm allocator는 있었지만 time helper가 day carry를 버렸고 date helper는 항상 constrain했다. non-ISO calendar backend는 아직 없다.
+  - 검토한 주요 대안: public PlainTime/PlainDate 왕복, add만 우선 구현, subtract에서 public add/negated 호출, final local nanoseconds에 전체 duration을 합산, 또는 shared hidden-record algorithm을 검토했다.
+  - 선택한 방식: hidden receiver와 exact Duration record를 복사하고 options 관찰 뒤 time을 먼저 더해 signed day carry를 얻는다. carry를 days에 합친 date-duration을 재검증한 뒤 ISO year/month overflow, weeks/days를 적용하고 최종 PlainDateTime range를 검사한다.
+  - 다른 대안 대신 이 방식을 선택한 이유: public 왕복은 getter/Realm/species를 관찰하고, 단일 method/public delegation은 두 method의 독립 brand/order 계약을 깨며, flat nanosecond 합산은 month/year와 overflow 의미를 잃는다. adjusted-duration 재검증은 time carry가 sandbox duration 한계를 우회하지 못하게 한다.
+  - 장점, 단점 및 영향: direct 84/84, exact observation order, negative floor carry, constrain/reject, huge subseconds, Realm/GC/root/heap/fuel과 append-only ordinals가 고정된다. non-ISO 155 files와 since/until downstream 4 files는 정확한 선행 오류로 남는다.
+
 - Added Realm-local, non-constructable, length-0
   `Temporal.PlainDateTime.prototype.toPlainDate`, `toPlainTime`, and
   `withPlainTime`. The two projections brand and copy hidden slots into fresh

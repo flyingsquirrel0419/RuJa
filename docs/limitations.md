@@ -41,8 +41,11 @@ The following resource limits are enforced:
   grammar. Hidden-record `equals`, static lexicographic `compare`, direct
   hidden-record `toString`/`toJSON` formatting, `toPlainDate`/`toPlainTime`
   projections, and complete PlainTime replacement through `withPlainTime` are
-  supported. Arithmetic, prototype `round`/difference operations, locale
-  formatting, and remaining conversion methods are not implemented.
+  supported. ISO `add` and `subtract` support complete Duration-like inputs,
+  all date/time units, signed time carry, and constrain/reject overflow with
+  method-Realm results. Non-ISO calendar arithmetic, prototype
+  `round`/difference operations, locale formatting, and remaining conversion
+  methods are not implemented.
   Realm-local `%Temporal.PlainDate%` supports distinct hidden-slot
   construction, subclassing, 16 ISO/calendar accessors, `@@toStringTag`,
   always-throwing `valueOf`, static `from` for branded Temporal values, ISO

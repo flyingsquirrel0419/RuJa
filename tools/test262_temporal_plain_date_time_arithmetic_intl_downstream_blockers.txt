@@ -1,0 +1,8 @@
+# Pinned Intl402 downstream PlainDateTime add blockers: 7.
+intl402/Temporal/PlainDateTime/prototype/dayOfYear/non-iso-calendar-basic.js
+intl402/Temporal/PlainDateTime/prototype/since/chinese-calendar-dates.js
+intl402/Temporal/PlainDateTime/prototype/since/dangi-calendar-dates.js
+intl402/Temporal/PlainDateTime/prototype/until/chinese-calendar-dates.js
+intl402/Temporal/PlainDateTime/prototype/until/dangi-calendar-dates.js
+intl402/Temporal/PlainDateTime/prototype/with/chinese-calendar-leap-dates.js
+intl402/Temporal/PlainDateTime/prototype/with/dangi-calendar-leap-dates.js
