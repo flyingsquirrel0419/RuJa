@@ -99,7 +99,12 @@ The following resource limits are enforced:
   (**7/7**) through hidden reference-year serialization and automatic calendar
   annotation. Its two Intl402 companion files remain exact non-ISO blockers:
   `gregory` construction fails before their toJSON assertions. No downstream
-  caller exists in the pinned corpus. Non-ISO date conversion, remaining
+  caller exists in the pinned corpus. `PlainMonthDay.prototype.toPlainDate`
+  supports the complete ISO direct directory (**12/12**): it observes only
+  `year`, constrains a hidden leap day for common years, validates exact date
+  limits, and returns a method-Realm PlainDate. Its one Intl402 companion is
+  an exact earlier `gregory` construction blocker, and the pinned corpus has
+  no downstream caller. Non-ISO date conversion, remaining
   arithmetic/difference, locale formatting, and non-ISO calendars remain
   unsupported.
   Realm-local `%Temporal.PlainTime%` supports six-field hidden-slot

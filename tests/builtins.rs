@@ -27497,6 +27497,127 @@ fn temporal_plain_year_month_to_json_brands_and_uses_function_realm() {
 }
 
 #[test]
+fn temporal_plain_month_day_to_plain_date_merges_hidden_fields_in_spec_order() {
+    assert_eq!(
+        run(r#"
+            var monthDay = new Temporal.PlainMonthDay(2, 29, 'iso8601', 1972);
+            var receiverReads = 0;
+            for (var key of ['calendarId', 'day', 'monthCode']) {
+              Object.defineProperty(monthDay, key, {
+                get: function () { receiverReads++; throw new Error('receiver observed'); }
+              });
+            }
+            var order = [];
+            var fields = {
+              get calendar() { order.push('calendar'); throw new Error('calendar observed'); },
+              get day() { order.push('day'); throw new Error('day observed'); },
+              get month() { order.push('month'); throw new Error('month observed'); },
+              get monthCode() { order.push('monthCode'); throw new Error('monthCode observed'); },
+              get year() {
+                order.push('get year');
+                return {
+                  valueOf: function () { order.push('valueOf year'); return 2023.9; }
+                };
+              }
+            };
+            var constrained = monthDay.toPlainDate(fields);
+            var exact = new Temporal.PlainMonthDay(5, 22).toPlainDate({ year: 2002 });
+            [
+              Temporal.PlainMonthDay.prototype.toPlainDate.name,
+              Temporal.PlainMonthDay.prototype.toPlainDate.length,
+              constrained.year, constrained.month, constrained.day,
+              exact.year, exact.month, exact.day,
+              constrained.calendarId, receiverReads, order.join(',')
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "toPlainDate|1|2023|2|28|2002|5|22|iso8601|0|get year,valueOf year"
+        ))
+    );
+}
+
+#[test]
+fn temporal_plain_month_day_to_plain_date_brands_first_and_uses_function_realm() {
+    assert_eq!(
+        run(r#"
+            class Derived extends Temporal.PlainMonthDay {}
+            var derivedResult = new Derived(5, 2).toPlainDate({ year: 2000 });
+            var other = $262.createRealm().global;
+            var foreignMethod = other.Temporal.PlainMonthDay.prototype.toPlainDate;
+            var local = new Temporal.PlainMonthDay(5, 2);
+            var foreign = new other.Temporal.PlainMonthDay(5, 2);
+            var foreignResult = foreignMethod.call(local, { year: 2001 });
+            var localResult = Temporal.PlainMonthDay.prototype.toPlainDate.call(
+              foreign, { year: 2002 }
+            );
+            var argumentObserved = false;
+            var observed = new Proxy({}, {
+              get: function () { argumentObserved = true; throw new Error('observed'); }
+            });
+            var receiverRealm = false;
+            try { foreignMethod.call({}, observed); } catch (error) {
+              receiverRealm = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            var argumentRealm = false;
+            try { foreignMethod.call(local, undefined); } catch (error) {
+              argumentRealm = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            var proxyRejected = false;
+            try { foreignMethod.call(new Proxy(local, {}), { year: 2000 }); }
+            catch (error) { proxyRejected = error instanceof other.TypeError; }
+            var nonconstructable = false;
+            try { new Temporal.PlainMonthDay.prototype.toPlainDate(); }
+            catch (error) { nonconstructable = error instanceof TypeError; }
+            [
+              foreignResult.toString(), localResult.toString(),
+              Object.getPrototypeOf(derivedResult) === Temporal.PlainDate.prototype,
+              !(derivedResult instanceof Derived), receiverRealm, argumentObserved,
+              argumentRealm, proxyRejected,
+              Object.getPrototypeOf(foreignResult) === other.Temporal.PlainDate.prototype,
+              Object.getPrototypeOf(localResult) === Temporal.PlainDate.prototype,
+              nonconstructable
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "2001-05-02|2002-05-02|true|true|true|false|true|true|true|true|true"
+        ))
+    );
+}
+
+#[test]
+fn temporal_plain_month_day_to_plain_date_roots_input_across_observable_gc() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+    assert_eq!(
+        vm.run(
+            r#"
+            var fields = {
+              marker: 7,
+              get year() {
+                forceGc();
+                if (this.marker !== 7) throw new Error('lost input');
+                return {
+                  valueOf: function () { forceGc(); return 2000; }
+                };
+              }
+            };
+            new Temporal.PlainMonthDay(5, 2).toPlainDate(fields).toString();
+            "#,
+        )
+        .expect("PlainMonthDay.toPlainDate input should survive observable GC"),
+        Value::String(Arc::from("2000-05-02"))
+    );
+}
+
+#[test]
 fn temporal_plain_year_month_to_plain_date_merges_hidden_fields_in_spec_order() {
     assert_eq!(
         run(r#"

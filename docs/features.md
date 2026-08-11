@@ -78,8 +78,12 @@
   components and constrain/reject overflow. PlainMonthDay also provides
   Realm-local hidden-record `toJSON` with automatic calendar annotation,
   ignored arguments/public getters, allocation-free primitive output, and a
-  complete **7/7** built-ins boundary; its two Intl402 non-ISO cases remain
-  blockers. PlainYearMonth also provides exact
+  complete **7/7** built-ins boundary. Its Realm-local hidden-record
+  `toPlainDate` reads only the input `year`, constrains the hidden ISO
+  month/day, and returns a method-Realm PlainDate across a complete **12/12**
+  direct boundary; its sole Intl402 non-ISO case remains a blocker and no
+  downstream caller exists. The two toJSON Intl402 non-ISO cases also remain
+  blockers. PlainYearMonth provides exact
   ISO year/month `add` and `subtract`, complete Duration conversion, validated
   overflow observation, lower-unit rejection, canonical reference day 1, and
   method-Realm results, plus hidden-record `equals` over year, month,

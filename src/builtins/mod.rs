@@ -6291,7 +6291,7 @@ pub(crate) fn install_temporal_namespace_in_env(
     global: Option<&Value>,
     object_proto: Value,
 ) -> error::Result<Value> {
-    vm.try_reserve_gc_pins(178)?;
+    vm.try_reserve_gc_pins(179)?;
     let mut pin_count = 0;
     let result = (|| {
         let instant_prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
@@ -7323,6 +7323,14 @@ pub(crate) fn install_temporal_namespace_in_env(
             env,
         )?);
         pin_count += vm.pin(&plain_month_day_to_json);
+        let plain_month_day_to_plain_date =
+            Value::Object(vm.new_native_function_in_env_with_gc_retry(
+                "toPlainDate",
+                temporal_plain_month_day_to_plain_date,
+                1,
+                env,
+            )?);
+        pin_count += vm.pin(&plain_month_day_to_plain_date);
 
         let Value::Object(instant_constructor_index) = instant_constructor.clone() else {
             unreachable!()
@@ -7865,6 +7873,10 @@ pub(crate) fn install_temporal_namespace_in_env(
                 props.insert(
                     PropertyKey::from("toJSON"),
                     data_prop(plain_month_day_to_json),
+                );
+                props.insert(
+                    PropertyKey::from("toPlainDate"),
+                    data_prop(plain_month_day_to_plain_date),
                 );
                 props.insert(PropertyKey::from("with"), data_prop(plain_month_day_with));
                 let mut tag = data_prop(Value::String(Arc::from("Temporal.PlainMonthDay")));
@@ -11554,6 +11566,48 @@ fn temporal_plain_month_day_to_json(
     .map(Arc::<str>::from)
     .map(Value::String)
     .ok_or_else(|| Error::range("Temporal.PlainMonthDay JSON formatting failed"))
+}
+
+fn temporal_plain_month_day_to_plain_date(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let (receiver, calendar_identifier) = temporal_plain_month_day_slots(vm, this)?;
+    let item = args.first().cloned().unwrap_or(Value::Undefined);
+    if !matches!(item, Value::Object(_)) {
+        return Err(Error::type_err(
+            "Temporal.PlainMonthDay.prototype.toPlainDate requires an object",
+        ));
+    }
+
+    vm.try_reserve_value_roots(std::slice::from_ref(&item))?;
+    let item_pins = vm.pin(&item);
+    let result = (|| {
+        if calendar_identifier.as_ref() != "iso8601" {
+            return Err(Error::range(
+                "Temporal.PlainMonthDay.prototype.toPlainDate requires a supported calendar",
+            ));
+        }
+        let year = match vm.get_property(&item, "year")? {
+            Value::Undefined => {
+                return Err(Error::type_err(
+                    "Temporal.PlainMonthDay.prototype.toPlainDate requires year",
+                ));
+            }
+            value => temporal_integer_with_truncation(vm, value)?,
+        };
+        let maximum_day = temporal_bigint_days_in_month(&year, i128::from(receiver.month))
+            .ok_or_else(|| Error::range("Temporal month is out of range"))?;
+        let day = i128::from(receiver.day).min(maximum_day);
+        let fields =
+            temporal_plain_date_fields([year, BigInt::from(receiver.month), BigInt::from(day)])
+                .ok_or_else(|| Error::range("Temporal.PlainDate fields are out of range"))?;
+        let realm = vm.native_callee_closure().unwrap_or(vm.global);
+        create_temporal_plain_date_in_realm(vm, fields, calendar_identifier.clone(), realm)
+    })();
+    vm.unpin_many(item_pins);
+    result
 }
 
 fn temporal_plain_year_month_slots(

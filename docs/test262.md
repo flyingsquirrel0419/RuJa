@@ -15322,3 +15322,40 @@ method. Thus the true downstream denominator is zero.
 - 다른 대안 대신 이 방식을 선택한 이유: prefix와 aggregate-only 결과는 future/wrong-error false positive를 숨기고 built-ins-only 보고는 Intl direct denominator를 누락한다. 후보 감사 없이 downstream 0 주장은 corpus 변화에 닫혀 있지 않다.
 - 장점, 단점 및 영향: built-ins 7/0/7, Intl 0/2/2, metadata/disjointness/corpus/future/result/error-reason drift와 downstream absence가 ordinary/full CI에서 재현된다. gregory backend 도입 뒤 두 blocker를 재실행해야 한다.
 ```
+
+## Temporal PlainMonthDay prototype.toPlainDate
+
+At pinned Test262 revision
+`9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the complete built-ins
+`Temporal.PlainMonthDay.prototype.toPlainDate` directory contains 12 files.
+Exact admission and forced execution are **12 pass / 0 fail / 0 skip**. The
+surface covers builtin shape, branding and nonconstruction, object-only
+arguments, year-only observation and conversion order, unconditional
+constrain behavior, infinity, and both Temporal date limits.
+
+The sole Intl402 companion is frozen separately at **0 pass / 1 fail / 0
+skip**. It constructs a `gregory` PlainMonthDay before testing `eraYear`
+infinity and therefore fails with the exact earlier `RangeError: Invalid
+Temporal calendar identifier`. It is not admitted as ISO method support.
+A live scan of the complete pinned `test/` tree finds only these 13 files
+containing both exact words `PlainMonthDay` and `toPlainDate`. A separate
+check extracts `TemporalHelpers.assertPlainMonthDay` and verifies that its
+body does not call the method; true downstream callers are therefore zero.
+
+Tooling verifies live path identity and metadata, admission disjointness,
+runner/analyzer parity, inaccessible corpus, future/outside paths, duplicate
+or missing diagnostic arguments, per-file result drift, and Intl failure
+reason drift. Runtime tests independently freeze hidden receiver and unrelated
+input non-observation, year conversion order, leap-day constrain, method-Realm
+prototype/errors, subclass and Proxy branding, getter/valueOf GC, root and
+heap retry, installer rollback, and long-String fuel boundaries.
+
+```text
+[Decision Log]
+- 목적과 의도: PlainMonthDay.toPlainDate의 complete ISO denominator, Intl402 non-ISO prerequisite, downstream absence를 분리해 supported boundary를 정확히 고정한다.
+- 기존 구현 및 제약 조건: broad Temporal/Intl gates가 direct 13개를 숨겼고 argument-not-object는 absent method TypeError로 거짓 통과했다. Intl 파일은 method assertion 전에 gregory construction에서 실패한다.
+- 검토한 주요 대안: directory prefix admission, aggregate pass만 검사, Intl 파일도 method 지원으로 계상, exact direct admission과 0/1 blocker 및 live caller audit을 검토했다.
+- 선택한 방식: built-ins 12-path identity와 metadata를 admit하고 exact pass diagnostic을 강제한다. Intl one-file surface는 exact RangeError blocker로 유지하고 전체 test tree의 exact-word candidates 및 assertPlainMonthDay helper body를 live corpus에서 고정한다.
+- 다른 대안 대신 이 방식을 선택한 이유: prefix와 aggregate-only 결과는 future/wrong-error false positive를 숨긴다. Intl admission은 아직 없는 non-ISO era conversion을 과장하며 caller audit 없는 downstream 0은 corpus 변화에 닫혀 있지 않다.
+- 장점, 단점 및 영향: built-ins 12/0/12, Intl 0/1/1, metadata/disjointness/corpus/future/result/error-reason drift와 downstream absence가 ordinary/full CI에서 재현된다. gregory backend 도입 뒤 blocker를 intended assertion까지 재실행해야 한다.
+```

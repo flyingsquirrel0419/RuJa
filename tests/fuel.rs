@@ -298,6 +298,43 @@ fn temporal_plain_year_month_to_plain_date_precharges_day_strings() {
 }
 
 #[test]
+fn temporal_plain_month_day_to_plain_date_precharges_year_strings() {
+    const BUDGET: i64 = 20_000;
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        globalThis.monthDayToDateFuel = new Temporal.PlainMonthDay(5, 2);
+        globalThis.monthDayToDateShort = { year: '1' };
+        globalThis.monthDayToDateLong = { year: '0'.repeat(512) + '1' };
+        "#,
+    )
+    .expect("PlainMonthDay.toPlainDate fuel fixtures should initialize");
+
+    vm.set_fuel(Some(BUDGET));
+    vm.run("monthDayToDateFuel.toPlainDate(monthDayToDateShort);")
+        .expect("short year string should convert");
+    let short_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+
+    vm.set_fuel(Some(BUDGET));
+    vm.run("monthDayToDateFuel.toPlainDate(monthDayToDateLong);")
+        .expect("long year string should convert");
+    let long_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+    assert!(long_work >= short_work + 500);
+
+    vm.set_fuel(Some(long_work - 1));
+    let error = vm
+        .run("monthDayToDateFuel.toPlainDate(monthDayToDateLong);")
+        .expect_err("N-1 fuel must abort during year conversion");
+    assert_eq!(error.kind, ruja::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+
+    vm.set_fuel(Some(long_work));
+    vm.run("monthDayToDateFuel.toPlainDate(monthDayToDateLong);")
+        .expect("exact measured fuel should convert");
+    assert_eq!(vm.fuel_remaining(), Some(0));
+}
+
+#[test]
 fn temporal_plain_date_to_plain_date_time_precharges_input_bytes() {
     const BUDGET: i64 = 10_000;
     let mut vm = Vm::new().expect("failed to initialize VM");

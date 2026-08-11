@@ -4,6 +4,26 @@
 
 ### Changed
 
+- Added Realm-local, non-constructable, length-1
+  `Temporal.PlainMonthDay.prototype.toPlainDate`. It brands before argument
+  observation, requires an object, reads only `year`, truncates it, and
+  combines it with the receiver's hidden ISO month/day using unconditional
+  constrain overflow. Receiver accessors and unrelated input fields remain
+  unobserved; getter/valueOf GC is rooted, and results use the method Realm
+  `%Temporal.PlainDate.prototype%`. Exact pinned built-ins coverage is
+  **12/12**. The sole Intl402 companion remains a non-ISO `gregory` blocker,
+  and a live candidate audit finds no downstream caller. Existing ordinals
+  remain stable; the function is allocation 178 and complete installation
+  uses 180 allocations with 179 maximum live pins.
+
+  [Decision Log]
+  - 목적과 의도: PlainMonthDay hidden ISO month/day를 year-only input과 결합해 PlainDate bridge, Realm 및 sandbox resource 경계를 완결한다.
+  - 기존 구현 및 제약 조건: hidden reference-year record와 PlainDate allocator는 있었지만 bridge가 없었다. non-ISO CalendarMergeFields/CalendarDateFromFields backend는 아직 없다.
+  - 검토한 주요 대안: public getters와 PlainDate constructor 왕복, generic property-bag merge 재사용, non-ISO도 ISO처럼 계산, ISO direct path와 explicit blocker accounting을 검토했다.
+  - 선택한 방식: brand-first slot copy 뒤 rooted object의 `year`만 truncation하고 hidden month/day를 ISO month 길이에 constrain한 다음 shared date-limit validator와 method-Realm allocator를 사용한다. non-ISO record는 명시적으로 거부한다.
+  - 다른 대안 대신 이 방식을 선택한 이유: visible/generic paths는 명세에 없는 getter와 field observation을 만들고 constructor Realm을 잘못 선택한다. ISO 규칙을 다른 calendar에 적용하면 성공처럼 보이는 잘못된 날짜가 된다.
+  - 장점, 단점 및 영향: direct 12/12, year-only order, leap-day constrain, limits, subclass/cross-Realm branding, getter/valueOf GC, root/heap retry, exact fuel과 180-allocation rollback이 재현된다. Intl 0/1은 gregory backend 이후 재감사한다.
+
 - Added Realm-local, non-constructable, length-0
   `Temporal.PlainMonthDay.prototype.toJSON`. It brands the receiver and
   serializes copied hidden reference ISO year, month, day, and calendar slots

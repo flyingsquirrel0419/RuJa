@@ -1,0 +1,2 @@
+# Exact non-ISO calendar blocker in the Intl402 toPlainDate companion directory.
+intl402/Temporal/PlainMonthDay/prototype/toPlainDate/infinity-throws-rangeerror.js
