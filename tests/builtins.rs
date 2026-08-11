@@ -29112,6 +29112,96 @@ fn temporal_plain_date_time_formatters_are_realm_local_and_nonconstructable() {
 }
 
 #[test]
+fn temporal_plain_date_time_date_time_bridges_copy_hidden_slots_and_convert_complete_inputs() {
+    assert_eq!(
+        run(r#"
+            var dateTime = new Temporal.PlainDateTime(
+              1976, 11, 18, 15, 23, 30, 123, 456, 789
+            );
+            var reads = 0;
+            for (var key of ['calendarId', 'year', 'month', 'day', 'hour',
+                             'minute', 'second', 'millisecond', 'microsecond',
+                             'nanosecond']) {
+              Object.defineProperty(dateTime, key, {
+                get: function () { reads++; throw new Error('receiver getter observed'); }
+              });
+            }
+            var brandedTime = new Temporal.PlainTime(1, 2, 3, 4, 5, 6);
+            Object.defineProperty(brandedTime, 'hour', {
+              get: function () { reads++; throw new Error('argument getter observed'); }
+            });
+            var date = dateTime.toPlainDate();
+            var time = dateTime.toPlainTime();
+            var midnight = dateTime.withPlainTime();
+            var branded = dateTime.withPlainTime(brandedTime);
+            var bag = dateTime.withPlainTime({ minute: 42, nanosecond: 9 });
+            var string = dateTime.withPlainTime(
+              'T12:34:56.987654321[UTC][u-ca=unknown]'
+            );
+            [
+              date.year, date.month, date.day, date.calendarId,
+              time.hour, time.minute, time.second, time.millisecond,
+              time.microsecond, time.nanosecond,
+              midnight.hour, midnight.minute, midnight.calendarId,
+              branded.hour, branded.minute, branded.second, branded.nanosecond,
+              bag.hour, bag.minute, bag.second, bag.nanosecond,
+              string.hour, string.minute, string.second, string.millisecond,
+              string.microsecond, string.nanosecond, string.calendarId,
+              reads
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "1976|11|18|iso8601|15|23|30|123|456|789|0|0|iso8601|1|2|3|6|0|42|0|9|12|34|56|987|654|321|iso8601|0"
+        ))
+    );
+}
+
+#[test]
+fn temporal_plain_date_time_date_time_bridges_are_realm_local_and_nonconstructable() {
+    assert_eq!(
+        run(r#"
+            var dateTime = new Temporal.PlainDateTime(2000, 5, 2, 12, 34, 56);
+            var other = $262.createRealm().global;
+            var toDate = other.Temporal.PlainDateTime.prototype.toPlainDate;
+            var toTime = other.Temporal.PlainDateTime.prototype.toPlainTime;
+            var withTime = other.Temporal.PlainDateTime.prototype.withPlainTime;
+            var date = toDate.call(dateTime);
+            var time = toTime.call(dateTime);
+            var combined = withTime.call(dateTime, { hour: 9 });
+            var brandError = false;
+            var argumentError = false;
+            try { withTime.call({}, { get hour() { throw new Error('observed'); } }); }
+            catch (error) {
+              brandError = error instanceof other.TypeError &&
+                !(error instanceof TypeError) && error.message.indexOf('observed') < 0;
+            }
+            try { withTime.call(dateTime, 1); }
+            catch (error) {
+              argumentError = error instanceof other.TypeError &&
+                !(error instanceof TypeError);
+            }
+            var constructable = [];
+            for (var method of [toDate, toTime, withTime]) {
+              try { new method(); constructable.push(true); }
+              catch (error) { constructable.push(false); }
+            }
+            [
+              toDate.name, toDate.length, toTime.name, toTime.length,
+              withTime.name, withTime.length,
+              Object.getPrototypeOf(date) === other.Temporal.PlainDate.prototype,
+              Object.getPrototypeOf(time) === other.Temporal.PlainTime.prototype,
+              Object.getPrototypeOf(combined) === other.Temporal.PlainDateTime.prototype,
+              combined.year, combined.month, combined.day, combined.hour,
+              brandError, argumentError, constructable.join(',')
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "toPlainDate|0|toPlainTime|0|withPlainTime|0|true|true|true|2000|5|2|9|true|true|false,false,false"
+        ))
+    );
+}
+
+#[test]
 fn temporal_plain_date_time_conversion_uses_plain_date_slots_at_midnight() {
     assert_eq!(
         run(r#"

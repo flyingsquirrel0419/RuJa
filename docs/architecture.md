@@ -5453,4 +5453,43 @@ allocations and preflights the 184 maximum simultaneously live pins.
 - 장점, 단점 및 영향: option getter 순서, 자정 carry, edge RangeError, hidden calendar annotation, ignored JSON arguments/override, primitive output과 stable 186/187 ordinals가 한 경계에서 유지된다. String 저장소는 host Arc이며 VM heap-object cap에는 포함되지 않는다.
 ```
 
+### PlainDateTime date/time bridges
+
+`Temporal.PlainDateTime.prototype.toPlainDate`, `toPlainTime`, and
+`withPlainTime` are Realm-local, non-constructable, length-0 native functions.
+All three brand the receiver before any argument work and copy its hidden
+record, so public date, time, and calendar getters are never observed.
+
+The projection methods create fresh method-Realm intrinsic PlainDate or
+PlainTime values directly from hidden fields. `toPlainDate` preserves the
+hidden calendar identifier; `toPlainTime` intentionally drops calendar data.
+Arguments, mutable globals, constructors, species, and receiver subclasses do
+not participate in result selection.
+
+`withPlainTime` maps missing or explicit `undefined` to midnight. Every other
+input goes through the shared complete admitted PlainTime converter: branded
+PlainTime/PlainDateTime and UTC/fixed-offset ZonedDateTime fast paths, rooted
+ordered property bags, or the audited String grammar. Named-IANA
+ZonedDateTime conversion remains unavailable until a deterministic transition
+provider exists. The converted six-field time replaces the
+receiver time while hidden date and calendar fields remain unchanged. The
+combined record passes the complete PlainDateTime range validator before a
+fresh method-Realm result is allocated. String parsing consumes one fuel unit
+per source byte; hidden projections consume no native fuel.
+
+The methods append as installer allocations 188, 189, and 190. Complete
+Temporal installation uses 190 allocations and preflights 186 maximum live
+pins. The first two functions are pinned across following function allocation;
+the final function is published before any subsequent VM allocation.
+
+```text
+[Decision Log]
+- 목적과 의도: PlainDateTime hidden date/time decomposition과 complete time replacement를 Realm, range, GC/root/fuel 경계에 직접 연결한다.
+- 기존 구현 및 제약 조건: PlainDate/PlainTime method-Realm allocators와 complete ToTemporalTime converter는 있었지만 세 public bridge가 없었다. converter는 UTC/fixed-offset ZonedDateTime만 계산하고 named-zone transition backend는 아직 없다.
+- 검토한 주요 대안: public accessors/constructors 왕복, direct methods별 converter 복제, String/property-bag subset, 또는 hidden projections와 shared complete converter 결합을 검토했다.
+- 선택한 방식: brand-first slot copy 뒤 projections는 target allocator를 직접 호출하고 withPlainTime은 undefined midnight 또는 shared converter 결과를 hidden receiver date/calendar와 결합해 range-check 후 생성한다.
+- 다른 대안 대신 이 방식을 선택한 이유: public/global 경로는 비명세 관찰과 Realm 변경을 만들며 converter 복제/부분 지원은 property order, annotation grammar, ZonedDateTime balancing을 분기시킨다.
+- 장점, 단점 및 영향: fresh intrinsic identity, hidden getter 비관찰, complete direct input surface, exact String fuel, result allocation retry와 append-only 188..190 ordinals가 고정된다. future installer allocations before publication would require pinning the final function.
+```
+
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

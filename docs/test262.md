@@ -1,5 +1,46 @@
 # test262 conformance
 
+## Temporal PlainDateTime date/time bridges
+
+Pinned Test262 `9e61c12835c5e4a3bdba93850427e6742c4f64c4`
+contains exact built-ins directories of eight `toPlainDate`, seven
+`toPlainTime`, and 37 `withPlainTime` files. Forced local execution is **8/8**,
+**7/7**, and **37/37**, combined **52 pass / 0 fail / 52**. The former
+`withPlainTime/argument-number.js` result is frozen as an absent-method
+TypeError false positive rather than baseline support.
+
+The complete direct surface covers method descriptors and branding, range-edge
+date projection, exact six-field time projection, missing/undefined midnight,
+branded PlainTime/PlainDateTime/ZonedDateTime conversion, ordered and
+defaulted property bags, complete accepted/rejected String grammar, leap
+second regulation, negative epoch/offset balancing, subclass isolation, and
+post-combination PlainDateTime limits. A pinned corpus and harness ownership
+audit finds no true downstream caller outside the three direct directories.
+One Intl402 file under the historically misnamed PlainDate path actually owns
+a PlainDateTime receiver call. Forced execution is **0 pass / 1 fail / 1** at
+the exact earlier `RangeError: Invalid Temporal calendar identifier` while
+constructing its ROC-calendar receiver.
+
+Runtime regressions independently freeze method-Realm prototypes/errors,
+hidden getter non-observation, result root reservation, exact heap-cap failure
+and GC retry, property-bag liveness across observable GC, conversion-before-
+result failure order, zero native projection fuel, and exact String-byte fuel.
+All-target/all-feature release Rust, warnings-denied release Clippy,
+rustfmt/diff, Python/YAML, live tooling **242/242**, corpus-unavailable tooling
+**242 tests / 5 skips**, direct **52/52**, and Intl **0/1** with the exact
+calendar `RangeError` pass. Independent GPT-5.6 runtime and tooling/docs
+reviews are clean after correcting the initially misclassified Intl owner.
+
+```text
+[Decision Log]
+- 목적과 의도: PlainDateTime date/time bridge 세 method의 complete direct denominator와 false-positive/downstream ownership을 정확히 고정한다.
+- 기존 구현 및 제약 조건: broad Temporal gate가 52 files를 모두 숨겼고 absent withPlainTime TypeError가 argument-number expected TypeError를 거짓 통과시켰다. 역사적으로 PlainDate 경로에 놓인 Intl 파일 하나는 실제 PlainDateTime receiver를 사용하며 non-ISO calendar 생성에서 먼저 막힌다.
+- 검토한 주요 대안: directory-prefix admission, aggregate 52-pass gate만 사용, 세 method별 tooling 복제, 또는 paired exact metadata/admission과 candidate/call ownership audit을 검토했다.
+- 선택한 방식: 세 exact directories의 52 paths와 metadata만 admit하고 forced 52/52 결과, Intl 0/1 exact-error blocker, false-positive identity, future/outside/duplicate/result drift 및 zero downstream ownership을 함께 고정한다.
+- 다른 대안 대신 이 방식을 선택한 이유: prefix/aggregate-only 정책은 future file과 wrong-error false positive를 숨긴다. 하나의 converter/allocator cluster를 세 tooling family로 나누면 ownership과 수치가 쉽게 분기된다.
+- 장점, 단점 및 영향: direct 52/52, Intl 0/1, zero downstream boundary가 runtime Realm/resource evidence와 연결된다. 새 caller나 corpus metadata가 생기면 tooling이 fail closed하여 재감사를 요구한다.
+```
+
 ## URI decoder allocation and sandbox boundary
 
 `decodeURI` and `decodeURIComponent` now scan the canonical internal string by

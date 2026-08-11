@@ -34,6 +34,9 @@ import test262_temporal_plain_date_with_calendar_siblings_downstream_diagnostic 
 import test262_temporal_plain_date_time_serialization_complete_diagnostic as temporal_plain_date_time_serialization_complete_diagnostic
 import test262_temporal_plain_date_time_serialization_diagnostic as temporal_plain_date_time_serialization_diagnostic
 import test262_temporal_plain_date_time_serialization_downstream_diagnostic as temporal_plain_date_time_serialization_downstream_diagnostic
+import test262_temporal_plain_date_time_conversions_admission as temporal_plain_date_time_conversion_admission
+import test262_temporal_plain_date_time_conversions_diagnostic as temporal_plain_date_time_conversion_diagnostic
+import test262_temporal_plain_date_time_conversions_intl_diagnostic as temporal_plain_date_time_conversion_intl_diagnostic
 import test262_temporal_plain_year_month_arithmetic_diagnostic as temporal_year_month_arithmetic_diagnostic
 import test262_temporal_plain_year_month_compare_diagnostic as temporal_year_month_compare_diagnostic
 import test262_temporal_plain_year_month_compare_intl_diagnostic as temporal_year_month_compare_intl_diagnostic
@@ -8071,6 +8074,320 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
         self.assertFalse(
             _js_temporal_plain_date_time_alias_call_indices(helper_tokens, "toJSON")
         )
+
+    def test_temporal_plain_date_time_conversion_surface_is_exact_live_and_shared(self):
+        admission = temporal_plain_date_time_conversion_admission
+        direct = admission.TEMPORAL_PLAIN_DATE_TIME_CONVERSION_FILES
+        to_date = admission.TEMPORAL_PLAIN_DATE_TIME_TO_PLAIN_DATE_FILES
+        to_time = admission.TEMPORAL_PLAIN_DATE_TIME_TO_PLAIN_TIME_FILES
+        with_time = admission.TEMPORAL_PLAIN_DATE_TIME_WITH_PLAIN_TIME_FILES
+        false_positives = (
+            admission.TEMPORAL_PLAIN_DATE_TIME_CONVERSION_PREIMPLEMENTATION_FALSE_POSITIVES
+        )
+        self.assertEqual(
+            (len(to_date), len(to_time), len(with_time), len(direct)),
+            (8, 7, 37, 52),
+        )
+        self.assertEqual(direct, to_date | to_time | with_time)
+        self.assertFalse(to_date & to_time)
+        self.assertFalse(to_date & with_time)
+        self.assertFalse(to_time & with_time)
+        self.assertEqual(
+            false_positives,
+            {
+                "built-ins/Temporal/PlainDateTime/prototype/withPlainTime/argument-number.js"
+            },
+        )
+        self.assertFalse(
+            admission.TEMPORAL_PLAIN_DATE_TIME_CONVERSION_DOWNSTREAM_FILES
+        )
+        self.assertEqual(
+            admission.TEMPORAL_PLAIN_DATE_TIME_CONVERSION_INTL_FILES,
+            {
+                "intl402/Temporal/PlainDate/prototype/withPlainTime/basic-roc.js"
+            },
+        )
+        self.assertEqual(direct, temporal_plain_date_time_conversion_diagnostic.SURFACE)
+        self.assertEqual(
+            admission.TEMPORAL_PLAIN_DATE_TIME_CONVERSION_INTL_FILES,
+            temporal_plain_date_time_conversion_intl_diagnostic.SURFACE,
+        )
+
+        for metadata_map in (
+            admission.TEMPORAL_PLAIN_DATE_TIME_CONVERSION_FEATURES,
+            admission.TEMPORAL_PLAIN_DATE_TIME_CONVERSION_INCLUDES,
+            admission.TEMPORAL_PLAIN_DATE_TIME_CONVERSION_FLAGS,
+            admission.TEMPORAL_PLAIN_DATE_TIME_CONVERSION_NEGATIVE,
+        ):
+            self.assertEqual(set(metadata_map), set(direct))
+        tools_dir = Path(__file__).resolve().parent
+        manifest = (
+            tools_dir
+            / "test262_temporal_plain_date_time_conversions_admission.txt"
+        )
+        entries = tuple(
+            line
+            for raw_line in manifest.read_text().splitlines()
+            if (line := raw_line.strip()) and not line.startswith("#")
+        )
+        self.assertEqual(entries, tuple(sorted(entries)))
+        self.assertEqual(len(entries), len(set(entries)))
+        self.assertEqual(frozenset(entries), direct)
+        intl_manifest = (
+            tools_dir
+            / "test262_temporal_plain_date_time_conversions_intl_blockers.txt"
+        )
+        intl_entries = tuple(
+            line
+            for raw_line in intl_manifest.read_text().splitlines()
+            if (line := raw_line.strip()) and not line.startswith("#")
+        )
+        self.assertEqual(intl_entries, tuple(sorted(intl_entries)))
+        self.assertEqual(len(intl_entries), len(set(intl_entries)))
+        self.assertEqual(
+            frozenset(intl_entries),
+            admission.TEMPORAL_PLAIN_DATE_TIME_CONVERSION_INTL_FILES,
+        )
+        for other_manifest in tools_dir.glob("test262_*_admission.txt"):
+            if other_manifest == manifest:
+                continue
+            existing = {
+                line
+                for raw_line in other_manifest.read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            self.assertTrue(direct.isdisjoint(existing), other_manifest.name)
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        corpus_root = test_root.parent
+        corpus_required = "TEST262" in os.environ
+        try:
+            corpus_available = corpus_root.is_dir() and all(
+                (corpus_root / root).is_dir() for root in admission.AUDIT_TREE_ROOTS
+            )
+        except OSError:
+            if corpus_required:
+                raise
+            corpus_available = False
+        if corpus_required and not corpus_available:
+            raise FileNotFoundError(corpus_root)
+        if corpus_available:
+            candidates = admission.audit_corpus(
+                corpus_root, test262_runner.parse_meta
+            )
+            self.assertEqual(len(candidates), 135)
+            for relative in direct:
+                path = test_root / relative
+                metadata = test262_runner.parse_meta(path.read_text())
+                for tool in (test262_runner, test262_analyze):
+                    self.assertTrue(
+                        tool.temporal_plain_date_time_conversion_path(path), relative
+                    )
+                    self.assertEqual(
+                        tool.temporal_plain_date_time_conversion_features(path),
+                        admission.TEMPORAL_PLAIN_DATE_TIME_CONVERSION_FEATURES[
+                            relative
+                        ],
+                    )
+                    self.assertFalse(tool.should_skip(metadata, path), relative)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = (
+                root
+                / "test/built-ins/Temporal/PlainDateTime/prototype/withPlainTime/future.js"
+            )
+            malformed = future.with_name("basic.js.bak")
+            outside = root / "test/built-ins/Temporal/Other/withPlainTime/basic.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, features in (
+                        admission.TEMPORAL_PLAIN_DATE_TIME_CONVERSION_FEATURES.items()
+                    ):
+                        path = root / "test" / relative
+                        self.assertTrue(
+                            tool.temporal_plain_date_time_conversion_path(path)
+                        )
+                        self.assertEqual(
+                            tool.temporal_plain_date_time_conversion_features(path),
+                            features,
+                        )
+                        self.assertFalse(
+                            tool.should_skip({"features": sorted(features)}, path)
+                        )
+                    for path in (future, malformed, outside, None, object()):
+                        self.assertFalse(
+                            tool.temporal_plain_date_time_conversion_path(path)
+                        )
+                        self.assertEqual(
+                            tool.temporal_plain_date_time_conversion_features(path),
+                            frozenset(),
+                        )
+                    for path in (future, malformed, outside):
+                        self.assertTrue(
+                            tool.should_skip({"features": ["Temporal"]}, path)
+                        )
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_temporal_plain_date_time_conversion_audit_is_token_aware(self):
+        admission = temporal_plain_date_time_conversion_admission
+        source = r'''
+const comment = "actual.toPlainDate()";
+const regexp = /actual\.toPlainTime\(\)/;
+const template = `ignored.withPlainTime(${actual.withPlainTime()})`;
+// ignored.toPlainDate();
+/* ignored.toPlainTime(); */
+actual.toPlainDate();
+actual?.toPlainTime?.();
+actual["with\u0050lainTime"]();
+class Hidden { ["withPlainTime"]() {} }
+'''
+        candidates = admission.candidate_stats({"synthetic.js": source})
+        counts, tokens = candidates["synthetic.js"]
+        self.assertEqual(counts[6:], (1, 1, 2))
+        self.assertEqual(
+            tuple(
+                len(admission.property_call_indices(tokens, method))
+                for method in admission.METHODS
+            ),
+            (1, 1, 2),
+        )
+        with self.assertRaisesRegex(RuntimeError, "candidate surface drifted"):
+            admission.verify_candidate_contract(candidates)
+
+        intl_path = (
+            "intl402/Temporal/PlainDate/prototype/withPlainTime/basic-roc.js"
+        )
+        intl_candidates = admission.candidate_stats(
+            {
+                intl_path: (
+                    "let value = new Temporal.PlainDateTime(2000, 1, 1); "
+                    "value.withPlainTime({ hour: 1 });"
+                )
+            }
+        )
+        self.assertEqual(
+            admission._call_ownership_rows(intl_candidates),
+            ((intl_path, "withPlainTime", 1, "PlainDateTime", "intl"),),
+        )
+
+    def test_temporal_plain_date_time_conversion_audit_fails_closed(self):
+        admission = temporal_plain_date_time_conversion_admission
+        with self.assertRaises(FileNotFoundError):
+            admission.audit_corpus(
+                "/definitely/missing/test262", test262_runner.parse_meta
+            )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            for relative in admission.AUDIT_TREE_ROOTS:
+                (root / relative).mkdir(parents=True)
+            with patch.object(
+                admission,
+                "_run_git",
+                side_effect=[
+                    admission.PINNED_TEST262_REVISION + "\n",
+                    "",
+                    "harness/future.js\n",
+                ],
+            ):
+                with self.assertRaisesRegex(RuntimeError, "sparse corpus/harness"):
+                    admission._verify_pinned_tree(root)
+            with patch.object(
+                admission.subprocess,
+                "run",
+                side_effect=subprocess.CalledProcessError(1, ["git"]),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "failed closed"):
+                    admission._run_git(root, "rev-parse", "HEAD")
+            with patch.object(
+                admission.subprocess, "Popen", side_effect=OSError("configured")
+            ):
+                with self.assertRaisesRegex(RuntimeError, "archive failed closed"):
+                    admission._pinned_candidate_sources(root)
+
+    def test_temporal_plain_date_time_conversion_diagnostic_is_exact(self):
+        diagnostic = temporal_plain_date_time_conversion_diagnostic
+        arguments = sorted(diagnostic.SURFACE)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "test").mkdir()
+            original_root = diagnostic.test262_runner.TEST262
+            diagnostic.test262_runner.TEST262 = str(root)
+            try:
+                with (
+                    patch.object(diagnostic, "audit_corpus"),
+                    patch.object(
+                        diagnostic.test262_runner, "run_test", return_value="pass"
+                    ),
+                ):
+                    diagnostic.verify_expected_results(arguments)
+                    for invalid in (
+                        arguments[:-1],
+                        arguments[:-1] + [arguments[0]],
+                        arguments + ["built-ins/Temporal/Other/future.js"],
+                    ):
+                        with self.assertRaisesRegex(
+                            RuntimeError, "exact frozen 52-file surface"
+                        ):
+                            diagnostic.verify_expected_results(invalid)
+                with (
+                    patch.object(diagnostic, "audit_corpus"),
+                    patch.object(
+                        diagnostic.test262_runner, "run_test", return_value="fail"
+                    ),
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "results drifted"):
+                        diagnostic.verify_expected_results(arguments)
+            finally:
+                diagnostic.test262_runner.TEST262 = original_root
+
+        intl_diagnostic = temporal_plain_date_time_conversion_intl_diagnostic
+        intl_arguments = sorted(intl_diagnostic.SURFACE)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "test").mkdir()
+            original_root = intl_diagnostic.test262_runner.TEST262
+            intl_diagnostic.test262_runner.TEST262 = str(root)
+            try:
+                with (
+                    patch.object(intl_diagnostic, "audit_corpus"),
+                    patch.object(
+                        intl_diagnostic,
+                        "_run_with_diagnostics",
+                        return_value=(
+                            "fail",
+                            (
+                                "RangeError: Invalid Temporal calendar identifier (at line 1)",
+                                "RangeError: Invalid Temporal calendar identifier (at line 2)",
+                            ),
+                        ),
+                    ),
+                ):
+                    intl_diagnostic.verify_expected_results(intl_arguments)
+                    for invalid in (
+                        [],
+                        intl_arguments + [intl_arguments[0]],
+                        ["intl402/Temporal/Other/future.js"],
+                    ):
+                        with self.assertRaisesRegex(
+                            RuntimeError, "exact frozen surface"
+                        ):
+                            intl_diagnostic.verify_expected_results(invalid)
+                with (
+                    patch.object(intl_diagnostic, "audit_corpus"),
+                    patch.object(
+                        intl_diagnostic,
+                        "_run_with_diagnostics",
+                        return_value=("fail", ("TypeError: wrong",)),
+                    ),
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "failure reasons drifted"):
+                        intl_diagnostic.verify_expected_results(intl_arguments)
+            finally:
+                intl_diagnostic.test262_runner.TEST262 = original_root
 
     def test_temporal_plain_date_time_from_manifest_is_exact_live_disjoint_and_shared(self):
         files = TEMPORAL_PLAIN_DATE_TIME_FROM_FILES

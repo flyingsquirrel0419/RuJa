@@ -1,0 +1,2 @@
+# Pinned Intl402 PlainDateTime.withPlainTime non-ISO blocker: 0 pass / 1 fail.
+intl402/Temporal/PlainDate/prototype/withPlainTime/basic-roc.js

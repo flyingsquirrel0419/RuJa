@@ -5,6 +5,40 @@
 ### Changed
 
 - Added Realm-local, non-constructable, length-0
+  `Temporal.PlainDateTime.prototype.toPlainDate`, `toPlainTime`, and
+  `withPlainTime`. The two projections brand and copy hidden slots into fresh
+  method-Realm PlainDate/PlainTime intrinsics without observing arguments,
+  public getters, constructors, or species. `withPlainTime` brands first,
+  treats missing or `undefined` input as midnight, otherwise reuses the
+  complete admitted PlainTime converter for branded PlainTime/PlainDateTime,
+  UTC/fixed-offset ZonedDateTime values, ordered property bags, and audited
+  strings. Named-IANA ZonedDateTime conversion remains blocked on a transition
+  provider. It
+  preserves the receiver's hidden date/calendar, replaces all six time fields,
+  and revalidates the complete PlainDateTime range before method-Realm result
+  allocation. Existing ordinals 1..187 remain stable; the methods are
+  allocations 188, 189, and 190, complete installation uses 190 allocations,
+  and preflight covers 186 maximum live pins. Exact local forced execution is
+  **8/8**, **7/7**, and **37/37**, combined **52/52**, with no true downstream
+  caller. One Intl402 ROC-calendar caller remains **0/1** at the exact earlier
+  non-ISO calendar `RangeError`. Direct tests cover result-root failure, exact heap-cap GC
+  retry, observable property-bag GC, conversion-before-result failure, zero
+  projection fuel, and exact String-byte fuel. All-target/all-feature release
+  Rust, warnings-denied release Clippy, rustfmt/diff, Python/YAML, live tooling
+  **242/242**, corpus-unavailable tooling **242 tests / 5 skips**, direct
+  **52/52**, and Intl blocker **0/1** with the exact error all pass. Independent
+  GPT-5.6 runtime and tooling/docs reviews are clean after the Intl ownership
+  correction.
+
+  [Decision Log]
+  - 목적과 의도: PlainDateTime hidden record를 date/time intrinsic으로 분해하고 complete ToTemporalTime 결과로 재조합하는 세 public bridge를 하나의 Realm/resource 계약으로 완결한다.
+  - 기존 구현 및 제약 조건: PlainDate/PlainTime allocators와 branded/property-bag/String/ZonedDateTime PlainTime converter는 있었지만 PlainDateTime public projections/replacement가 없었다. non-ISO arithmetic과 named-zone resolution은 여전히 별도 backend 과제다.
+  - 검토한 주요 대안: public getters와 constructors 왕복, 세 method를 별도 단위로 추가, withPlainTime에서 String/property-bag 일부만 지원, 또는 hidden projection과 shared complete converter를 함께 연결하는 방식을 검토했다.
+  - 선택한 방식: receiver brand 뒤 hidden date/time/calendar를 복사하고 projection은 method-Realm allocator에 직접 전달한다. withPlainTime은 undefined만 midnight로 처리하고 다른 값은 기존 complete converter를 거친 뒤 새 hidden record를 range-check하여 생성한다.
+  - 다른 대안 대신 이 방식을 선택한 이유: visible/global paths는 getter/species/constructor 관찰과 잘못된 Realm을 만들고, 부분 converter는 37-file direct surface의 String grammar, ZonedDateTime balancing, property order를 거짓 지원한다. 세 method는 decomposition/recomposition이라는 하나의 coherent dependency boundary다.
+  - 장점, 단점 및 영향: direct 52-file surface, exact Intl 0/1 non-ISO blocker, brand/order/range, hidden getter 비관찰, fresh method-Realm results, GC/root/heap/fuel과 stable append-only ordinals가 함께 고정된다. 별도 date-time arithmetic은 구현하지 않으며 다음 단위는 고레버리지 add/subtract cluster다.
+
+- Added Realm-local, non-constructable, length-0
   `Temporal.PlainDateTime.prototype.toString` and `toJSON`. Both methods brand
   the receiver before other work and format directly from hidden ISO and
   calendar slots. `toString` roots its options object, then reads

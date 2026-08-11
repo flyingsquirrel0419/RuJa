@@ -121,8 +121,19 @@
   with seven non-ISO Intl blockers and one earlier-arithmetic downstream
   blocker. Local release Rust, warnings-denied Clippy, formatting, and live
   tooling gates pass; remote CI verification follows the pushed commit.
+  PlainDateTime also provides hidden-slot `toPlainDate` and `toPlainTime`
+  projections plus `withPlainTime` recomposition. Projections ignore arguments
+  and create fresh method-Realm intrinsics; recomposition accepts the complete
+  admitted PlainTime branded/property-bag/String surface plus UTC/fixed-offset
+  ZonedDateTime values, defaults undefined to midnight, preserves hidden
+  date/calendar fields, and rechecks the combined range. Named-IANA zones stay
+  blocked on transition data. Exact local direct coverage is **52/52** with no
+  downstream caller; one Intl402 ROC-calendar caller remains an exact earlier
+  non-ISO calendar blocker at **0/1**. Release Rust/Clippy, formatting,
+  live/unavailable tooling, exact direct/Intl diagnostics, and independent
+  runtime/tooling reviews pass.
   Remaining PlainDate and PlainDateTime arithmetic and
-  conversion methods beyond these ISO bridges, calendar-relative and zoned
+  conversion methods beyond these bridges, calendar-relative and zoned
   Duration operations beyond the supported `total` boundary, remaining
   PlainMonthDay/PlainYearMonth
   conversion beyond the ISO `toPlainDate` bridge, arithmetic beyond

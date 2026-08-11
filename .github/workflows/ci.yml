@@ -82,6 +82,9 @@ jobs:
             test/language/comments
             test/language/white-space
             test/language/punctuators
+            test/built-ins/Temporal/PlainDateTime/prototype/toPlainDate
+            test/built-ins/Temporal/PlainDateTime/prototype/toPlainTime
+            test/built-ins/Temporal/PlainDateTime/prototype/withPlainTime
             test/built-ins/Temporal/Duration/prototype/abs
             test/built-ins/Temporal/Duration/prototype/negated
             test/built-ins/Temporal/Duration/prototype/with
@@ -133,6 +136,10 @@ jobs:
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_sibling_conversions_are_exact_live_and_shared
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_with_calendar_siblings_are_exact_live_and_shared
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_time_serialization_is_exact_live_and_shared
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_time_conversion_surface_is_exact_live_and_shared
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_time_conversion_audit_is_token_aware
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_time_conversion_audit_fails_closed
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_time_conversion_diagnostic_is_exact
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_calendar_siblings_formatter_surface_is_exact
           -v
       - name: Run exact Temporal.Duration.prototype.with admission
@@ -450,6 +457,26 @@ jobs:
             "${files[@]}" | tee temporal_plain_date_time_serialization_downstream_result.txt
           grep -q '^RATE=0.0 PASS=0 FAIL=1 SKIP=0 TOTAL=1 RAN=1$' \
             temporal_plain_date_time_serialization_downstream_result.txt
+      - name: Require exact Temporal.PlainDateTime conversions (52/52)
+        run: |
+          mapfile -t files < <(grep -hEv '^(#|$)' \
+            tools/test262_temporal_plain_date_time_conversions_admission.txt)
+          test "${#files[@]}" -eq 52
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_plain_date_time_conversions_diagnostic.py \
+            "${files[@]}" | tee temporal_plain_date_time_conversions_result.txt
+          grep -q '^RATE=100.0 PASS=52 FAIL=0 SKIP=0 TOTAL=52 RAN=52$' \
+            temporal_plain_date_time_conversions_result.txt
+      - name: Require exact Temporal.PlainDateTime conversion Intl blocker (0/1)
+        run: |
+          mapfile -t files < <(grep -hEv '^(#|$)' \
+            tools/test262_temporal_plain_date_time_conversions_intl_blockers.txt)
+          test "${#files[@]}" -eq 1
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_plain_date_time_conversions_intl_diagnostic.py \
+            "${files[@]}" | tee temporal_plain_date_time_conversions_intl_result.txt
+          grep -q '^RATE=0.0 PASS=0 FAIL=1 SKIP=0 TOTAL=1 RAN=1$' \
+            temporal_plain_date_time_conversions_intl_result.txt
       - name: Run exact Temporal.PlainYearMonth.prototype.toPlainDate admission
         run: |
           mapfile -t files < <(grep -hEv '^(#|$)' \

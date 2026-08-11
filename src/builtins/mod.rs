@@ -6291,7 +6291,7 @@ pub(crate) fn install_temporal_namespace_in_env(
     global: Option<&Value>,
     object_proto: Value,
 ) -> error::Result<Value> {
-    vm.try_reserve_gc_pins(184)?;
+    vm.try_reserve_gc_pins(186)?;
     let mut pin_count = 0;
     let result = (|| {
         let instant_prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
@@ -8133,6 +8133,45 @@ pub(crate) fn install_temporal_namespace_in_env(
                     data_prop(plain_date_time_to_json),
                 );
             });
+        let plain_date_time_to_plain_date =
+            Value::Object(vm.new_native_function_in_env_with_gc_retry(
+                "toPlainDate",
+                temporal_plain_date_time_to_plain_date,
+                0,
+                env,
+            )?);
+        pin_count += vm.pin(&plain_date_time_to_plain_date);
+        let plain_date_time_to_plain_time =
+            Value::Object(vm.new_native_function_in_env_with_gc_retry(
+                "toPlainTime",
+                temporal_plain_date_time_to_plain_time,
+                0,
+                env,
+            )?);
+        pin_count += vm.pin(&plain_date_time_to_plain_time);
+        let plain_date_time_with_plain_time =
+            Value::Object(vm.new_native_function_in_env_with_gc_retry(
+                "withPlainTime",
+                temporal_plain_date_time_with_plain_time,
+                0,
+                env,
+            )?);
+        vm.heap
+            .with_obj(plain_date_time_prototype_index.0, |object| {
+                let mut props = object.props().lock();
+                props.insert(
+                    PropertyKey::from("toPlainDate"),
+                    data_prop(plain_date_time_to_plain_date),
+                );
+                props.insert(
+                    PropertyKey::from("toPlainTime"),
+                    data_prop(plain_date_time_to_plain_time),
+                );
+                props.insert(
+                    PropertyKey::from("withPlainTime"),
+                    data_prop(plain_date_time_with_plain_time),
+                );
+            });
 
         vm.realm_temporal_instant_constructors
             .insert(env.0, instant_constructor);
@@ -9861,6 +9900,71 @@ fn temporal_plain_date_time_to_json(
         temporal::InstantRoundingMode::Trunc,
         temporal::AnnotationDisplay::Auto,
     )
+}
+
+fn temporal_plain_date_time_to_plain_date(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let (fields, calendar_identifier) = temporal_plain_date_time_slots(vm, this)?;
+    let date = TemporalPlainDateFields {
+        year: fields.year,
+        month: fields.month,
+        day: fields.day,
+    };
+    let realm = vm.native_callee_closure().unwrap_or(vm.global);
+    create_temporal_plain_date_in_realm(vm, date, calendar_identifier, realm)
+}
+
+fn temporal_plain_date_time_to_plain_time(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let (fields, _) = temporal_plain_date_time_slots(vm, this)?;
+    let time = TemporalPlainTimeFields {
+        hour: fields.hour,
+        minute: fields.minute,
+        second: fields.second,
+        millisecond: fields.millisecond,
+        microsecond: fields.microsecond,
+        nanosecond: fields.nanosecond,
+    };
+    let realm = vm.native_callee_closure().unwrap_or(vm.global);
+    create_temporal_plain_time_in_realm(vm, time, realm)
+}
+
+fn temporal_plain_date_time_with_plain_time(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let (receiver, calendar_identifier) = temporal_plain_date_time_slots(vm, this)?;
+    let time = match args.first() {
+        None | Some(Value::Undefined) => TemporalPlainTimeFields {
+            hour: 0,
+            minute: 0,
+            second: 0,
+            millisecond: 0,
+            microsecond: 0,
+            nanosecond: 0,
+        },
+        Some(value) => to_temporal_plain_time_fields(vm, value)?,
+    };
+    let fields = TemporalPlainDateTimeFields {
+        year: receiver.year,
+        month: receiver.month,
+        day: receiver.day,
+        hour: time.hour,
+        minute: time.minute,
+        second: time.second,
+        millisecond: time.millisecond,
+        microsecond: time.microsecond,
+        nanosecond: time.nanosecond,
+    };
+    let realm = vm.native_callee_closure().unwrap_or(vm.global);
+    create_temporal_plain_date_time_in_realm(vm, fields, calendar_identifier, realm)
 }
 
 #[derive(Clone, Copy)]

@@ -38,10 +38,11 @@ The following resource limits are enforced:
   hidden-slot construction, subclassing, 22 ISO/calendar accessors,
   `@@toStringTag`, always-throwing `valueOf`, and static `from` for branded
   PlainDateTime/ZonedDateTime values, ISO property bags, and the audited String
-  grammar. Hidden-record `equals`, static lexicographic `compare`, and direct
-  hidden-record `toString`/`toJSON` formatting are supported. Arithmetic,
-  prototype `round`/difference operations, locale formatting, and remaining
-  conversion methods are not implemented.
+  grammar. Hidden-record `equals`, static lexicographic `compare`, direct
+  hidden-record `toString`/`toJSON` formatting, `toPlainDate`/`toPlainTime`
+  projections, and complete PlainTime replacement through `withPlainTime` are
+  supported. Arithmetic, prototype `round`/difference operations, locale
+  formatting, and remaining conversion methods are not implemented.
   Realm-local `%Temporal.PlainDate%` supports distinct hidden-slot
   construction, subclassing, 16 ISO/calendar accessors, `@@toStringTag`,
   always-throwing `valueOf`, static `from` for branded Temporal values, ISO
