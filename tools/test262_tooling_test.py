@@ -18,6 +18,8 @@ import test262_temporal_calendar_siblings_from_diagnostic as temporal_sibling_fr
 import test262_temporal_calendar_siblings_formatter_surface_diagnostic as temporal_sibling_formatter_diagnostic
 import test262_temporal_calendar_siblings_to_string_diagnostic as temporal_sibling_to_string_diagnostic
 import test262_temporal_calendar_siblings_with_diagnostic as temporal_sibling_with_diagnostic
+import test262_temporal_plain_month_day_to_json_diagnostic as temporal_month_day_to_json_diagnostic
+import test262_temporal_plain_month_day_to_json_intl_diagnostic as temporal_month_day_to_json_intl_diagnostic
 import test262_temporal_plain_year_month_arithmetic_diagnostic as temporal_year_month_arithmetic_diagnostic
 import test262_temporal_plain_year_month_compare_diagnostic as temporal_year_month_compare_diagnostic
 import test262_temporal_plain_year_month_compare_intl_diagnostic as temporal_year_month_compare_intl_diagnostic
@@ -317,6 +319,22 @@ from test262_temporal_calendar_siblings_with_admission import (
     TEMPORAL_CALENDAR_SIBLINGS_WITH_FLAGS,
     TEMPORAL_CALENDAR_SIBLINGS_WITH_INCLUDES,
     TEMPORAL_CALENDAR_SIBLINGS_WITH_NEGATIVE,
+)
+from test262_temporal_plain_month_day_to_json_admission import (
+    TEMPORAL_PLAIN_MONTH_DAY_TO_JSON_FEATURES,
+    TEMPORAL_PLAIN_MONTH_DAY_TO_JSON_FILES,
+    TEMPORAL_PLAIN_MONTH_DAY_TO_JSON_FLAGS,
+    TEMPORAL_PLAIN_MONTH_DAY_TO_JSON_INCLUDES,
+    TEMPORAL_PLAIN_MONTH_DAY_TO_JSON_NEGATIVE,
+)
+from test262_temporal_plain_month_day_to_json_intl_admission import (
+    TEMPORAL_PLAIN_MONTH_DAY_TO_JSON_INTL_BLOCKERS,
+    TEMPORAL_PLAIN_MONTH_DAY_TO_JSON_INTL_FEATURES,
+    TEMPORAL_PLAIN_MONTH_DAY_TO_JSON_INTL_FILES,
+    TEMPORAL_PLAIN_MONTH_DAY_TO_JSON_INTL_FLAGS,
+    TEMPORAL_PLAIN_MONTH_DAY_TO_JSON_INTL_INCLUDES,
+    TEMPORAL_PLAIN_MONTH_DAY_TO_JSON_INTL_NEGATIVE,
+    TEMPORAL_PLAIN_MONTH_DAY_TO_JSON_INTL_SURFACE,
 )
 from test262_temporal_plain_year_month_arithmetic_admission import (
     TEMPORAL_PLAIN_YEAR_MONTH_ARITHMETIC_BLOCKERS,
@@ -1420,6 +1438,43 @@ def _plain_year_month_null_reference_audit(test_root):
                 else:
                     counts["non_null"] += 1
     return frozenset(files), counts
+
+
+_PLAIN_MONTH_DAY_TO_JSON_OUTSIDE_CANDIDATES = frozenset(
+    {
+        "built-ins/Temporal/PlainMonthDay/from/basic.js",
+        (
+            "intl402/DateTimeFormat/prototype/formatRangeToParts/"
+            "temporal-objects-not-overlapping-options.js"
+        ),
+        (
+            "intl402/DateTimeFormat/prototype/formatToParts/"
+            "temporal-objects-not-overlapping-options.js"
+        ),
+        (
+            "intl402/Temporal/PlainMonthDay/prototype/toLocaleString/"
+            "lone-options-accepted.js"
+        ),
+    }
+)
+
+
+def _plain_month_day_to_json_candidate_audit(test_root):
+    roots = (
+        test_root / "built-ins/Temporal/PlainMonthDay",
+        test_root / "intl402/Temporal/PlainMonthDay",
+        test_root / "intl402/DateTimeFormat/prototype/formatRangeToParts",
+        test_root / "intl402/DateTimeFormat/prototype/formatToParts",
+    )
+    candidates = set()
+    for root in roots:
+        for path in root.rglob("*.js"):
+            source = path.read_text()
+            if "PlainMonthDay" in source and (
+                "toJSON" in source or "JSON.stringify" in source
+            ):
+                candidates.add(path.relative_to(test_root).as_posix())
+    return frozenset(candidates)
 
 
 class ModuleCoreAdmissionTests(unittest.TestCase):
@@ -8244,6 +8299,301 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                         )
             finally:
                 diagnostic_runner.TEST262 = original_root
+
+    def test_temporal_plain_month_day_to_json_surface_is_exact_live_disjoint_and_shared(self):
+        files = TEMPORAL_PLAIN_MONTH_DAY_TO_JSON_FILES
+        self.assertEqual(files, temporal_month_day_to_json_diagnostic.SURFACE)
+        self.assertEqual(len(files), 7)
+        for metadata_map in (
+            TEMPORAL_PLAIN_MONTH_DAY_TO_JSON_FEATURES,
+            TEMPORAL_PLAIN_MONTH_DAY_TO_JSON_INCLUDES,
+            TEMPORAL_PLAIN_MONTH_DAY_TO_JSON_FLAGS,
+            TEMPORAL_PLAIN_MONTH_DAY_TO_JSON_NEGATIVE,
+        ):
+            self.assertEqual(set(metadata_map), set(files))
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        directory = test_root / "built-ins/Temporal/PlainMonthDay/prototype/toJSON"
+        corpus_required = "TEST262" in os.environ
+        try:
+            live_files = (
+                {
+                    path.relative_to(test_root).as_posix()
+                    for path in directory.glob("*.js")
+                    if "_FIXTURE" not in path.name
+                }
+                if directory.is_dir()
+                else None
+            )
+        except OSError:
+            if corpus_required:
+                raise
+            live_files = None
+        if corpus_required and live_files is None:
+            raise FileNotFoundError(directory)
+        if live_files is not None:
+            self.assertEqual(live_files, set(files))
+            for relative in files:
+                path = test_root / relative
+                metadata = test262_runner.parse_meta(path.read_text())
+                for key, expected in (
+                    ("features", TEMPORAL_PLAIN_MONTH_DAY_TO_JSON_FEATURES[relative]),
+                    ("includes", TEMPORAL_PLAIN_MONTH_DAY_TO_JSON_INCLUDES[relative]),
+                    ("flags", TEMPORAL_PLAIN_MONTH_DAY_TO_JSON_FLAGS[relative]),
+                ):
+                    self.assertEqual(
+                        frozenset(metadata.get(key, [])), expected, relative
+                    )
+                self.assertEqual(
+                    metadata.get("negative"),
+                    TEMPORAL_PLAIN_MONTH_DAY_TO_JSON_NEGATIVE[relative],
+                    relative,
+                )
+                for tool in (test262_runner, test262_analyze):
+                    self.assertTrue(
+                        tool.temporal_plain_month_day_to_json_path(path), relative
+                    )
+                    self.assertEqual(
+                        tool.temporal_plain_month_day_to_json_features(path),
+                        TEMPORAL_PLAIN_MONTH_DAY_TO_JSON_FEATURES[relative],
+                    )
+                    self.assertFalse(tool.should_skip(metadata, path), relative)
+
+        tools_dir = Path(__file__).resolve().parent
+        for manifest in tools_dir.glob("test262_*_admission.txt"):
+            if manifest.name == "test262_temporal_plain_month_day_to_json_admission.txt":
+                continue
+            existing = {
+                line
+                for raw_line in manifest.read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            self.assertTrue(files.isdisjoint(existing), manifest.name)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = root / (
+                "test/built-ins/Temporal/PlainMonthDay/prototype/toJSON/future.js"
+            )
+            outside = root / "test/built-ins/Temporal/Other/prototype/toJSON/basic.js"
+            for tool in (test262_runner, test262_analyze):
+                self.assertFalse(tool.temporal_plain_month_day_to_json_path(None))
+                self.assertFalse(tool.temporal_plain_month_day_to_json_path(object()))
+                self.assertEqual(
+                    tool.temporal_plain_month_day_to_json_features(None), frozenset()
+                )
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, features in (
+                        TEMPORAL_PLAIN_MONTH_DAY_TO_JSON_FEATURES.items()
+                    ):
+                        path = root / "test" / relative
+                        self.assertTrue(tool.temporal_plain_month_day_to_json_path(path))
+                        self.assertEqual(
+                            tool.temporal_plain_month_day_to_json_features(path),
+                            features,
+                        )
+                        self.assertFalse(
+                            tool.should_skip({"features": sorted(features)}, path)
+                        )
+                    for path in (future, outside):
+                        self.assertFalse(tool.temporal_plain_month_day_to_json_path(path))
+                        self.assertEqual(
+                            tool.temporal_plain_month_day_to_json_features(path),
+                            frozenset(),
+                        )
+                        self.assertTrue(
+                            tool.should_skip({"features": ["Temporal"]}, path)
+                        )
+                finally:
+                    tool.TEST262 = original_root
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "test").mkdir()
+            diagnostic_runner = temporal_month_day_to_json_diagnostic.test262_runner
+            original_root = diagnostic_runner.TEST262
+            diagnostic_runner.TEST262 = str(root)
+            arguments = sorted(files)
+            try:
+                with patch.object(diagnostic_runner, "run_test", return_value="pass"):
+                    temporal_month_day_to_json_diagnostic.verify_expected_results(
+                        arguments
+                    )
+                    for invalid in (
+                        arguments[:-1],
+                        arguments[:-1] + [arguments[0]],
+                        arguments
+                        + ["built-ins/Temporal/Other/prototype/toJSON/basic.js"],
+                    ):
+                        with self.assertRaisesRegex(
+                            RuntimeError, "exact frozen surface"
+                        ):
+                            temporal_month_day_to_json_diagnostic.verify_expected_results(
+                                invalid
+                            )
+                with patch.object(diagnostic_runner, "run_test", return_value="fail"):
+                    with self.assertRaisesRegex(RuntimeError, "results drifted"):
+                        temporal_month_day_to_json_diagnostic.verify_expected_results(
+                            arguments
+                        )
+            finally:
+                diagnostic_runner.TEST262 = original_root
+
+    def test_temporal_plain_month_day_to_json_intl_and_downstream_are_exact(self):
+        files = TEMPORAL_PLAIN_MONTH_DAY_TO_JSON_INTL_FILES
+        blockers = TEMPORAL_PLAIN_MONTH_DAY_TO_JSON_INTL_BLOCKERS
+        surface = TEMPORAL_PLAIN_MONTH_DAY_TO_JSON_INTL_SURFACE
+        self.assertFalse(files)
+        self.assertEqual(blockers, surface)
+        self.assertEqual(blockers, temporal_month_day_to_json_intl_diagnostic.BLOCKERS)
+        self.assertEqual(surface, temporal_month_day_to_json_intl_diagnostic.SURFACE)
+        self.assertEqual(len(surface), 2)
+        self.assertTrue(surface.isdisjoint(TEMPORAL_PLAIN_MONTH_DAY_TO_JSON_FILES))
+        for metadata_map in (
+            TEMPORAL_PLAIN_MONTH_DAY_TO_JSON_INTL_FEATURES,
+            TEMPORAL_PLAIN_MONTH_DAY_TO_JSON_INTL_INCLUDES,
+            TEMPORAL_PLAIN_MONTH_DAY_TO_JSON_INTL_FLAGS,
+            TEMPORAL_PLAIN_MONTH_DAY_TO_JSON_INTL_NEGATIVE,
+        ):
+            self.assertEqual(set(metadata_map), set(surface))
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        directory = test_root / "intl402/Temporal/PlainMonthDay/prototype/toJSON"
+        audit_roots = (
+            test_root / "built-ins/Temporal/PlainMonthDay",
+            test_root / "intl402/Temporal/PlainMonthDay",
+            test_root / "intl402/DateTimeFormat/prototype/formatRangeToParts",
+            test_root / "intl402/DateTimeFormat/prototype/formatToParts",
+        )
+        corpus_required = "TEST262" in os.environ
+        try:
+            corpus_available = directory.is_dir() and all(
+                root.is_dir() for root in audit_roots
+            )
+        except OSError:
+            if corpus_required:
+                raise
+            corpus_available = False
+        if corpus_required and not corpus_available:
+            raise FileNotFoundError(audit_roots)
+        if corpus_available:
+            live_files = {
+                path.relative_to(test_root).as_posix()
+                for path in directory.glob("*.js")
+                if "_FIXTURE" not in path.name
+            }
+            self.assertEqual(live_files, set(surface))
+            expected_candidates = (
+                TEMPORAL_PLAIN_MONTH_DAY_TO_JSON_FILES
+                | surface
+                | _PLAIN_MONTH_DAY_TO_JSON_OUTSIDE_CANDIDATES
+            )
+            self.assertEqual(
+                _plain_month_day_to_json_candidate_audit(test_root),
+                expected_candidates,
+            )
+            for relative in surface:
+                path = test_root / relative
+                metadata = test262_runner.parse_meta(path.read_text())
+                for key, expected in (
+                    (
+                        "features",
+                        TEMPORAL_PLAIN_MONTH_DAY_TO_JSON_INTL_FEATURES[relative],
+                    ),
+                    (
+                        "includes",
+                        TEMPORAL_PLAIN_MONTH_DAY_TO_JSON_INTL_INCLUDES[relative],
+                    ),
+                    (
+                        "flags",
+                        TEMPORAL_PLAIN_MONTH_DAY_TO_JSON_INTL_FLAGS[relative],
+                    ),
+                ):
+                    self.assertEqual(
+                        frozenset(metadata.get(key, [])), expected, relative
+                    )
+                self.assertEqual(
+                    metadata.get("negative"),
+                    TEMPORAL_PLAIN_MONTH_DAY_TO_JSON_INTL_NEGATIVE[relative],
+                    relative,
+                )
+                for tool in (test262_runner, test262_analyze):
+                    self.assertFalse(
+                        tool.temporal_plain_month_day_to_json_path(path), relative
+                    )
+                    self.assertEqual(
+                        tool.temporal_plain_month_day_to_json_features(path),
+                        frozenset(),
+                    )
+                    self.assertTrue(tool.should_skip(metadata, path), relative)
+
+        tools_dir = Path(__file__).resolve().parent
+        for manifest in tools_dir.glob("test262_*_admission.txt"):
+            existing = {
+                line
+                for raw_line in manifest.read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            self.assertTrue(surface.isdisjoint(existing), manifest.name)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "test").mkdir()
+            diagnostic = temporal_month_day_to_json_intl_diagnostic
+            original_root = diagnostic.test262_runner.TEST262
+            diagnostic.test262_runner.TEST262 = str(root)
+            arguments = sorted(surface)
+            try:
+                with (
+                    patch.object(diagnostic, "_verify_corpus"),
+                    patch.object(
+                        diagnostic,
+                        "_run_with_diagnostics",
+                        return_value=(
+                            "fail",
+                            (
+                                "RangeError: Invalid Temporal calendar identifier",
+                                "RangeError: Invalid Temporal calendar identifier",
+                            ),
+                        ),
+                    ),
+                ):
+                    diagnostic.verify_expected_results(arguments)
+                    for invalid in (
+                        arguments[:-1],
+                        arguments[:-1] + [arguments[0]],
+                        arguments + ["intl402/Temporal/Other/toJSON.js"],
+                    ):
+                        with self.assertRaisesRegex(
+                            RuntimeError, "exact frozen surface"
+                        ):
+                            diagnostic.verify_expected_results(invalid)
+                with (
+                    patch.object(diagnostic, "_verify_corpus"),
+                    patch.object(
+                        diagnostic,
+                        "_run_with_diagnostics",
+                        return_value=("pass", ("", "")),
+                    ),
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "results drifted"):
+                        diagnostic.verify_expected_results(arguments)
+                with (
+                    patch.object(diagnostic, "_verify_corpus"),
+                    patch.object(
+                        diagnostic,
+                        "_run_with_diagnostics",
+                        return_value=("fail", ("TypeError: wrong blocker",)),
+                    ),
+                ):
+                    with self.assertRaisesRegex(
+                        RuntimeError, "failure reasons drifted"
+                    ):
+                        diagnostic.verify_expected_results(arguments)
+            finally:
+                diagnostic.test262_runner.TEST262 = original_root
 
     def test_temporal_plain_year_month_arithmetic_surface_is_exact_live_and_shared(self):
         files = TEMPORAL_PLAIN_YEAR_MONTH_ARITHMETIC_FILES

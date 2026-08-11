@@ -234,6 +234,8 @@ jobs:
         run: >-
           TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_year_month_to_json_surface_is_exact_live_disjoint_and_shared
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_month_day_to_json_surface_is_exact_live_disjoint_and_shared
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_month_day_to_json_intl_and_downstream_are_exact
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_year_month_to_plain_date_surface_is_exact_live_disjoint_and_shared
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_year_month_to_plain_date_downstream_surface_is_exact_live_disjoint_and_shared
           -v
@@ -1231,6 +1233,9 @@ jobs:
           sparse-checkout: |
             harness
             test/built-ins/Temporal/PlainMonthDay
+            test/intl402/Temporal/PlainMonthDay
+            test/intl402/DateTimeFormat/prototype/formatRangeToParts
+            test/intl402/DateTimeFormat/prototype/formatToParts
             test/built-ins/Temporal/PlainDate/prototype/toPlainYearMonth
             test/built-ins/Temporal/PlainYearMonth
             test/built-ins/Temporal/PlainYearMonth/prototype/toJSON
@@ -1351,6 +1356,26 @@ jobs:
           cat temporal_plain_year_month_to_json_result.txt
           grep -q '^RATE=100.0 PASS=8 FAIL=0 SKIP=0 TOTAL=8 RAN=8$' \
             temporal_plain_year_month_to_json_result.txt
+      - name: Require exact Temporal.PlainMonthDay.prototype.toJSON boundary
+        run: |
+          mapfile -t files < <(grep -hEv '^(#|$)' \
+            tools/test262_temporal_plain_month_day_to_json_admission.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_plain_month_day_to_json_diagnostic.py \
+            "${files[@]}" > temporal_plain_month_day_to_json_result.txt 2>&1
+          cat temporal_plain_month_day_to_json_result.txt
+          grep -q '^RATE=100.0 PASS=7 FAIL=0 SKIP=0 TOTAL=7 RAN=7$' \
+            temporal_plain_month_day_to_json_result.txt
+      - name: Require exact Intl402 Temporal.PlainMonthDay.prototype.toJSON blockers
+        run: |
+          mapfile -t files < <(grep -hEv '^(#|$)' \
+            tools/test262_temporal_plain_month_day_to_json_intl_blockers.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_plain_month_day_to_json_intl_diagnostic.py \
+            "${files[@]}" > temporal_plain_month_day_to_json_intl_result.txt 2>&1
+          cat temporal_plain_month_day_to_json_intl_result.txt
+          grep -q '^RATE=0.0 PASS=0 FAIL=2 SKIP=0 TOTAL=2 RAN=2$' \
+            temporal_plain_month_day_to_json_intl_result.txt
       - name: Require exact Temporal.PlainYearMonth.prototype.toPlainDate boundary
         run: |
           mapfile -t files < <(grep -hEv '^(#|$)' \

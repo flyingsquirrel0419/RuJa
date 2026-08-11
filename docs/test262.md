@@ -15288,3 +15288,37 @@ retry, installer rollback, and long-String fuel boundaries.
 - 다른 대안 대신 이 방식을 선택한 이유: prefix와 aggregate-only 검사는 future 또는 wrong-error false positive를 숨긴다. helper 이름만 검색하면 default/non-null reference-day 호출 540개를 downstream으로 과대계상한다.
 - 장점, 단점 및 영향: direct 12/0/12와 downstream 0/87/87, live 1,432-call 분류, metadata/disjointness/corpus/result drift가 ordinary/full CI에서 재현된다. calendar backend가 생기면 87개를 재실행해 실제 toPlainDate helper 단계와 후속 withCalendar까지 검증해야 한다.
 ```
+
+## Temporal PlainMonthDay prototype.toJSON
+
+At pinned Test262 revision
+`9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the complete built-ins
+`Temporal.PlainMonthDay.prototype.toJSON` directory contains seven files.
+Exact admission and forced execution are **7 pass / 0 fail / 0 skip**. The
+surface covers builtin shape, length 0, descriptor, nonconstruction, branding,
+basic hidden-record output, and ignored arguments. The committed pre-method
+baseline was **1 pass / 8 fail** across the nine direct/Intl files;
+`not-a-constructor.js` was the sole wrong-error false positive.
+
+The two-file Intl402 companion is frozen separately at **0 pass / 2 fail / 0
+skip**. `calendarname.js` and `year-format.js` both now reach the same earlier
+`RangeError: Invalid Temporal calendar identifier` because their `gregory`
+construction remains unsupported. The diagnostic fixes every strict/sloppy
+failure reason, so unrelated TypeErrors cannot count as expected blockers.
+
+A live candidate audit scans PlainMonthDay built-ins/Intl402 plus the two
+DateTimeFormat result-serialization directories. It freezes the seven direct
+files, two Intl companion files, and four outside textual candidates. The four
+outside files serialize options or formatter result arrays, or use
+`TemporalHelpers.assertPlainMonthDay`'s `toString` path; none invokes the
+method. Thus the true downstream denominator is zero.
+
+```text
+[Decision Log]
+- 목적과 의도: PlainMonthDay.toJSON의 complete built-ins denominator, Intl402 non-ISO prerequisites, downstream absence를 분리해 실제 supported boundary를 고정한다.
+- 기존 구현 및 제약 조건: broad Temporal/Intl gates가 9개를 숨겼고 absent method TypeError는 not-a-constructor를 거짓 통과시켰다. Intl 두 파일은 gregory construction에서 method assertion 전에 멈춘다.
+- 검토한 주요 대안: directory prefix 허용, built-ins만 계상, Intl 두 파일 전체 admission, exact direct admission과 0/2 blocker complement 및 candidate audit을 검토했다.
+- 선택한 방식: built-ins seven-file identity와 metadata를 admit하고 exact 7-pass diagnostic을 강제한다. Intl surface는 two-file blocker manifest와 exact RangeError diagnostic으로 유지하며 textual candidates를 live corpus에서 고정한다.
+- 다른 대안 대신 이 방식을 선택한 이유: prefix와 aggregate-only 결과는 future/wrong-error false positive를 숨기고 built-ins-only 보고는 Intl direct denominator를 누락한다. 후보 감사 없이 downstream 0 주장은 corpus 변화에 닫혀 있지 않다.
+- 장점, 단점 및 영향: built-ins 7/0/7, Intl 0/2/2, metadata/disjointness/corpus/future/result/error-reason drift와 downstream absence가 ordinary/full CI에서 재현된다. gregory backend 도입 뒤 두 blocker를 재실행해야 한다.
+```

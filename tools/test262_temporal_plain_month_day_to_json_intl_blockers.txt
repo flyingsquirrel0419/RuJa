@@ -1,0 +1,3 @@
+# Exact non-ISO calendar blockers in the Intl402 toJSON companion directory.
+intl402/Temporal/PlainMonthDay/prototype/toJSON/calendarname.js
+intl402/Temporal/PlainMonthDay/prototype/toJSON/year-format.js

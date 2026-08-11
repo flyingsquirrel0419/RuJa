@@ -1954,6 +1954,14 @@ mod tests {
             Some("1960-11-16")
         );
         assert_eq!(
+            format_plain_month_day(-1, 8, 7, "gregory", AnnotationDisplay::Auto).as_deref(),
+            Some("-000001-08-07[u-ca=gregory]")
+        );
+        assert_eq!(
+            format_plain_month_day(10000, 6, 7, "gregory", AnnotationDisplay::Auto).as_deref(),
+            Some("+010000-06-07[u-ca=gregory]")
+        );
+        assert_eq!(
             format_plain_year_month(2000, 5, 7, "iso8601", AnnotationDisplay::Auto).as_deref(),
             Some("2000-05")
         );

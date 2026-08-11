@@ -75,7 +75,11 @@
   fixed offsets. PlainMonthDay/PlainYearMonth provide option-aware hidden-record
   `toString` with all calendar annotation modes and reference-component
   output, plus ordered partial-field `with` using canonical ISO reference
-  components and constrain/reject overflow. PlainYearMonth also provides exact
+  components and constrain/reject overflow. PlainMonthDay also provides
+  Realm-local hidden-record `toJSON` with automatic calendar annotation,
+  ignored arguments/public getters, allocation-free primitive output, and a
+  complete **7/7** built-ins boundary; its two Intl402 non-ISO cases remain
+  blockers. PlainYearMonth also provides exact
   ISO year/month `add` and `subtract`, complete Duration conversion, validated
   overflow observation, lower-unit rejection, canonical reference day 1, and
   method-Realm results, plus hidden-record `equals` over year, month,
@@ -101,8 +105,7 @@
   Remaining PlainDate and PlainDateTime arithmetic, formatting, and
   conversion methods, calendar-relative and zoned Duration operations beyond
   the supported `total` boundary, remaining PlainMonthDay/PlainYearMonth
-  conversion beyond the ISO `toPlainDate` bridge, PlainMonthDay JSON
-  serialization, arithmetic beyond
+  conversion beyond the ISO `toPlainDate` bridge, arithmetic beyond
   PlainYearMonth `add`/`subtract`, locale and non-ISO calendar methods, named
   IANA timezone
   transitions, the remaining RFC 9557 grammar, and `Temporal.Now` methods

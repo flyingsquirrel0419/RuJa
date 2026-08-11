@@ -26201,6 +26201,70 @@ fn temporal_calendar_sibling_to_string_orders_options_and_uses_method_realm() {
 }
 
 #[test]
+fn temporal_plain_month_day_to_json_formats_hidden_record_and_ignores_arguments() {
+    assert_eq!(
+        run(r#"
+            var value = new Temporal.PlainMonthDay(11, 16, 'iso8601', 1960);
+            var reads = 0;
+            for (var key of ['calendarId', 'day', 'monthCode']) {
+              Object.defineProperty(value, key, {
+                get: function () { reads++; throw new Error('observed'); }
+              });
+            }
+            value.toString = function () { throw new Error('delegated'); };
+            var ignored = new Proxy({}, {
+              get: function () { throw new Error('argument observed'); }
+            });
+            [
+              Temporal.PlainMonthDay.prototype.toJSON.name,
+              Temporal.PlainMonthDay.prototype.toJSON.length,
+              value.toJSON(ignored), reads,
+              new Temporal.PlainMonthDay(2, 29).toJSON(),
+              JSON.stringify({ monthDay: value })
+            ].join('|');
+        "#),
+        Value::String(Arc::from("toJSON|0|11-16|0|02-29|{\"monthDay\":\"11-16\"}"))
+    );
+}
+
+#[test]
+fn temporal_plain_month_day_to_json_brands_and_uses_function_realm() {
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var foreignToJSON = other.Temporal.PlainMonthDay.prototype.toJSON;
+            var localToJSON = Temporal.PlainMonthDay.prototype.toJSON;
+            var main = new Temporal.PlainMonthDay(5, 2);
+            var foreign = new other.Temporal.PlainMonthDay(5, 2);
+            class SubMonthDay extends Temporal.PlainMonthDay {}
+            var subclassResult = new SubMonthDay(5, 2).toJSON();
+            var mainResult = foreignToJSON.call(main);
+            var foreignResult = foreignToJSON.call(foreign);
+            var localOnForeign = localToJSON.call(foreign);
+            var argumentObserved = false;
+            var ignored = new Proxy({}, {
+              get: function () { argumentObserved = true; throw new Error('observed'); }
+            });
+            var receiverRealm = false;
+            try { foreignToJSON.call(new Proxy({}, {}), ignored); } catch (error) {
+              receiverRealm = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            var proxyRejected = false;
+            try { localToJSON.call(new Proxy(main, {})); }
+            catch (error) { proxyRejected = error instanceof TypeError; }
+            var nonconstructable = false;
+            try { new Temporal.PlainMonthDay.prototype.toJSON(); }
+            catch (error) { nonconstructable = error instanceof TypeError; }
+            [
+              mainResult, foreignResult, localOnForeign, subclassResult,
+              receiverRealm, proxyRejected, argumentObserved, nonconstructable
+            ].join('|');
+        "#),
+        Value::String(Arc::from("05-02|05-02|05-02|05-02|true|true|false|true"))
+    );
+}
+
+#[test]
 fn temporal_calendar_fast_path_accepts_month_day_and_year_month_without_getters() {
     assert_eq!(
         run(r#"

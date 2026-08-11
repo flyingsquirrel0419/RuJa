@@ -95,7 +95,11 @@ The following resource limits are enforced:
   The exact 87 Intl402 `assertPlainYearMonth(..., null)` callers remain
   blockers because non-ISO calendar/era/monthCode construction fails before
   the helper reaches `toPlainDate`; they are not admitted as method support.
-  PlainMonthDay JSON serialization, non-ISO date conversion, remaining
+  `PlainMonthDay.prototype.toJSON` supports the complete built-ins directory
+  (**7/7**) through hidden reference-year serialization and automatic calendar
+  annotation. Its two Intl402 companion files remain exact non-ISO blockers:
+  `gregory` construction fails before their toJSON assertions. No downstream
+  caller exists in the pinned corpus. Non-ISO date conversion, remaining
   arithmetic/difference, locale formatting, and non-ISO calendars remain
   unsupported.
   Realm-local `%Temporal.PlainTime%` supports six-field hidden-slot

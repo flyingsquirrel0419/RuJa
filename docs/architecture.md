@@ -5268,4 +5268,32 @@ allocations and 177 maximum live pins.
 - 장점, 단점 및 영향: direct 12/12, brand/order/limits, getter/valueOf GC, root/heap retry, cross-Realm result/error, exact fuel과 178-allocation rollback이 고정된다. exact 87 Intl402 callers는 non-ISO 선행 blocker로 유지되며 calendar backend 이후 재검증해야 한다.
 ```
 
+`Temporal.PlainMonthDay.prototype.toJSON` is a Realm-local,
+non-constructable, length-0 native function. It brand-checks the receiver,
+copies the hidden reference ISO year, month, day, and canonical calendar
+identifier, then calls the shared PlainMonthDay formatter with
+`AnnotationDisplay::Auto`. ISO records serialize as `MM-DD` without the hidden
+year or annotation. Non-ISO hidden records serialize the complete extended
+reference year and `[u-ca=...]` annotation.
+
+No argument, option, public accessor, Proxy target slot, or overridden
+`toString` is observed. Branded subclass and cross-Realm receivers remain
+valid; incompatible-receiver errors use the native method Realm. Formatting
+returns a primitive String, requires no VM GC object or root reservation, and
+contains no unbounded native loop requiring fuel. To preserve all existing
+installer ordinals, the function is allocated after the current
+PlainYearMonth bridge as allocation 177; `Temporal.Now` and `%Temporal%` move
+to 178 and 179. Complete installation uses 179 allocations and 178 maximum
+live pins.
+
+```text
+[Decision Log]
+- 목적과 의도: PlainMonthDay JSON serialization을 hidden reference ISO year와 automatic calendar annotation에 직접 연결하면서 Realm/resource 불변식을 보존한다.
+- 기존 구현 및 제약 조건: shared formatter의 auto mode와 complete hidden slots는 있었지만 public toJSON이 없었다. non-ISO constructor backend는 아직 gregory를 거부한다.
+- 검토한 주요 대안: public toString 재호출, getters로 record 복원, synthetic options 전달, hidden slots와 formatter 직접 연결을 검토했다.
+- 선택한 방식: brand-first slot copy 뒤 `format_plain_month_day(..., Auto)`를 호출하고 primitive String을 publish한다. allocation은 기존 method batch의 끝에 append한다.
+- 다른 대안 대신 이 방식을 선택한 이유: visible paths는 명세에 없는 getter/override/coercion을 만들고 중간 ordinal 삽입은 unrelated rollback 경계를 바꾼다. direct formatter만 hidden year/calendar와 기존 ordinals를 함께 보존한다.
+- 장점, 단점 및 영향: ignored arguments/getters/toString, Proxy rejection, subclass/cross-Realm branding, method-Realm errors, non-ISO extended-year formatting, zero GC result allocation과 179-allocation rollback이 고정된다. direct 7/7이며 Intl402 0/2는 gregory construction blocker다.
+```
+
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

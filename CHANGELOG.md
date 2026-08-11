@@ -4,6 +4,28 @@
 
 ### Changed
 
+- Added Realm-local, non-constructable, length-0
+  `Temporal.PlainMonthDay.prototype.toJSON`. It brands the receiver and
+  serializes copied hidden reference ISO year, month, day, and calendar slots
+  directly with `calendarName = auto`. ISO records omit the hidden reference
+  year and annotation; non-ISO records retain both. Arguments, public getters,
+  Proxy wrappers, and overridden `toString` remain unobserved. Cross-Realm and
+  subclass branded receivers work, while incompatible receiver `TypeError`s
+  belong to the method Realm. The primitive String result allocates no GC heap
+  object. Exact pinned built-ins coverage is **7/7**. The two-file Intl402
+  companion remains **0 pass / 2 non-ISO blockers**, and a live candidate
+  audit confirms no downstream caller. Existing installer ordinals remain
+  stable; the function is allocation 177 and complete installation uses 179
+  allocations with 178 maximum live pins.
+
+  [Decision Log]
+  - 목적과 의도: PlainMonthDay JSON serialization을 hidden reference-year record, automatic calendar annotation, Realm 및 sandbox resource 경계까지 완결한다.
+  - 기존 구현 및 제약 조건: option-aware toString과 hidden formatter는 있었지만 toJSON이 없었다. broad Temporal gate는 built-ins 7개와 Intl402 companion 2개를 숨겼고 not-a-constructor는 absent method TypeError로 거짓 통과했다.
+  - 검토한 주요 대안: `this.toString()` 호출, public getters로 record 재구성, synthetic options를 toString에 전달, hidden slots를 formatter auto mode로 직접 포맷하는 방식을 검토했다.
+  - 선택한 방식: brand-first hidden-slot copy 뒤 shared formatter의 `AnnotationDisplay::Auto`를 직접 호출하고 primitive String을 반환한다. 신규 function은 기존 176개 ordinal 뒤에 배치한다.
+  - 다른 대안 대신 이 방식을 선택한 이유: public method/getter 경로는 override, accessor, coercion 및 Realm 관찰을 추가한다. 기존 ordinal 사이 삽입은 unrelated allocation rollback 경계를 불필요하게 바꾼다.
+  - 장점, 단점 및 영향: ignored arguments/getters/toString, Proxy rejection, subclass/cross-Realm receiver, method-Realm errors, non-ISO extended-year formatter, allocation-free result, direct 7/7과 179-allocation rollback이 재현된다. Intl 2개는 gregory construction이 생길 때까지 정확한 non-ISO blocker로 남는다.
+
 - Added Realm-local, non-constructable, length-1
   `Temporal.PlainYearMonth.prototype.toPlainDate`. It brands the receiver
   before argument observation, requires an object, reads only `day`, performs

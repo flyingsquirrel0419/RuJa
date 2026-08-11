@@ -196,6 +196,10 @@ try:
         TEMPORAL_CALENDAR_SIBLINGS_WITH_FEATURES,
         TEMPORAL_CALENDAR_SIBLINGS_WITH_FILES,
     )
+    from test262_temporal_plain_month_day_to_json_admission import (
+        TEMPORAL_PLAIN_MONTH_DAY_TO_JSON_FEATURES,
+        TEMPORAL_PLAIN_MONTH_DAY_TO_JSON_FILES,
+    )
     from test262_temporal_plain_year_month_arithmetic_admission import (
         TEMPORAL_PLAIN_YEAR_MONTH_ARITHMETIC_FEATURES,
         TEMPORAL_PLAIN_YEAR_MONTH_ARITHMETIC_FILES,
@@ -676,6 +680,10 @@ except ModuleNotFoundError:
     from tools.test262_temporal_calendar_siblings_with_admission import (
         TEMPORAL_CALENDAR_SIBLINGS_WITH_FEATURES,
         TEMPORAL_CALENDAR_SIBLINGS_WITH_FILES,
+    )
+    from tools.test262_temporal_plain_month_day_to_json_admission import (
+        TEMPORAL_PLAIN_MONTH_DAY_TO_JSON_FEATURES,
+        TEMPORAL_PLAIN_MONTH_DAY_TO_JSON_FILES,
     )
     from tools.test262_temporal_plain_year_month_arithmetic_admission import (
         TEMPORAL_PLAIN_YEAR_MONTH_ARITHMETIC_FEATURES,
@@ -3274,6 +3282,21 @@ def temporal_plain_year_month_arithmetic_features(path):
     rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
     return TEMPORAL_PLAIN_YEAR_MONTH_ARITHMETIC_FEATURES[rel.as_posix()]
 
+def temporal_plain_month_day_to_json_path(path):
+    if path is None:
+        return False
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except (OSError, TypeError, ValueError):
+        return False
+    return rel.as_posix() in TEMPORAL_PLAIN_MONTH_DAY_TO_JSON_FILES
+
+def temporal_plain_month_day_to_json_features(path):
+    if not temporal_plain_month_day_to_json_path(path):
+        return frozenset()
+    rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    return TEMPORAL_PLAIN_MONTH_DAY_TO_JSON_FEATURES[rel.as_posix()]
+
 def temporal_plain_year_month_equals_path(path):
     if path is None:
         return False
@@ -5488,6 +5511,8 @@ def should_skip(meta, path=None):
         feats.difference_update(temporal_calendar_siblings_to_string_features(path))
     if path is not None and temporal_calendar_siblings_with_path(path):
         feats.difference_update(temporal_calendar_siblings_with_features(path))
+    if path is not None and temporal_plain_month_day_to_json_path(path):
+        feats.difference_update(temporal_plain_month_day_to_json_features(path))
     if path is not None and temporal_plain_year_month_arithmetic_path(path):
         feats.difference_update(temporal_plain_year_month_arithmetic_features(path))
     if path is not None and temporal_plain_year_month_equals_path(path):
