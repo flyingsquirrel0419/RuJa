@@ -238,6 +238,9 @@ jobs:
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_month_day_to_json_intl_and_downstream_are_exact
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_month_day_to_plain_date_surface_is_exact_live_disjoint_and_shared
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_month_day_to_plain_date_intl_and_downstream_are_exact
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_month_day_equals_surface_is_exact_live_disjoint_and_shared
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_month_day_equals_intl_and_downstream_are_exact
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_month_day_equals_call_audits_are_token_aware
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_year_month_to_plain_date_surface_is_exact_live_disjoint_and_shared
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_year_month_to_plain_date_downstream_surface_is_exact_live_disjoint_and_shared
           -v
@@ -1398,6 +1401,37 @@ jobs:
           cat temporal_plain_month_day_to_plain_date_intl_result.txt
           grep -q '^RATE=0.0 PASS=0 FAIL=1 SKIP=0 TOTAL=1 RAN=1$' \
             temporal_plain_month_day_to_plain_date_intl_result.txt
+      - name: Require exact Temporal.PlainMonthDay.prototype.equals boundary
+        run: |
+          mapfile -t files < <(grep -hEv '^(#|$)' \
+            tools/test262_temporal_plain_month_day_equals_admission.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_plain_month_day_equals_diagnostic.py \
+            "${files[@]}" > temporal_plain_month_day_equals_result.txt 2>&1
+          cat temporal_plain_month_day_equals_result.txt
+          grep -q '^RATE=100.0 PASS=36 FAIL=0 SKIP=0 TOTAL=36 RAN=36$' \
+            temporal_plain_month_day_equals_result.txt
+      - name: Require exact Intl402 Temporal.PlainMonthDay.prototype.equals boundary
+        run: |
+          mapfile -t files < <(grep -hEv '^(#|$)' \
+            tools/test262_temporal_plain_month_day_equals_intl_admission.txt \
+            tools/test262_temporal_plain_month_day_equals_intl_blockers.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_plain_month_day_equals_intl_diagnostic.py \
+            "${files[@]}" > temporal_plain_month_day_equals_intl_result.txt 2>&1
+          cat temporal_plain_month_day_equals_intl_result.txt
+          grep -q '^RATE=25.0 PASS=1 FAIL=3 SKIP=0 TOTAL=4 RAN=4$' \
+            temporal_plain_month_day_equals_intl_result.txt
+      - name: Require exact Temporal.PlainMonthDay.prototype.equals downstream
+        run: |
+          mapfile -t files < <(grep -hEv '^(#|$)' \
+            tools/test262_temporal_plain_month_day_equals_downstream_blockers.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_plain_month_day_equals_downstream_diagnostic.py \
+            "${files[@]}" > temporal_plain_month_day_equals_downstream_result.txt 2>&1
+          cat temporal_plain_month_day_equals_downstream_result.txt
+          grep -q '^RATE=0.0 PASS=0 FAIL=7 SKIP=0 TOTAL=7 RAN=7$' \
+            temporal_plain_month_day_equals_downstream_result.txt
       - name: Require exact Temporal.PlainYearMonth.prototype.toPlainDate boundary
         run: |
           mapfile -t files < <(grep -hEv '^(#|$)' \

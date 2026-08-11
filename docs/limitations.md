@@ -104,7 +104,12 @@ The following resource limits are enforced:
   `year`, constrains a hidden leap day for common years, validates exact date
   limits, and returns a method-Realm PlainDate. Its one Intl402 companion is
   an exact earlier `gregory` construction blocker, and the pinned corpus has
-  no downstream caller. Non-ISO date conversion, remaining
+  no downstream caller. `PlainMonthDay.prototype.equals` supports the complete
+  ISO built-ins directory (**36/36**) by comparing hidden reference year,
+  month/day, and calendar identity after complete argument conversion. Its
+  Intl402 companion is **1 pass / 3 blockers**, and seven downstream callers
+  remain blocked before equals by Chinese/Dangi construction. Non-ISO date
+  conversion, remaining
   arithmetic/difference, locale formatting, and non-ISO calendars remain
   unsupported.
   Realm-local `%Temporal.PlainTime%` supports six-field hidden-slot

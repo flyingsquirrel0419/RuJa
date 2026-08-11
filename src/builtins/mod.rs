@@ -6291,7 +6291,7 @@ pub(crate) fn install_temporal_namespace_in_env(
     global: Option<&Value>,
     object_proto: Value,
 ) -> error::Result<Value> {
-    vm.try_reserve_gc_pins(179)?;
+    vm.try_reserve_gc_pins(180)?;
     let mut pin_count = 0;
     let result = (|| {
         let instant_prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
@@ -7331,6 +7331,13 @@ pub(crate) fn install_temporal_namespace_in_env(
                 env,
             )?);
         pin_count += vm.pin(&plain_month_day_to_plain_date);
+        let plain_month_day_equals = Value::Object(vm.new_native_function_in_env_with_gc_retry(
+            "equals",
+            temporal_plain_month_day_equals,
+            1,
+            env,
+        )?);
+        pin_count += vm.pin(&plain_month_day_equals);
 
         let Value::Object(instant_constructor_index) = instant_constructor.clone() else {
             unreachable!()
@@ -7877,6 +7884,10 @@ pub(crate) fn install_temporal_namespace_in_env(
                 props.insert(
                     PropertyKey::from("toPlainDate"),
                     data_prop(plain_month_day_to_plain_date),
+                );
+                props.insert(
+                    PropertyKey::from("equals"),
+                    data_prop(plain_month_day_equals),
                 );
                 props.insert(PropertyKey::from("with"), data_prop(plain_month_day_with));
                 let mut tag = data_prop(Value::String(Arc::from("Temporal.PlainMonthDay")));
@@ -10453,14 +10464,10 @@ fn temporal_positive_integer_with_truncation(vm: &mut Vm, value: Value) -> error
     Ok(integer)
 }
 
-fn temporal_string_primitive(vm: &mut Vm, value: Value, field: &str) -> error::Result<Arc<str>> {
+fn temporal_string_primitive(vm: &mut Vm, value: Value, _field: &str) -> error::Result<Arc<str>> {
     temporal_with_rooted_value(vm, value, |vm, value| {
         let primitive = vm.to_primitive_hint(value, true)?;
-        let Value::String(source) = primitive else {
-            return Err(Error::type_err(format!(
-                "Temporal {field} must convert to a String"
-            )));
-        };
+        let source = vm.to_string(&primitive)?;
         vm.consume_fuel_units(source.len().min(i64::MAX as usize) as i64)?;
         Ok(source)
     })
@@ -11608,6 +11615,19 @@ fn temporal_plain_month_day_to_plain_date(
     })();
     vm.unpin_many(item_pins);
     result
+}
+
+fn temporal_plain_month_day_equals(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let (fields, calendar_identifier) = temporal_plain_month_day_slots(vm, this)?;
+    let (other_fields, other_calendar) =
+        to_temporal_plain_month_day(vm, args.first().unwrap_or(&Value::Undefined), None)?;
+    Ok(Value::Bool(
+        fields == other_fields && temporal_calendar_equals(&calendar_identifier, &other_calendar),
+    ))
 }
 
 fn temporal_plain_year_month_slots(

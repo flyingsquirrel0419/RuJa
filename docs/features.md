@@ -82,8 +82,11 @@
   `toPlainDate` reads only the input `year`, constrains the hidden ISO
   month/day, and returns a method-Realm PlainDate across a complete **12/12**
   direct boundary; its sole Intl402 non-ISO case remains a blocker and no
-  downstream caller exists. The two toJSON Intl402 non-ISO cases also remain
-  blockers. PlainYearMonth provides exact
+  downstream caller exists. Hidden-record `equals` fully converts its input
+  and compares reference ISO year, month/day, and calendar identity across a
+  complete **36/36** built-ins boundary; Intl402 is **1 pass / 3 non-ISO
+  blockers** and seven downstream non-ISO callers remain blocked. The two
+  toJSON Intl402 non-ISO cases also remain blockers. PlainYearMonth provides exact
   ISO year/month `add` and `subtract`, complete Duration conversion, validated
   overflow observation, lower-unit rejection, canonical reference day 1, and
   method-Realm results, plus hidden-record `equals` over year, month,

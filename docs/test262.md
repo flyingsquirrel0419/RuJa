@@ -15359,3 +15359,48 @@ heap retry, installer rollback, and long-String fuel boundaries.
 - 다른 대안 대신 이 방식을 선택한 이유: prefix와 aggregate-only 결과는 future/wrong-error false positive를 숨긴다. Intl admission은 아직 없는 non-ISO era conversion을 과장하며 caller audit 없는 downstream 0은 corpus 변화에 닫혀 있지 않다.
 - 장점, 단점 및 영향: built-ins 12/0/12, Intl 0/1/1, metadata/disjointness/corpus/future/result/error-reason drift와 downstream absence가 ordinary/full CI에서 재현된다. gregory backend 도입 뒤 blocker를 intended assertion까지 재실행해야 한다.
 ```
+
+## Temporal PlainMonthDay prototype.equals
+
+At pinned Test262 revision
+`9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the complete built-ins
+`Temporal.PlainMonthDay.prototype.equals` directory contains 36 files. Exact
+admission and forced execution are **36 pass / 0 fail / 0 skip**. The committed
+pre-method baseline was **2 pass / 34 fail**; `argument-number.js` and
+`argument-propertybag-calendar-wrong-type.js` were absent-method TypeError
+false positives.
+
+The four-file Intl402 companion is frozen at **1 pass / 3 fail / 0 skip**.
+`future-calendar.js` passes by confirming unsupported future identifiers fail
+closed. `calendars.js`, `canonicalize-calendar.js`, and
+`infinity-throws-rangeerror.js` remain exact earlier non-ISO calendar
+construction/conversion blockers. Seven additional Chinese/Dangi files contain
+eight true downstream equals calls; all remain **0 pass / 7 fail** before the
+method at the same exact calendar `RangeError`.
+
+A complete pinned `test/` exact-word scan freezes all 47 direct and downstream
+candidates. Path-specific downstream call counts freeze all eight executable
+call sites with a JavaScript lexical scan that excludes comments and literal
+text, distinguishes regexp lexical goals after longest-match punctuators, and
+recognizes direct, optional, and static computed-string property calls.
+A complete `temporalHelpers.js` token scan bounds each object method by
+balanced braces and freezes the only five `.equals()` owner helpers as Instant,
+PlainDate, PlainDateTime, PlainTime, and ZonedDateTime helpers, so no hidden
+PlainMonthDay helper caller is omitted. Calls outside a helper method fail the
+audit instead of inheriting the preceding method's owner. Tooling verifies
+live metadata, runner/analyzer parity, manifest disjointness, inaccessible
+corpus, future/outside paths, duplicate arguments, result drift, and normalized
+exact failure-reason drift. Runtime tests separately cover reference-year
+identity, ISO String canonicalization, hidden getter non-observation,
+brand-first and Realm behavior, observable GC, root/abrupt retry,
+allocation-free Boolean results, installer rollback, and String fuel.
+
+```text
+[Decision Log]
+- 목적과 의도: PlainMonthDay.equals의 complete built-ins denominator, Intl direct complement, true downstream callers를 분리해 실제 지원 범위를 고정한다.
+- 기존 구현 및 제약 조건: broad Temporal/Intl gates가 47 files를 숨겼고 absent method TypeError가 direct 두 파일을 거짓 통과시켰다. non-ISO direct/downstream files는 equals보다 이른 calendar construction/conversion에서 실패한다.
+- 검토한 주요 대안: built-ins prefix admission, aggregate result만 검사, Intl future pass 제외, exact direct/Intl/downstream manifests와 complete-corpus candidate audit을 검토했다.
+- 선택한 방식: built-ins 36-path metadata와 36-pass result를 admit한다. Intl은 1/3 complement, downstream은 0/7 blocker와 path별 8-call count로 유지하고 전체 test tree 및 harness equals-owner set을 live audit한다. Call count와 helper ownership은 comment/string/regexp/template raw를 제외하고 template expression을 포함하는 lexical token stream 및 balanced method body에서 계산한다.
+- 다른 대안 대신 이 방식을 선택한 이유: prefix/aggregate-only 검사는 future 및 wrong-error false positive를 숨긴다. Intl future pass 제외는 fail-closed calendar behavior를 누락하고 direct-only 보고는 실제 equals caller 7개를 숨긴다.
+- 장점, 단점 및 영향: built-ins 36/0/36, Intl 1/3/4, downstream 0/7/7과 metadata/disjointness/corpus/result/error-reason drift가 ordinary/full CI에서 재현된다. non-ISO backend 도입 뒤 ten blockers를 intended assertions까지 재실행해야 한다.
+```

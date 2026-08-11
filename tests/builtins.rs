@@ -27618,6 +27618,166 @@ fn temporal_plain_month_day_to_plain_date_roots_input_across_observable_gc() {
 }
 
 #[test]
+fn temporal_plain_month_day_equals_compares_hidden_records_and_converts_arguments() {
+    assert_eq!(
+        run(r#"
+            var value = new Temporal.PlainMonthDay(11, 18, 'iso8601', 1994);
+            var same = new Temporal.PlainMonthDay(11, 18, 'iso8601', 1994);
+            var reads = 0;
+            for (var key of ['calendarId', 'day', 'monthCode']) {
+              Object.defineProperty(same, key, {
+                get: function () { reads++; throw new Error('observed'); }
+              });
+            }
+            var canonical = new Temporal.PlainMonthDay(11, 18);
+            var numericMonthCodeRange = false;
+            try { canonical.equals({ monthCode: 5, day: 18 }); }
+            catch (error) { numericMonthCodeRange = error instanceof RangeError; }
+            var monthCodeOrder = [];
+            var coercedMonthCode = canonical.equals({
+              day: 18,
+              monthCode: {
+                toString: function () { monthCodeOrder.push('toString'); return 'M11'; },
+                valueOf: function () { monthCodeOrder.push('valueOf'); return 11; }
+              }
+            });
+            [
+              Temporal.PlainMonthDay.prototype.equals.name,
+              Temporal.PlainMonthDay.prototype.equals.length,
+              value.equals(same), reads,
+              value.equals(new Temporal.PlainMonthDay(11, 18)),
+              value.equals({ month: 11, day: 18 }),
+              value.equals('1994-11-18'),
+              canonical.equals({ month: 11, day: 18 }),
+              canonical.equals('11-18'),
+              canonical.equals('12-18'),
+              numericMonthCodeRange, coercedMonthCode, monthCodeOrder.join(',')
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "equals|1|true|0|false|false|false|true|true|false|true|true|toString"
+        ))
+    );
+}
+
+#[test]
+fn temporal_plain_month_day_equals_observes_complete_conversion_order() {
+    assert_eq!(
+        run(r#"
+            var order = [];
+            var fields = {};
+            Object.defineProperty(fields, 'calendar', { get: function () {
+              order.push('get calendar');
+              return 'iso8601';
+            }});
+            for (var key of ['day', 'month']) {
+              Object.defineProperty(fields, key, { get: (function (name) {
+                return function () {
+                  order.push('get ' + name);
+                  return { valueOf: function () { order.push('valueOf ' + name); return name === 'day' ? 29.9 : 2.9; } };
+                };
+              })(key) });
+            }
+            Object.defineProperty(fields, 'monthCode', { get: function () {
+              order.push('get monthCode');
+              return { toString: function () { order.push('toString monthCode'); return 'M02'; } };
+            }});
+            Object.defineProperty(fields, 'year', { get: function () {
+              order.push('get year');
+              return { valueOf: function () { order.push('valueOf year'); return 2023.9; } };
+            }});
+            var ignored = new Proxy({}, {
+              get: function () { throw new Error('extra argument observed'); }
+            });
+            [
+              new Temporal.PlainMonthDay(2, 28).equals(fields, ignored),
+              order.join(',')
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "true|get calendar,get day,valueOf day,get month,valueOf month,get monthCode,toString monthCode,get year,valueOf year"
+        ))
+    );
+}
+
+#[test]
+fn temporal_plain_month_day_equals_brands_first_and_uses_function_realm() {
+    assert_eq!(
+        run(r#"
+            var reads = 0;
+            var argument = {};
+            Object.defineProperty(argument, 'calendar', {
+              get: function () { reads++; throw new Error('observed'); }
+            });
+            var equals = Temporal.PlainMonthDay.prototype.equals;
+            var brandFirst = false;
+            try { equals.call({}, argument); }
+            catch (error) { brandFirst = error instanceof TypeError && reads === 0; }
+
+            class Derived extends Temporal.PlainMonthDay {}
+            var derived = new Derived(5, 2);
+            var other = $262.createRealm().global;
+            var foreignEquals = other.Temporal.PlainMonthDay.prototype.equals;
+            var foreign = new other.Temporal.PlainMonthDay(5, 2);
+            var valid = foreignEquals.call(foreign, derived);
+            var receiverRealm = false;
+            var argumentRealm = false;
+            try { foreignEquals.call({}, foreign); } catch (error) {
+              receiverRealm = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            try { foreignEquals.call(foreign, 'invalid'); } catch (error) {
+              argumentRealm = error instanceof other.RangeError && !(error instanceof RangeError);
+            }
+            var proxyRejected = false;
+            try { foreignEquals.call(new Proxy(foreign, {}), foreign); }
+            catch (error) { proxyRejected = error instanceof other.TypeError; }
+            var nonconstructable = false;
+            try { new Temporal.PlainMonthDay.prototype.equals(); }
+            catch (error) { nonconstructable = error instanceof TypeError; }
+            [
+              brandFirst, valid, receiverRealm, argumentRealm,
+              proxyRejected, nonconstructable
+            ].join('|');
+        "#),
+        Value::String(Arc::from("true|true|true|true|true|true"))
+    );
+}
+
+#[test]
+fn temporal_plain_month_day_equals_roots_argument_across_observable_gc() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+    assert_eq!(
+        vm.run(
+            r#"
+            function ephemeralArgument() {
+              return {
+                get calendar() { forceGc(); return 'iso8601'; },
+                get day() { forceGc(); return 2; },
+                month: 5,
+                get monthCode() {
+                  forceGc();
+                  return { toString: function () { forceGc(); return 'M05'; } };
+                }
+              };
+            }
+            new Temporal.PlainMonthDay(5, 2).equals(ephemeralArgument());
+            "#,
+        )
+        .expect("PlainMonthDay.equals argument should survive observable GC"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn temporal_plain_year_month_to_plain_date_merges_hidden_fields_in_spec_order() {
     assert_eq!(
         run(r#"

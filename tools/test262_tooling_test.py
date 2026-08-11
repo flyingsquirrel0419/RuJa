@@ -8,7 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import nullcontext, redirect_stdout
 from pathlib import Path
 from unittest.mock import mock_open, patch
 
@@ -22,6 +22,9 @@ import test262_temporal_plain_month_day_to_json_diagnostic as temporal_month_day
 import test262_temporal_plain_month_day_to_json_intl_diagnostic as temporal_month_day_to_json_intl_diagnostic
 import test262_temporal_plain_month_day_to_plain_date_diagnostic as temporal_month_day_to_plain_date_diagnostic
 import test262_temporal_plain_month_day_to_plain_date_intl_diagnostic as temporal_month_day_to_plain_date_intl_diagnostic
+import test262_temporal_plain_month_day_equals_diagnostic as temporal_month_day_equals_diagnostic
+import test262_temporal_plain_month_day_equals_intl_diagnostic as temporal_month_day_equals_intl_diagnostic
+import test262_temporal_plain_month_day_equals_downstream_diagnostic as temporal_month_day_equals_downstream_diagnostic
 import test262_temporal_plain_year_month_arithmetic_diagnostic as temporal_year_month_arithmetic_diagnostic
 import test262_temporal_plain_year_month_compare_diagnostic as temporal_year_month_compare_diagnostic
 import test262_temporal_plain_year_month_compare_intl_diagnostic as temporal_year_month_compare_intl_diagnostic
@@ -353,6 +356,31 @@ from test262_temporal_plain_month_day_to_plain_date_intl_admission import (
     TEMPORAL_PLAIN_MONTH_DAY_TO_PLAIN_DATE_INTL_INCLUDES,
     TEMPORAL_PLAIN_MONTH_DAY_TO_PLAIN_DATE_INTL_NEGATIVE,
     TEMPORAL_PLAIN_MONTH_DAY_TO_PLAIN_DATE_INTL_SURFACE,
+)
+from test262_temporal_plain_month_day_equals_admission import (
+    TEMPORAL_PLAIN_MONTH_DAY_EQUALS_FEATURES,
+    TEMPORAL_PLAIN_MONTH_DAY_EQUALS_FILES,
+    TEMPORAL_PLAIN_MONTH_DAY_EQUALS_FLAGS,
+    TEMPORAL_PLAIN_MONTH_DAY_EQUALS_INCLUDES,
+    TEMPORAL_PLAIN_MONTH_DAY_EQUALS_NEGATIVE,
+)
+from test262_temporal_plain_month_day_equals_intl_admission import (
+    TEMPORAL_PLAIN_MONTH_DAY_EQUALS_INTL_BLOCKERS,
+    TEMPORAL_PLAIN_MONTH_DAY_EQUALS_INTL_FEATURES,
+    TEMPORAL_PLAIN_MONTH_DAY_EQUALS_INTL_FILES,
+    TEMPORAL_PLAIN_MONTH_DAY_EQUALS_INTL_FLAGS,
+    TEMPORAL_PLAIN_MONTH_DAY_EQUALS_INTL_INCLUDES,
+    TEMPORAL_PLAIN_MONTH_DAY_EQUALS_INTL_NEGATIVE,
+    TEMPORAL_PLAIN_MONTH_DAY_EQUALS_INTL_SURFACE,
+)
+from test262_temporal_plain_month_day_equals_downstream_admission import (
+    TEMPORAL_PLAIN_MONTH_DAY_EQUALS_DOWNSTREAM_BLOCKERS,
+    TEMPORAL_PLAIN_MONTH_DAY_EQUALS_DOWNSTREAM_FEATURES,
+    TEMPORAL_PLAIN_MONTH_DAY_EQUALS_DOWNSTREAM_FILES,
+    TEMPORAL_PLAIN_MONTH_DAY_EQUALS_DOWNSTREAM_FLAGS,
+    TEMPORAL_PLAIN_MONTH_DAY_EQUALS_DOWNSTREAM_INCLUDES,
+    TEMPORAL_PLAIN_MONTH_DAY_EQUALS_DOWNSTREAM_NEGATIVE,
+    TEMPORAL_PLAIN_MONTH_DAY_EQUALS_DOWNSTREAM_SURFACE,
 )
 from test262_temporal_plain_year_month_arithmetic_admission import (
     TEMPORAL_PLAIN_YEAR_MONTH_ARITHMETIC_BLOCKERS,
@@ -1511,6 +1539,446 @@ def _plain_month_day_helper_calls_to_plain_date(test262_root):
     start = source.index("  assertPlainMonthDay(")
     end = source.index("\n  },", start)
     return re.search(r"\btoPlainDate\b", source[start:end]) is not None
+
+
+def _plain_month_day_equals_candidate_audit(test_root):
+    candidates = set()
+    for path in test_root.rglob("*.js"):
+        source = path.read_text()
+        if re.search(r"\bequals\b", source) and re.search(
+            r"\bPlainMonthDay\b", source
+        ):
+            candidates.add(path.relative_to(test_root).as_posix())
+    return frozenset(candidates)
+
+
+_JS_REGEX_PREFIX_TOKENS = frozenset(
+    {
+        "(",
+        "[",
+        "{",
+        ",",
+        ";",
+        ":",
+        "=",
+        "+=",
+        "-=",
+        "*=",
+        "/=",
+        "%=",
+        "**=",
+        "<<=",
+        ">>=",
+        ">>>=",
+        "&=",
+        "|=",
+        "^=",
+        "&&=",
+        "||=",
+        "??=",
+        "=>",
+        "!",
+        "?",
+        "+",
+        "-",
+        "*",
+        "%",
+        "&",
+        "|",
+        "^",
+        "~",
+        "<",
+        ">",
+        "<=",
+        ">=",
+        "==",
+        "!=",
+        "===",
+        "!==",
+        "<<",
+        ">>",
+        ">>>",
+        "&&",
+        "||",
+        "??",
+        "return",
+        "throw",
+        "case",
+        "delete",
+        "void",
+        "typeof",
+        "new",
+        "in",
+        "instanceof",
+        "yield",
+        "await",
+        "else",
+        "do",
+    }
+)
+
+_JS_MULTI_CHAR_PUNCTUATORS = tuple(
+    sorted(
+        {
+            ">>>=",
+            "===",
+            "!==",
+            "**=",
+            "<<=",
+            ">>=",
+            "&&=",
+            "||=",
+            "??=",
+            ">>>",
+            "=>",
+            "++",
+            "--",
+            "**",
+            "<<",
+            ">>",
+            "<=",
+            ">=",
+            "==",
+            "!=",
+            "&&",
+            "||",
+            "??",
+            "?.",
+            "+=",
+            "-=",
+            "*=",
+            "/=",
+            "%=",
+            "&=",
+            "|=",
+            "^=",
+            "...",
+        },
+        key=len,
+        reverse=True,
+    )
+)
+
+
+def _js_executable_tokens(source):
+    """Return executable JS tokens needed by corpus audits, excluding literals."""
+
+    tokens = []
+    length = len(source)
+
+    def regex_allowed():
+        if not tokens:
+            return True
+        previous = tokens[-1]
+        if previous == ")":
+            depth = 0
+            for token_index in range(len(tokens) - 1, -1, -1):
+                token = tokens[token_index]
+                if token == ")":
+                    depth += 1
+                elif token == "(":
+                    depth -= 1
+                    if depth == 0:
+                        head = tokens[token_index - 1] if token_index else None
+                        if head in ("if", "while", "for", "with", "switch", "catch"):
+                            return True
+                        return (
+                            head == "await"
+                            and token_index > 1
+                            and tokens[token_index - 2] == "for"
+                        )
+            return False
+        if previous == "of":
+            depth = 0
+            for token_index in range(len(tokens) - 2, -1, -1):
+                token = tokens[token_index]
+                if token == ")":
+                    depth += 1
+                elif token == "(":
+                    if depth:
+                        depth -= 1
+                    else:
+                        return token_index > 0 and tokens[token_index - 1] == "for"
+            return False
+        if previous not in _JS_REGEX_PREFIX_TOKENS:
+            return False
+        return len(tokens) < 2 or tokens[-2] not in (".", "?.")
+
+    def scan_quoted(index, quote):
+        value = []
+        index += 1
+        while index < length:
+            char = source[index]
+            if char == "\\":
+                index += 1
+                if index >= length:
+                    break
+                escaped = source[index]
+                escapes = {
+                    "b": "\b",
+                    "f": "\f",
+                    "n": "\n",
+                    "r": "\r",
+                    "t": "\t",
+                    "v": "\v",
+                    "0": "\0",
+                }
+                if escaped in "\r\n":
+                    if escaped == "\r" and index + 1 < length and source[index + 1] == "\n":
+                        index += 1
+                elif escaped == "x" and index + 2 < length:
+                    value.append(chr(int(source[index + 1 : index + 3], 16)))
+                    index += 2
+                elif escaped == "u":
+                    if index + 1 < length and source[index + 1] == "{":
+                        close = source.find("}", index + 2)
+                        if close == -1:
+                            raise RuntimeError("invalid JavaScript string escape in corpus audit")
+                        value.append(chr(int(source[index + 2 : close], 16)))
+                        index = close
+                    elif index + 4 < length:
+                        value.append(chr(int(source[index + 1 : index + 5], 16)))
+                        index += 4
+                    else:
+                        raise RuntimeError("invalid JavaScript string escape in corpus audit")
+                else:
+                    value.append(escapes.get(escaped, escaped))
+                index += 1
+            elif char == quote:
+                return index + 1, "".join(value)
+            elif char in "\r\n":
+                raise RuntimeError("unterminated JavaScript string in corpus audit")
+            else:
+                value.append(char)
+                index += 1
+        raise RuntimeError("unterminated JavaScript string in corpus audit")
+
+    def scan_regex(index):
+        index += 1
+        in_class = False
+        while index < length:
+            char = source[index]
+            if char == "\\":
+                index += 2
+                continue
+            if char in "\r\n":
+                raise RuntimeError("unterminated JavaScript regexp in corpus audit")
+            if char == "[":
+                in_class = True
+            elif char == "]":
+                in_class = False
+            elif char == "/" and not in_class:
+                index += 1
+                while index < length and (
+                    source[index].isalnum() or source[index] in "_$"
+                ):
+                    index += 1
+                return index
+            index += 1
+        raise RuntimeError("unterminated JavaScript regexp in corpus audit")
+
+    def scan_template(index):
+        index += 1
+        while index < length:
+            char = source[index]
+            if char == "\\":
+                index += 2
+            elif char == "`":
+                return index + 1
+            elif source.startswith("${", index):
+                index = scan_code(index + 2, stop_at_closing_brace=True)
+            else:
+                index += 1
+        raise RuntimeError("unterminated JavaScript template in corpus audit")
+
+    def scan_code(index, stop_at_closing_brace=False):
+        brace_depth = 0
+        while index < length:
+            char = source[index]
+            if char.isspace():
+                index += 1
+                continue
+            if source.startswith("//", index):
+                newline = source.find("\n", index + 2)
+                index = length if newline == -1 else newline + 1
+                continue
+            if source.startswith("/*", index):
+                close = source.find("*/", index + 2)
+                if close == -1:
+                    raise RuntimeError("unterminated JavaScript comment in corpus audit")
+                index = close + 2
+                continue
+            if char in "'\"":
+                index, value = scan_quoted(index, char)
+                tokens.append(("string", value))
+                continue
+            if char == "`":
+                index = scan_template(index)
+                continue
+            if char == "}" and stop_at_closing_brace and brace_depth == 0:
+                return index + 1
+            if char == "{":
+                brace_depth += 1
+            elif char == "}":
+                brace_depth -= 1
+            if char == "/":
+                if regex_allowed():
+                    index = scan_regex(index)
+                    continue
+            if char.isalpha() or char in "_$":
+                end = index + 1
+                while end < length and (
+                    source[end].isalnum() or source[end] in "_$"
+                ):
+                    end += 1
+                tokens.append(source[index:end])
+                index = end
+                continue
+            if char.isdigit():
+                end = index + 1
+                while end < length and (
+                    source[end].isalnum() or source[end] in "._$"
+                ):
+                    end += 1
+                tokens.append(source[index:end])
+                index = end
+                continue
+            punctuator = next(
+                (
+                    candidate
+                    for candidate in _JS_MULTI_CHAR_PUNCTUATORS
+                    if source.startswith(candidate, index)
+                ),
+                None,
+            )
+            if punctuator is not None:
+                tokens.append(punctuator)
+                index += len(punctuator)
+                continue
+            tokens.append(char)
+            index += 1
+        if stop_at_closing_brace:
+            raise RuntimeError("unterminated JavaScript template expression in corpus audit")
+        return index
+
+    scan_code(0)
+    return tuple(tokens)
+
+
+def _js_equals_call_indices(tokens):
+    calls = []
+    for index in range(len(tokens)):
+        if tokens[index] in (".", "?."):
+            end = index + 2
+            if end <= len(tokens) and tokens[index + 1 : end] == ("equals",):
+                if end < len(tokens) and tokens[end] == "?.":
+                    end += 1
+                if end < len(tokens) and tokens[end] == "(":
+                    calls.append(index)
+            continue
+        if (
+            tokens[index] == "["
+            and index + 2 < len(tokens)
+            and tokens[index + 1] == ("string", "equals")
+            and tokens[index + 2] == "]"
+        ):
+            receiver = index - 1
+            if receiver >= 0 and tokens[receiver] == "?.":
+                receiver -= 1
+            if receiver < 0 or tokens[receiver] in _JS_REGEX_PREFIX_TOKENS:
+                continue
+            end = index + 3
+            if end < len(tokens) and tokens[end] == "?.":
+                end += 1
+            if end < len(tokens) and tokens[end] == "(":
+                parameters_end = _js_matching_token(tokens, end, "(", ")")
+                if (
+                    parameters_end + 1 < len(tokens)
+                    and tokens[parameters_end + 1] == "{"
+                ):
+                    continue
+                calls.append(index)
+    return tuple(calls)
+
+
+def _js_matching_token(tokens, start, opening, closing):
+    depth = 0
+    for index in range(start, len(tokens)):
+        if tokens[index] == opening:
+            depth += 1
+        elif tokens[index] == closing:
+            depth -= 1
+            if depth == 0:
+                return index
+    raise RuntimeError(f"unmatched JavaScript {opening} in corpus audit")
+
+
+_TEMPORAL_HELPER_EQUALS_OWNERS = frozenset(
+    {
+        "assertInstantsEqual",
+        "assertPlainDatesEqual",
+        "assertPlainDateTimesEqual",
+        "assertPlainTimesEqual",
+        "assertZonedDateTimesEqual",
+    }
+)
+
+_PLAIN_MONTH_DAY_EQUALS_DOWNSTREAM_CALL_COUNTS = {
+    path: 2 if path.endswith("chinese-dangi-constrain-rare-leap-months.js") else 1
+    for path in TEMPORAL_PLAIN_MONTH_DAY_EQUALS_DOWNSTREAM_SURFACE
+}
+
+
+def _temporal_helpers_equals_owners(test262_root):
+    source = (test262_root / "harness/temporalHelpers.js").read_text()
+    tokens = _js_executable_tokens(source)
+    equals_calls = set(_js_equals_call_indices(tokens))
+    owners = []
+    claimed_calls = set()
+    try:
+        object_start = next(
+            index + 2
+            for index in range(len(tokens) - 2)
+            if tokens[index : index + 3] == ("TemporalHelpers", "=", "{")
+        )
+    except StopIteration as error:
+        raise RuntimeError("TemporalHelpers object not found in corpus audit") from error
+
+    object_end = _js_matching_token(tokens, object_start, "{", "}")
+    index = object_start + 1
+    while index < object_end:
+        if (
+            isinstance(tokens[index], str)
+            and re.fullmatch(r"[A-Za-z_$][A-Za-z0-9_$]*", tokens[index])
+            and index + 1 < object_end
+            and tokens[index + 1] == "("
+        ):
+            parameters_end = _js_matching_token(tokens, index + 1, "(", ")")
+            if parameters_end + 1 < object_end and tokens[parameters_end + 1] == "{":
+                body_start = parameters_end + 1
+                body_end = _js_matching_token(tokens, body_start, "{", "}")
+                method_calls = {
+                    call for call in equals_calls if body_start < call < body_end
+                }
+                owners.extend([tokens[index]] * len(method_calls))
+                claimed_calls.update(method_calls)
+                index = body_end + 1
+                continue
+        index += 1
+    if claimed_calls != equals_calls:
+        raise RuntimeError("Temporal helper equals call has no owning method")
+    return tuple(owners)
+
+
+def _plain_month_day_equals_downstream_call_counts(test_root):
+    return {
+        path: len(
+            _js_equals_call_indices(
+                _js_executable_tokens((test_root / path).read_text())
+            )
+        )
+        for path in TEMPORAL_PLAIN_MONTH_DAY_EQUALS_DOWNSTREAM_SURFACE
+    }
 
 
 class ModuleCoreAdmissionTests(unittest.TestCase):
@@ -8935,6 +9403,414 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                         diagnostic.verify_expected_results(arguments)
             finally:
                 diagnostic.test262_runner.TEST262 = original_root
+
+    def test_temporal_plain_month_day_equals_surface_is_exact_live_disjoint_and_shared(self):
+        files = TEMPORAL_PLAIN_MONTH_DAY_EQUALS_FILES
+        self.assertEqual(files, temporal_month_day_equals_diagnostic.SURFACE)
+        self.assertEqual(len(files), 36)
+        for metadata_map in (
+            TEMPORAL_PLAIN_MONTH_DAY_EQUALS_FEATURES,
+            TEMPORAL_PLAIN_MONTH_DAY_EQUALS_INCLUDES,
+            TEMPORAL_PLAIN_MONTH_DAY_EQUALS_FLAGS,
+            TEMPORAL_PLAIN_MONTH_DAY_EQUALS_NEGATIVE,
+        ):
+            self.assertEqual(set(metadata_map), set(files))
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        directory = test_root / "built-ins/Temporal/PlainMonthDay/prototype/equals"
+        corpus_required = "TEST262" in os.environ
+        try:
+            live_files = (
+                {
+                    path.relative_to(test_root).as_posix()
+                    for path in directory.glob("*.js")
+                    if "_FIXTURE" not in path.name
+                }
+                if directory.is_dir()
+                else None
+            )
+        except OSError:
+            if corpus_required:
+                raise
+            live_files = None
+        if corpus_required and live_files is None:
+            raise FileNotFoundError(directory)
+        if live_files is not None:
+            self.assertEqual(live_files, set(files))
+            for relative in files:
+                path = test_root / relative
+                metadata = test262_runner.parse_meta(path.read_text())
+                for key, expected in (
+                    ("features", TEMPORAL_PLAIN_MONTH_DAY_EQUALS_FEATURES[relative]),
+                    ("includes", TEMPORAL_PLAIN_MONTH_DAY_EQUALS_INCLUDES[relative]),
+                    ("flags", TEMPORAL_PLAIN_MONTH_DAY_EQUALS_FLAGS[relative]),
+                ):
+                    self.assertEqual(frozenset(metadata.get(key, [])), expected, relative)
+                self.assertEqual(
+                    metadata.get("negative"),
+                    TEMPORAL_PLAIN_MONTH_DAY_EQUALS_NEGATIVE[relative],
+                    relative,
+                )
+                for tool in (test262_runner, test262_analyze):
+                    self.assertTrue(tool.temporal_plain_month_day_equals_path(path))
+                    self.assertEqual(
+                        tool.temporal_plain_month_day_equals_features(path),
+                        TEMPORAL_PLAIN_MONTH_DAY_EQUALS_FEATURES[relative],
+                    )
+                    self.assertFalse(tool.should_skip(metadata, path), relative)
+
+        tools_dir = Path(__file__).resolve().parent
+        for manifest in tools_dir.glob("test262_*_admission.txt"):
+            if manifest.name == "test262_temporal_plain_month_day_equals_admission.txt":
+                continue
+            existing = {
+                line
+                for raw_line in manifest.read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            self.assertTrue(files.isdisjoint(existing), manifest.name)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = root / "test/built-ins/Temporal/PlainMonthDay/prototype/equals/future.js"
+            outside = root / "test/built-ins/Temporal/Other/prototype/equals/basic.js"
+            for tool in (test262_runner, test262_analyze):
+                self.assertFalse(tool.temporal_plain_month_day_equals_path(None))
+                self.assertFalse(tool.temporal_plain_month_day_equals_path(object()))
+                self.assertEqual(tool.temporal_plain_month_day_equals_features(None), frozenset())
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, features in TEMPORAL_PLAIN_MONTH_DAY_EQUALS_FEATURES.items():
+                        path = root / "test" / relative
+                        self.assertTrue(tool.temporal_plain_month_day_equals_path(path))
+                        self.assertEqual(tool.temporal_plain_month_day_equals_features(path), features)
+                        self.assertFalse(tool.should_skip({"features": sorted(features)}, path))
+                    for path in (future, outside):
+                        self.assertFalse(tool.temporal_plain_month_day_equals_path(path))
+                        self.assertEqual(tool.temporal_plain_month_day_equals_features(path), frozenset())
+                        self.assertTrue(tool.should_skip({"features": ["Temporal"]}, path))
+                finally:
+                    tool.TEST262 = original_root
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "test").mkdir()
+            diagnostic_runner = temporal_month_day_equals_diagnostic.test262_runner
+            original_root = diagnostic_runner.TEST262
+            diagnostic_runner.TEST262 = str(root)
+            arguments = sorted(files)
+            try:
+                with patch.object(diagnostic_runner, "run_test", return_value="pass"):
+                    temporal_month_day_equals_diagnostic.verify_expected_results(arguments)
+                    for invalid in (
+                        arguments[:-1],
+                        arguments[:-1] + [arguments[0]],
+                        arguments + ["built-ins/Temporal/Other/equals.js"],
+                    ):
+                        with self.assertRaisesRegex(RuntimeError, "exact frozen surface"):
+                            temporal_month_day_equals_diagnostic.verify_expected_results(invalid)
+                with patch.object(diagnostic_runner, "run_test", return_value="fail"):
+                    with self.assertRaisesRegex(RuntimeError, "results drifted"):
+                        temporal_month_day_equals_diagnostic.verify_expected_results(arguments)
+            finally:
+                diagnostic_runner.TEST262 = original_root
+
+    def test_temporal_plain_month_day_equals_intl_and_downstream_are_exact(self):
+        intl_files = TEMPORAL_PLAIN_MONTH_DAY_EQUALS_INTL_FILES
+        intl_blockers = TEMPORAL_PLAIN_MONTH_DAY_EQUALS_INTL_BLOCKERS
+        intl_surface = TEMPORAL_PLAIN_MONTH_DAY_EQUALS_INTL_SURFACE
+        downstream = TEMPORAL_PLAIN_MONTH_DAY_EQUALS_DOWNSTREAM_SURFACE
+        self.assertEqual(len(intl_files), 1)
+        self.assertEqual(len(intl_blockers), 3)
+        self.assertEqual(len(intl_surface), 4)
+        self.assertFalse(TEMPORAL_PLAIN_MONTH_DAY_EQUALS_DOWNSTREAM_FILES)
+        self.assertEqual(downstream, TEMPORAL_PLAIN_MONTH_DAY_EQUALS_DOWNSTREAM_BLOCKERS)
+        self.assertEqual(len(downstream), 7)
+        self.assertEqual(intl_surface, temporal_month_day_equals_intl_diagnostic.SURFACE)
+        self.assertEqual(downstream, temporal_month_day_equals_downstream_diagnostic.SURFACE)
+        self.assertTrue(intl_surface.isdisjoint(downstream))
+        self.assertTrue(intl_surface.isdisjoint(TEMPORAL_PLAIN_MONTH_DAY_EQUALS_FILES))
+
+        for metadata_map, surface in (
+            (TEMPORAL_PLAIN_MONTH_DAY_EQUALS_INTL_FEATURES, intl_surface),
+            (TEMPORAL_PLAIN_MONTH_DAY_EQUALS_INTL_INCLUDES, intl_surface),
+            (TEMPORAL_PLAIN_MONTH_DAY_EQUALS_INTL_FLAGS, intl_surface),
+            (TEMPORAL_PLAIN_MONTH_DAY_EQUALS_INTL_NEGATIVE, intl_surface),
+            (TEMPORAL_PLAIN_MONTH_DAY_EQUALS_DOWNSTREAM_FEATURES, downstream),
+            (TEMPORAL_PLAIN_MONTH_DAY_EQUALS_DOWNSTREAM_INCLUDES, downstream),
+            (TEMPORAL_PLAIN_MONTH_DAY_EQUALS_DOWNSTREAM_FLAGS, downstream),
+            (TEMPORAL_PLAIN_MONTH_DAY_EQUALS_DOWNSTREAM_NEGATIVE, downstream),
+        ):
+            self.assertEqual(set(metadata_map), set(surface))
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        corpus_required = "TEST262" in os.environ
+        try:
+            corpus_available = test_root.is_dir()
+        except OSError:
+            if corpus_required:
+                raise
+            corpus_available = False
+        if corpus_required and not corpus_available:
+            raise FileNotFoundError(test_root)
+        if corpus_available:
+            self.assertEqual(
+                _plain_month_day_equals_candidate_audit(test_root),
+                TEMPORAL_PLAIN_MONTH_DAY_EQUALS_FILES | intl_surface | downstream,
+            )
+            owners = _temporal_helpers_equals_owners(test_root.parent)
+            self.assertEqual(len(owners), 5)
+            self.assertEqual(frozenset(owners), _TEMPORAL_HELPER_EQUALS_OWNERS)
+            self.assertEqual(
+                _plain_month_day_equals_downstream_call_counts(test_root),
+                _PLAIN_MONTH_DAY_EQUALS_DOWNSTREAM_CALL_COUNTS,
+            )
+            self.assertEqual(sum(_PLAIN_MONTH_DAY_EQUALS_DOWNSTREAM_CALL_COUNTS.values()), 8)
+            for metadata_map, surface in (
+                (TEMPORAL_PLAIN_MONTH_DAY_EQUALS_INTL_FEATURES, intl_surface),
+                (TEMPORAL_PLAIN_MONTH_DAY_EQUALS_DOWNSTREAM_FEATURES, downstream),
+            ):
+                for relative in surface:
+                    path = test_root / relative
+                    self.assertTrue(path.is_file(), relative)
+                    metadata = test262_runner.parse_meta(path.read_text())
+                    includes = (
+                        TEMPORAL_PLAIN_MONTH_DAY_EQUALS_INTL_INCLUDES
+                        if relative in intl_surface
+                        else TEMPORAL_PLAIN_MONTH_DAY_EQUALS_DOWNSTREAM_INCLUDES
+                    )
+                    flags = (
+                        TEMPORAL_PLAIN_MONTH_DAY_EQUALS_INTL_FLAGS
+                        if relative in intl_surface
+                        else TEMPORAL_PLAIN_MONTH_DAY_EQUALS_DOWNSTREAM_FLAGS
+                    )
+                    negative = (
+                        TEMPORAL_PLAIN_MONTH_DAY_EQUALS_INTL_NEGATIVE
+                        if relative in intl_surface
+                        else TEMPORAL_PLAIN_MONTH_DAY_EQUALS_DOWNSTREAM_NEGATIVE
+                    )
+                    self.assertEqual(frozenset(metadata.get("features", [])), metadata_map[relative])
+                    self.assertEqual(frozenset(metadata.get("includes", [])), includes[relative])
+                    self.assertEqual(frozenset(metadata.get("flags", [])), flags[relative])
+                    self.assertEqual(metadata.get("negative"), negative[relative])
+                    for tool in (test262_runner, test262_analyze):
+                        if relative in intl_files:
+                            self.assertTrue(tool.temporal_plain_month_day_equals_intl_path(path))
+                            self.assertFalse(tool.should_skip(metadata, path), relative)
+                        else:
+                            self.assertFalse(tool.temporal_plain_month_day_equals_intl_path(path))
+                            self.assertTrue(tool.should_skip(metadata, path), relative)
+
+        tools_dir = Path(__file__).resolve().parent
+        for manifest in tools_dir.glob("test262_*_admission.txt"):
+            existing = {
+                line
+                for raw_line in manifest.read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            if manifest.name == "test262_temporal_plain_month_day_equals_intl_admission.txt":
+                self.assertEqual(existing, set(intl_files))
+            else:
+                self.assertTrue(intl_files.isdisjoint(existing), manifest.name)
+            self.assertTrue(intl_blockers.isdisjoint(existing), manifest.name)
+            self.assertTrue(downstream.isdisjoint(existing), manifest.name)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = root / "test/intl402/Temporal/PlainMonthDay/prototype/equals/future.js"
+            outside = root / "test/intl402/Temporal/Other/prototype/equals/basic.js"
+            for tool in (test262_runner, test262_analyze):
+                self.assertFalse(tool.temporal_plain_month_day_equals_intl_path(None))
+                self.assertFalse(tool.temporal_plain_month_day_equals_intl_path(object()))
+                self.assertEqual(
+                    tool.temporal_plain_month_day_equals_intl_features(None), frozenset()
+                )
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, features in TEMPORAL_PLAIN_MONTH_DAY_EQUALS_INTL_FEATURES.items():
+                        path = root / "test" / relative
+                        if relative in intl_files:
+                            self.assertTrue(tool.temporal_plain_month_day_equals_intl_path(path))
+                            self.assertEqual(
+                                tool.temporal_plain_month_day_equals_intl_features(path), features
+                            )
+                            self.assertFalse(tool.should_skip({"features": sorted(features)}, path))
+                        else:
+                            self.assertFalse(tool.temporal_plain_month_day_equals_intl_path(path))
+                            self.assertTrue(tool.should_skip({"features": sorted(features)}, path))
+                    for path in (future, outside):
+                        self.assertFalse(tool.temporal_plain_month_day_equals_intl_path(path))
+                        self.assertEqual(
+                            tool.temporal_plain_month_day_equals_intl_features(path), frozenset()
+                        )
+                        self.assertTrue(tool.should_skip({"features": ["Temporal"]}, path))
+                finally:
+                    tool.TEST262 = original_root
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "test").mkdir()
+            for diagnostic, surface, expected_status in (
+                (temporal_month_day_equals_intl_diagnostic, intl_surface, None),
+                (temporal_month_day_equals_downstream_diagnostic, downstream, "fail"),
+            ):
+                original_root = diagnostic.test262_runner.TEST262
+                diagnostic.test262_runner.TEST262 = str(root)
+                arguments = sorted(surface)
+                try:
+                    def result(path):
+                        relative = Path(path).resolve().relative_to((root / "test").resolve()).as_posix()
+                        if expected_status is not None:
+                            return expected_status, (
+                                "RangeError: Invalid Temporal calendar identifier (at line 1)",
+                                "RangeError: Invalid Temporal calendar identifier (at line 2)",
+                            )
+                        status = "fail" if relative in intl_blockers else "pass"
+                        messages = (
+                            "RangeError: Invalid Temporal calendar identifier (at line 1)",
+                            "RangeError: Invalid Temporal calendar identifier (at line 2)",
+                        ) if status == "fail" else ("", "")
+                        return status, messages
+
+                    patches = [patch.object(diagnostic, "_run_with_diagnostics", side_effect=result)]
+                    if hasattr(diagnostic, "_verify_corpus"):
+                        patches.append(patch.object(diagnostic, "_verify_corpus"))
+                    with patches[0]:
+                        with patches[1] if len(patches) > 1 else nullcontext():
+                            diagnostic.verify_expected_results(arguments)
+                            for invalid in (
+                                arguments[:-1],
+                                arguments[:-1] + [arguments[0]],
+                                arguments + ["intl402/Temporal/Other/equals.js"],
+                            ):
+                                with self.assertRaisesRegex(RuntimeError, "exact frozen surface"):
+                                    diagnostic.verify_expected_results(invalid)
+                finally:
+                    diagnostic.test262_runner.TEST262 = original_root
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "test").mkdir()
+            diagnostic = temporal_month_day_equals_intl_diagnostic
+            original_root = diagnostic.test262_runner.TEST262
+            diagnostic.test262_runner.TEST262 = str(root)
+            arguments = sorted(intl_surface)
+            try:
+                with patch.object(
+                    diagnostic, "_run_with_diagnostics", return_value=("pass", ("", ""))
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "results drifted"):
+                        diagnostic.verify_expected_results(arguments)
+                with patch.object(
+                    diagnostic,
+                    "_run_with_diagnostics",
+                    side_effect=lambda path: (
+                        ("pass", ("", ""))
+                        if Path(path).name == "future-calendar.js"
+                        else (
+                            "fail",
+                            (
+                                "RangeError: Invalid Temporal calendar identifier extra",
+                            ),
+                        )
+                    ),
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "failure reasons drifted"):
+                        diagnostic.verify_expected_results(arguments)
+            finally:
+                diagnostic.test262_runner.TEST262 = original_root
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "test").mkdir()
+            diagnostic = temporal_month_day_equals_downstream_diagnostic
+            original_root = diagnostic.test262_runner.TEST262
+            diagnostic.test262_runner.TEST262 = str(root)
+            arguments = sorted(downstream)
+            try:
+                with (
+                    patch.object(diagnostic, "_verify_corpus"),
+                    patch.object(
+                        diagnostic,
+                        "_run_with_diagnostics",
+                        return_value=("pass", ("", "")),
+                    ),
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "results drifted"):
+                        diagnostic.verify_expected_results(arguments)
+                with (
+                    patch.object(diagnostic, "_verify_corpus"),
+                    patch.object(
+                        diagnostic,
+                        "_run_with_diagnostics",
+                        return_value=(
+                            "fail",
+                            (
+                                "RangeError: Invalid Temporal calendar identifier extra",
+                            ),
+                        ),
+                    ),
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "failure reasons drifted"):
+                        diagnostic.verify_expected_results(arguments)
+            finally:
+                diagnostic.test262_runner.TEST262 = original_root
+
+    def test_temporal_plain_month_day_equals_call_audits_are_token_aware(self):
+        source = r'''
+var TemporalHelpers = {
+  asserted() {
+    const string = ".equals(";
+    const template = `.equals(${value.equals()})`;
+    const regexp = /\.equals\s*\(/;
+    const arrow = () => /.equals(fake)/;
+    const logical = enabled && /.equals(fake)/;
+    if (enabled) /.equals(fake)/.test(text);
+    n++ / live.equals() / divisor;
+    n-- / second.equals() / divisor;
+    object.of / contextual.equals() / divisor;
+    // ignored.equals(
+    /* ignored.equals( */
+    actual.equals();
+  },
+  unrelated() {
+    actual["equals"]();
+    actual?.equals();
+    actual.equals?.();
+    actual?.["equ\u0061ls"]?.();
+    class Hidden { static ["equals"]() {} }
+    const methods = { get ["equals"]() {}, async ["equals"]() {} };
+  },
+};
+'''
+        tokens = _js_executable_tokens(source)
+        self.assertEqual(len(_js_equals_call_indices(tokens)), 9)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            harness = root / "harness"
+            harness.mkdir()
+            helper = harness / "temporalHelpers.js"
+            helper.write_text(source)
+            self.assertEqual(
+                _temporal_helpers_equals_owners(root),
+                (
+                    "asserted",
+                    "asserted",
+                    "asserted",
+                    "asserted",
+                    "asserted",
+                    "unrelated",
+                    "unrelated",
+                    "unrelated",
+                    "unrelated",
+                ),
+            )
+            helper.write_text(source + "outside.equals();\n")
+            with self.assertRaisesRegex(RuntimeError, "no owning method"):
+                _temporal_helpers_equals_owners(root)
 
     def test_temporal_plain_year_month_arithmetic_surface_is_exact_live_and_shared(self):
         files = TEMPORAL_PLAIN_YEAR_MONTH_ARITHMETIC_FILES

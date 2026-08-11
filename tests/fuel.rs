@@ -212,6 +212,94 @@ fn temporal_plain_year_month_equals_precharges_input_bytes() {
 }
 
 #[test]
+fn temporal_plain_month_day_equals_precharges_input_bytes() {
+    const BUDGET: i64 = 10_000;
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        globalThis.plainMonthDayEquals = new Temporal.PlainMonthDay(1, 1, 'iso8601', 1970);
+        globalThis.plainMonthDayEqualsShort = "1970-01-01[foo=a]";
+        globalThis.plainMonthDayEqualsLong = "1970-01-01[foo=" + "a".repeat(512) + "]";
+        "#,
+    )
+    .expect("PlainMonthDay.equals fuel fixtures should initialize");
+
+    vm.set_fuel(Some(BUDGET));
+    vm.run("plainMonthDayEquals.equals(plainMonthDayEqualsShort);")
+        .expect("short PlainMonthDay input should parse");
+    let short_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+
+    vm.set_fuel(Some(BUDGET));
+    vm.run("plainMonthDayEquals.equals(plainMonthDayEqualsLong);")
+        .expect("long PlainMonthDay input should parse");
+    let long_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+    assert!(long_work >= short_work + 500);
+
+    vm.set_fuel(Some(long_work - 1));
+    let error = vm
+        .run("plainMonthDayEquals.equals(plainMonthDayEqualsLong);")
+        .expect_err("N-1 fuel must abort before parsing");
+    assert_eq!(error.kind, ruja::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+
+    vm.set_fuel(Some(long_work));
+    vm.run("plainMonthDayEquals.equals(plainMonthDayEqualsLong);")
+        .expect("exact measured fuel should compare successfully");
+    assert_eq!(vm.fuel_remaining(), Some(0));
+}
+
+#[test]
+fn temporal_plain_month_day_equals_precharges_month_code_strings() {
+    const BUDGET: i64 = 10_000;
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        globalThis.plainMonthDayCodeEquals = new Temporal.PlainMonthDay(5, 2);
+        globalThis.plainMonthDayCodeShort = 'M050';
+        globalThis.plainMonthDayCodeLong = 'M05' + '0'.repeat(512);
+        globalThis.plainMonthDayCodeShortBag = {
+          day: 2,
+          monthCode: { toString: function () { return plainMonthDayCodeShort; } }
+        };
+        globalThis.plainMonthDayCodeLongBag = {
+          day: 2,
+          monthCode: { toString: function () { return plainMonthDayCodeLong; } }
+        };
+        "#,
+    )
+    .expect("PlainMonthDay.equals monthCode fuel fixtures should initialize");
+
+    vm.set_fuel(Some(BUDGET));
+    let error = vm
+        .run("plainMonthDayCodeEquals.equals(plainMonthDayCodeShortBag);")
+        .expect_err("short invalid monthCode should reach parsing");
+    assert_eq!(error.kind, ruja::ErrorKind::Range);
+    let short_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+
+    vm.set_fuel(Some(BUDGET));
+    let error = vm
+        .run("plainMonthDayCodeEquals.equals(plainMonthDayCodeLongBag);")
+        .expect_err("long invalid monthCode should reach parsing");
+    assert_eq!(error.kind, ruja::ErrorKind::Range);
+    let long_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+    assert!(long_work >= short_work + 500);
+
+    vm.set_fuel(Some(long_work - 1));
+    let error = vm
+        .run("plainMonthDayCodeEquals.equals(plainMonthDayCodeLongBag);")
+        .expect_err("N-1 fuel must abort during monthCode conversion");
+    assert_eq!(error.kind, ruja::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+
+    vm.set_fuel(Some(long_work));
+    let error = vm
+        .run("plainMonthDayCodeEquals.equals(plainMonthDayCodeLongBag);")
+        .expect_err("exact fuel should reach monthCode parsing");
+    assert_eq!(error.kind, ruja::ErrorKind::Range);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+}
+
+#[test]
 fn temporal_plain_year_month_compare_precharges_each_input_string() {
     const BUDGET: i64 = 20_000;
     let mut vm = Vm::new().expect("failed to initialize VM");
