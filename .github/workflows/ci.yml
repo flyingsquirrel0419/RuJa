@@ -97,10 +97,17 @@ jobs:
             test/built-ins/Temporal/PlainDate/prototype/toPlainDateTime
             test/built-ins/Temporal/PlainDate/prototype/toPlainMonthDay
             test/built-ins/Temporal/PlainDate/prototype/toPlainYearMonth
+            test/built-ins/Temporal/PlainDate/prototype/withCalendar
+            test/built-ins/Temporal/PlainDateTime/prototype/withCalendar
+            test/built-ins/Temporal/ZonedDateTime/prototype/withCalendar
             test/built-ins/Temporal/PlainYearMonth
             test/built-ins/Temporal/PlainYearMonth/prototype/toJSON
             test/built-ins/Temporal/PlainYearMonth/prototype/toPlainDate
             test/intl402/Temporal/PlainYearMonth
+            test/intl402/Temporal/PlainDate
+            test/intl402/Temporal/PlainDateTime
+            test/intl402/Temporal/ZonedDateTime
+            test/intl402/DateTimeFormat/prototype/formatRange
             test/staging/Temporal
       - name: Verify live Temporal.PlainYearMonth tooling
         working-directory: tools
@@ -121,6 +128,7 @@ jobs:
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_year_month_to_plain_date_surface_is_exact_live_disjoint_and_shared
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_year_month_to_plain_date_downstream_surface_is_exact_live_disjoint_and_shared
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_sibling_conversions_are_exact_live_and_shared
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_with_calendar_siblings_are_exact_live_and_shared
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_calendar_siblings_formatter_surface_is_exact
           -v
       - name: Run exact Temporal.Duration.prototype.with admission
@@ -381,6 +389,35 @@ jobs:
             "${files[@]}" | tee temporal_plain_date_sibling_conversions_downstream_result.txt
           grep -q '^RATE=0.0 PASS=0 FAIL=3 SKIP=0 TOTAL=3 RAN=3$' \
             temporal_plain_date_sibling_conversions_downstream_result.txt
+      - name: Run exact PlainDate/PlainDateTime withCalendar sibling admission
+        run: |
+          mapfile -t files < <(grep -hEv '^(#|$)' \
+            tools/test262_temporal_plain_date_with_calendar_siblings_admission.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_plain_date_with_calendar_siblings_diagnostic.py \
+            "${files[@]}" | tee temporal_plain_date_with_calendar_siblings_result.txt
+          grep -q '^RATE=100.0 PASS=36 FAIL=0 SKIP=0 TOTAL=36 RAN=36$' \
+            temporal_plain_date_with_calendar_siblings_result.txt
+      - name: Diagnose complete PlainDate/PlainDateTime withCalendar sibling surface
+        run: |
+          mapfile -t files < <(grep -hEv '^(#|$)' \
+            tools/test262_temporal_plain_date_with_calendar_siblings_admission.txt \
+            tools/test262_temporal_plain_date_with_calendar_siblings_blockers.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_plain_date_with_calendar_siblings_complete_diagnostic.py \
+            "${files[@]}" | tee temporal_plain_date_with_calendar_siblings_complete_result.txt
+          grep -q '^RATE=80.0 PASS=36 FAIL=9 SKIP=0 TOTAL=45 RAN=45$' \
+            temporal_plain_date_with_calendar_siblings_complete_result.txt
+      - name: Diagnose PlainDate/PlainDateTime withCalendar sibling downstream
+        run: |
+          mapfile -t files < <(grep -hEv '^(#|$)' \
+            tools/test262_temporal_plain_date_with_calendar_siblings_downstream_blockers.txt \
+            tools/test262_temporal_plain_year_month_to_plain_date_downstream_blockers.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_plain_date_with_calendar_siblings_downstream_diagnostic.py \
+            "${files[@]}" | tee temporal_plain_date_with_calendar_siblings_downstream_result.txt
+          grep -q '^RATE=0.0 PASS=0 FAIL=137 SKIP=0 TOTAL=137 RAN=137$' \
+            temporal_plain_date_with_calendar_siblings_downstream_result.txt
       - name: Run exact Temporal.PlainYearMonth.prototype.toPlainDate admission
         run: |
           mapfile -t files < <(grep -hEv '^(#|$)' \

@@ -1467,6 +1467,37 @@ fn temporal_namespace_installation_restores_roots_after_plain_date_sibling_conve
 }
 
 #[test]
+fn temporal_namespace_installation_restores_roots_after_plain_with_calendar_failures() {
+    for (capacity, method) in [
+        (183, "PlainDate.withCalendar"),
+        (184, "PlainDateTime.withCalendar"),
+    ] {
+        let mut vm = Vm::new().expect("failed to initialize VM");
+        vm.gc();
+        let original = vm.get_global("Temporal");
+        let baseline_pins = vm.gc_pins.len();
+        let baseline_live = vm.heap.live_count();
+        let baseline_registries = realm_registry_counts(&vm);
+        let global = vm.global;
+        let object_proto = vm.object_proto.clone();
+
+        vm.set_max_heap_objects(Some(baseline_live + capacity));
+        let result =
+            crate::builtins::install_temporal_namespace_in_env(&mut vm, global, None, object_proto);
+
+        vm.set_max_heap_objects(None);
+        let error = result.expect_err("PlainDate withCalendar allocation must hit the cap");
+        assert_eq!(error.kind, crate::error::ErrorKind::Range, "{method}");
+        assert_eq!(error.message, "heap limit exceeded", "{method}");
+        assert_eq!(vm.gc_pins.len(), baseline_pins, "{method}");
+        assert_eq!(vm.get_global("Temporal"), original, "{method}");
+        assert_eq!(realm_registry_counts(&vm), baseline_registries, "{method}");
+        vm.gc();
+        assert_eq!(vm.heap.live_count(), baseline_live, "{method}");
+    }
+}
+
+#[test]
 fn temporal_plain_date_sibling_conversions_retry_result_allocation() {
     for (method, property, expected) in [
         ("toPlainMonthDay", "day", Value::Number(29.0)),
@@ -1785,11 +1816,11 @@ fn temporal_namespace_installation_rolls_back_last_boundary_on_default_stack() {
     let baseline_registries = realm_registry_counts(&vm);
     let global = vm.global;
 
-    vm.set_max_heap_objects(Some(baseline_live + 182));
+    vm.set_max_heap_objects(Some(baseline_live + 184));
     let object_proto = vm.object_proto.clone();
     let error =
         crate::builtins::install_temporal_namespace_in_env(&mut vm, global, None, object_proto)
-            .expect_err("allocation 183 must fail on the ordinary test stack");
+            .expect_err("allocation 185 must fail on the ordinary test stack");
     vm.set_max_heap_objects(None);
 
     assert_eq!(error.kind, crate::error::ErrorKind::Range);
@@ -1809,9 +1840,9 @@ fn temporal_namespace_installation_covers_every_allocation_boundary_inner() {
     let baseline_live = vm.heap.live_count();
     let global = vm.global;
 
-    // Allocations 18 through 183 cover the method/accessor batches, namespace
-    // objects, and appended PlainDate sibling conversion methods.
-    for extra_capacity in 17..183 {
+    // Allocations 18 through 185 cover the method/accessor batches, namespace
+    // objects, and appended PlainDate conversion methods.
+    for extra_capacity in 17..185 {
         vm.set_max_heap_objects(Some(baseline_live + extra_capacity));
         let object_proto = vm.object_proto.clone();
         let result =
@@ -1832,16 +1863,16 @@ fn temporal_namespace_installation_covers_every_allocation_boundary_inner() {
         );
     }
 
-    vm.set_max_heap_objects(Some(baseline_live + 183));
+    vm.set_max_heap_objects(Some(baseline_live + 185));
     let object_proto = vm.object_proto.clone();
     let temporal =
         crate::builtins::install_temporal_namespace_in_env(&mut vm, global, None, object_proto)
-            .expect("exact 183-object capacity must install the complete namespace");
+            .expect("exact 185-object capacity must install the complete namespace");
     vm.set_max_heap_objects(None);
     assert_eq!(vm.gc_pins.len(), baseline_pins);
     assert_eq!(vm.get_global("Temporal"), temporal);
     assert_eq!(
-        vm.run("typeof Temporal.Duration.from === 'function' && typeof Temporal.Duration.prototype.with === 'function' && typeof Temporal.Duration.prototype.abs === 'function' && typeof Temporal.Duration.prototype.negated === 'function' && typeof Temporal.Duration.prototype.total === 'function' && typeof Temporal.Duration.prototype.toString === 'function' && typeof Temporal.Duration.prototype.toJSON === 'function' && typeof Temporal.Duration.prototype.valueOf === 'function' && typeof Temporal.PlainDate === 'function' && typeof Temporal.PlainDate.from === 'function' && typeof Temporal.PlainDate.compare === 'function' && typeof Temporal.PlainDate.prototype.equals === 'function' && typeof Temporal.PlainDate.prototype.toPlainDateTime === 'function' && typeof Temporal.PlainDate.prototype.toPlainMonthDay === 'function' && typeof Temporal.PlainDate.prototype.toPlainYearMonth === 'function' && typeof Temporal.PlainDate.prototype.toString === 'function' && typeof Temporal.PlainDate.prototype.toJSON === 'function' && typeof Temporal.PlainMonthDay === 'function' && typeof Temporal.PlainMonthDay.prototype.with === 'function' && typeof Temporal.PlainMonthDay.prototype.toString === 'function' && typeof Temporal.PlainMonthDay.prototype.toJSON === 'function' && typeof Temporal.PlainMonthDay.prototype.toPlainDate === 'function' && typeof Temporal.PlainMonthDay.prototype.equals === 'function' && typeof Temporal.PlainMonthDay.prototype.valueOf === 'function' && typeof Temporal.PlainYearMonth === 'function' && typeof Temporal.PlainYearMonth.compare === 'function' && typeof Temporal.PlainYearMonth.prototype.with === 'function' && typeof Temporal.PlainYearMonth.prototype.add === 'function' && typeof Temporal.PlainYearMonth.prototype.subtract === 'function' && typeof Temporal.PlainYearMonth.prototype.equals === 'function' && typeof Temporal.PlainYearMonth.prototype.toString === 'function' && typeof Temporal.PlainYearMonth.prototype.toJSON === 'function' && typeof Temporal.PlainYearMonth.prototype.toPlainDate === 'function' && typeof Temporal.PlainYearMonth.prototype.valueOf === 'function' && typeof Temporal.PlainTime === 'function' && typeof Temporal.PlainTime.from === 'function' && typeof Temporal.PlainTime.compare === 'function' && typeof Temporal.PlainTime.prototype.equals === 'function' && typeof Temporal.PlainTime.prototype.toString === 'function' && typeof Temporal.PlainTime.prototype.toJSON === 'function' && typeof Temporal.PlainTime.prototype.round === 'function' && typeof Temporal.PlainTime.prototype.with === 'function' && typeof Temporal.PlainTime.prototype.add === 'function' && typeof Temporal.PlainTime.prototype.subtract === 'function' && typeof Temporal.PlainTime.prototype.valueOf === 'function' && typeof Temporal.PlainDateTime.compare === 'function' && typeof Temporal.PlainDateTime.prototype.equals")
+        vm.run("typeof Temporal.Duration.from === 'function' && typeof Temporal.Duration.prototype.with === 'function' && typeof Temporal.Duration.prototype.abs === 'function' && typeof Temporal.Duration.prototype.negated === 'function' && typeof Temporal.Duration.prototype.total === 'function' && typeof Temporal.Duration.prototype.toString === 'function' && typeof Temporal.Duration.prototype.toJSON === 'function' && typeof Temporal.Duration.prototype.valueOf === 'function' && typeof Temporal.PlainDate === 'function' && typeof Temporal.PlainDate.from === 'function' && typeof Temporal.PlainDate.compare === 'function' && typeof Temporal.PlainDate.prototype.equals === 'function' && typeof Temporal.PlainDate.prototype.toPlainDateTime === 'function' && typeof Temporal.PlainDate.prototype.toPlainMonthDay === 'function' && typeof Temporal.PlainDate.prototype.toPlainYearMonth === 'function' && typeof Temporal.PlainDate.prototype.withCalendar === 'function' && typeof Temporal.PlainDate.prototype.toString === 'function' && typeof Temporal.PlainDate.prototype.toJSON === 'function' && typeof Temporal.PlainMonthDay === 'function' && typeof Temporal.PlainMonthDay.prototype.with === 'function' && typeof Temporal.PlainMonthDay.prototype.toString === 'function' && typeof Temporal.PlainMonthDay.prototype.toJSON === 'function' && typeof Temporal.PlainMonthDay.prototype.toPlainDate === 'function' && typeof Temporal.PlainMonthDay.prototype.equals === 'function' && typeof Temporal.PlainMonthDay.prototype.valueOf === 'function' && typeof Temporal.PlainYearMonth === 'function' && typeof Temporal.PlainYearMonth.compare === 'function' && typeof Temporal.PlainYearMonth.prototype.with === 'function' && typeof Temporal.PlainYearMonth.prototype.add === 'function' && typeof Temporal.PlainYearMonth.prototype.subtract === 'function' && typeof Temporal.PlainYearMonth.prototype.equals === 'function' && typeof Temporal.PlainYearMonth.prototype.toString === 'function' && typeof Temporal.PlainYearMonth.prototype.toJSON === 'function' && typeof Temporal.PlainYearMonth.prototype.toPlainDate === 'function' && typeof Temporal.PlainYearMonth.prototype.valueOf === 'function' && typeof Temporal.PlainTime === 'function' && typeof Temporal.PlainTime.from === 'function' && typeof Temporal.PlainTime.compare === 'function' && typeof Temporal.PlainTime.prototype.equals === 'function' && typeof Temporal.PlainTime.prototype.toString === 'function' && typeof Temporal.PlainTime.prototype.toJSON === 'function' && typeof Temporal.PlainTime.prototype.round === 'function' && typeof Temporal.PlainTime.prototype.with === 'function' && typeof Temporal.PlainTime.prototype.add === 'function' && typeof Temporal.PlainTime.prototype.subtract === 'function' && typeof Temporal.PlainTime.prototype.valueOf === 'function' && typeof Temporal.PlainDateTime.compare === 'function' && typeof Temporal.PlainDateTime.prototype.equals === 'function' && typeof Temporal.PlainDateTime.prototype.withCalendar")
             .expect("installed namespace should remain usable"),
         Value::String(Arc::from("function"))
     );
@@ -4126,34 +4157,131 @@ fn temporal_plain_date_time_compare_returns_without_heap_allocation() {
 
 #[test]
 fn temporal_with_calendar_result_allocation_fails_cleanly_and_retries_after_gc() {
-    let mut vm = Vm::new().expect("failed to initialize VM");
-    vm.run("globalThis.zdtForCalendar = new Temporal.ZonedDateTime(1n, 'UTC');")
-        .expect("withCalendar fixture should initialize");
-    vm.gc();
-    let baseline_pins = vm.gc_pins.len();
-    let baseline_live = vm.heap.live_count();
+    for (fixture, expression, expected) in [
+        (
+            "globalThis.valueForCalendar = new Temporal.ZonedDateTime(1n, 'UTC');",
+            "changedCalendar.epochNanoseconds + '|' + changedCalendar.calendarId",
+            "1|iso8601",
+        ),
+        (
+            "globalThis.valueForCalendar = new Temporal.PlainDate(2000, 5, 2);",
+            "changedCalendar.toString() + '|' + changedCalendar.calendarId",
+            "2000-05-02|iso8601",
+        ),
+        (
+            "globalThis.valueForCalendar = new Temporal.PlainDateTime(2000, 5, 2, 12, 34, 56);",
+            "changedCalendar.year + '|' + changedCalendar.month + '|' + changedCalendar.day + '|' + changedCalendar.hour + '|' + changedCalendar.minute + '|' + changedCalendar.second + '|' + changedCalendar.calendarId",
+            "2000|5|2|12|34|56|iso8601",
+        ),
+    ] {
+        let mut vm = Vm::new().expect("failed to initialize VM");
+        vm.run(fixture)
+            .expect("withCalendar fixture should initialize");
+        vm.gc();
+        let baseline_pins = vm.gc_pins.len();
+        let baseline_live = vm.heap.live_count();
 
-    vm.set_max_heap_objects(Some(baseline_live));
-    let error = vm
-        .run("zdtForCalendar.withCalendar('iso8601');")
-        .expect_err("result allocation must obey the exact heap cap");
-    vm.set_max_heap_objects(None);
-    assert_eq!(error.kind, crate::error::ErrorKind::Range);
-    assert_eq!(error.message, "heap limit exceeded");
-    assert_eq!(vm.gc_pins.len(), baseline_pins);
-    assert_eq!(vm.heap.live_count(), baseline_live);
+        vm.gc_pin_reservation_failure_countdown = Some(1);
+        let error = vm
+            .run("valueForCalendar.withCalendar('iso8601');")
+            .expect_err("result prototype root reservation must be fallible");
+        assert_eq!(error.kind, crate::error::ErrorKind::Range);
+        assert_eq!(vm.gc_pin_reservation_failure_countdown, None);
+        assert_eq!(vm.gc_pins.len(), baseline_pins);
+        assert_eq!(vm.heap.live_count(), baseline_live);
 
-    let _garbage = vm.new_object().expect("garbage allocation should succeed");
-    vm.set_max_heap_objects(Some(vm.heap.live_count()));
-    let result = vm
-        .run(
-            "globalThis.changedCalendar = zdtForCalendar.withCalendar('iso8601'); \
-             changedCalendar.epochNanoseconds + '|' + changedCalendar.calendarId;",
+        vm.set_max_heap_objects(Some(baseline_live));
+        let error = vm
+            .run("valueForCalendar.withCalendar('iso8601');")
+            .expect_err("result allocation must obey the exact heap cap");
+        vm.set_max_heap_objects(None);
+        assert_eq!(error.kind, crate::error::ErrorKind::Range);
+        assert_eq!(error.message, "heap limit exceeded");
+        assert_eq!(vm.gc_pins.len(), baseline_pins);
+        assert_eq!(vm.heap.live_count(), baseline_live);
+
+        let _garbage = vm.new_object().expect("garbage allocation should succeed");
+        vm.set_max_heap_objects(Some(vm.heap.live_count()));
+        let result = vm
+            .run(&format!(
+                "globalThis.changedCalendar = valueForCalendar.withCalendar('iso8601'); {expression};"
+            ))
+            .expect("result allocation should retry after collecting garbage");
+        vm.set_max_heap_objects(None);
+        assert_eq!(result, Value::String(Arc::from(expected)));
+        assert_eq!(vm.gc_pins.len(), baseline_pins);
+    }
+}
+
+#[test]
+fn temporal_plain_with_calendar_uses_exact_argument_fuel_after_branding() {
+    for (receiver_source, method_source) in [
+        (
+            "new Temporal.PlainDate(2000, 5, 2)",
+            "Temporal.PlainDate.prototype.withCalendar",
+        ),
+        (
+            "new Temporal.PlainDateTime(2000, 5, 2, 12, 34, 56)",
+            "Temporal.PlainDateTime.prototype.withCalendar",
+        ),
+    ] {
+        let mut vm = Vm::new().expect("failed to initialize VM");
+        let receiver = vm.run(receiver_source).expect("receiver should initialize");
+        let method = vm.run(method_source).expect("method should be readable");
+        let calendar = vm
+            .run("new Temporal.PlainMonthDay(6, 3)")
+            .expect("calendar source should initialize");
+        let fixture_pins = vm.pin_many(&[receiver.clone(), method.clone(), calendar.clone()]);
+        let baseline_pins = vm.gc_pins.len();
+
+        vm.set_fuel(Some(0));
+        vm.call_function(
+            &method,
+            std::slice::from_ref(&calendar),
+            Some(receiver.clone()),
         )
-        .expect("result allocation should retry after collecting garbage");
-    vm.set_max_heap_objects(None);
-    assert_eq!(result, Value::String(Arc::from("1|iso8601")));
-    assert_eq!(vm.gc_pins.len(), baseline_pins);
+        .expect("hidden calendar fast path should consume no native fuel");
+        assert_eq!(vm.fuel_remaining(), Some(0));
+        assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+        let calendar_string = Value::String(Arc::from("iso8601"));
+        vm.set_fuel(Some(6));
+        let error = vm
+            .call_function(
+                &method,
+                std::slice::from_ref(&calendar_string),
+                Some(receiver.clone()),
+            )
+            .expect_err("calendar String should consume one unit per byte");
+        assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+        assert_eq!(vm.fuel_remaining(), Some(0));
+        assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+        vm.set_fuel(Some(7));
+        vm.call_function(
+            &method,
+            std::slice::from_ref(&calendar_string),
+            Some(receiver),
+        )
+        .expect("exact calendar String fuel should complete");
+        assert_eq!(vm.fuel_remaining(), Some(0));
+        assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+        vm.set_fuel(Some(0));
+        let error = vm
+            .call_function(
+                &method,
+                std::slice::from_ref(&calendar_string),
+                Some(Value::Undefined),
+            )
+            .expect_err("receiver brand must precede calendar String fuel");
+        assert_eq!(error.kind, crate::error::ErrorKind::Type);
+        assert_eq!(vm.fuel_remaining(), Some(0));
+        assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+        vm.set_fuel(None);
+        vm.unpin_many(fixture_pins);
+    }
 }
 
 #[test]

@@ -379,7 +379,15 @@
   serialization, and `toPlainDateTime`. The bridge combines hidden date and
   calendar slots with midnight, PlainDateTime/ZonedDateTime hidden time,
   ordered constrained property bags, or validated time-context Strings. It
-  rejects UTC-designator Strings and creates the result in the method Realm
+  rejects UTC-designator Strings and creates the result in the method Realm.
+  Realm-local, non-constructable, length-1 `PlainDate.prototype.withCalendar`
+  and `PlainDateTime.prototype.withCalendar` brand receivers before calendar
+  conversion, copy hidden ISO date/time fields without public getters, and
+  create fresh method-Realm intrinsic results. Five Temporal hidden-calendar
+  kinds bypass visible properties; every other input must be a String and
+  reuses the existing parser and fuel accounting. ISO and future-calendar
+  fail-closed behavior are supported, while non-ISO calendar semantics remain
+  unavailable.
 - **Temporal time core**: Realm-local `Temporal.PlainTime` construction stores
   six immutable ISO time fields in hidden slots, honors subclass/newTarget
   prototypes, and exposes branded accessors, `@@toStringTag`, `from`, static

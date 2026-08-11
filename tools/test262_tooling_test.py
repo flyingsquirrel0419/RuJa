@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Regression tests for RuJa's shared test262 process support."""
 
+import hashlib
 import io
 import os
 import re
@@ -27,6 +28,9 @@ import test262_temporal_plain_month_day_equals_intl_diagnostic as temporal_month
 import test262_temporal_plain_month_day_equals_downstream_diagnostic as temporal_month_day_equals_downstream_diagnostic
 import test262_temporal_plain_date_sibling_conversions_diagnostic as temporal_plain_date_sibling_diagnostic
 import test262_temporal_plain_date_sibling_conversions_downstream_diagnostic as temporal_plain_date_sibling_downstream_diagnostic
+import test262_temporal_plain_date_with_calendar_siblings_complete_diagnostic as temporal_plain_date_with_calendar_complete_diagnostic
+import test262_temporal_plain_date_with_calendar_siblings_diagnostic as temporal_plain_date_with_calendar_diagnostic
+import test262_temporal_plain_date_with_calendar_siblings_downstream_diagnostic as temporal_plain_date_with_calendar_downstream_diagnostic
 import test262_temporal_plain_year_month_arithmetic_diagnostic as temporal_year_month_arithmetic_diagnostic
 import test262_temporal_plain_year_month_compare_diagnostic as temporal_year_month_compare_diagnostic
 import test262_temporal_plain_year_month_compare_intl_diagnostic as temporal_year_month_compare_intl_diagnostic
@@ -555,6 +559,26 @@ from test262_temporal_plain_date_sibling_conversions_downstream_admission import
     TEMPORAL_PLAIN_DATE_SIBLING_CONVERSION_DOWNSTREAM_INCLUDES,
     TEMPORAL_PLAIN_DATE_SIBLING_CONVERSION_DOWNSTREAM_NEGATIVE,
     TEMPORAL_PLAIN_DATE_SIBLING_CONVERSION_DOWNSTREAM_SURFACE,
+)
+from test262_temporal_plain_date_with_calendar_siblings_admission import (
+    TEMPORAL_PLAIN_DATE_WITH_CALENDAR_SIBLING_BLOCKERS,
+    TEMPORAL_PLAIN_DATE_WITH_CALENDAR_SIBLING_FEATURES,
+    TEMPORAL_PLAIN_DATE_WITH_CALENDAR_SIBLING_FILES,
+    TEMPORAL_PLAIN_DATE_WITH_CALENDAR_SIBLING_FLAGS,
+    TEMPORAL_PLAIN_DATE_WITH_CALENDAR_SIBLING_INCLUDES,
+    TEMPORAL_PLAIN_DATE_WITH_CALENDAR_SIBLING_NEGATIVE,
+    TEMPORAL_PLAIN_DATE_WITH_CALENDAR_SIBLING_SURFACE,
+)
+from test262_temporal_plain_date_with_calendar_siblings_downstream_admission import (
+    TEMPORAL_PLAIN_DATE_WITH_CALENDAR_SIBLING_DOWNSTREAM_BLOCKERS,
+    TEMPORAL_PLAIN_DATE_WITH_CALENDAR_SIBLING_DOWNSTREAM_EXPLICIT,
+    TEMPORAL_PLAIN_DATE_WITH_CALENDAR_SIBLING_DOWNSTREAM_FEATURES,
+    TEMPORAL_PLAIN_DATE_WITH_CALENDAR_SIBLING_DOWNSTREAM_FILES,
+    TEMPORAL_PLAIN_DATE_WITH_CALENDAR_SIBLING_DOWNSTREAM_FLAGS,
+    TEMPORAL_PLAIN_DATE_WITH_CALENDAR_SIBLING_DOWNSTREAM_INCLUDES,
+    TEMPORAL_PLAIN_DATE_WITH_CALENDAR_SIBLING_DOWNSTREAM_NEGATIVE,
+    TEMPORAL_PLAIN_DATE_WITH_CALENDAR_SIBLING_DOWNSTREAM_REUSED,
+    TEMPORAL_PLAIN_DATE_WITH_CALENDAR_SIBLING_DOWNSTREAM_SURFACE,
 )
 from test262_temporal_plain_date_to_locale_string_admission import (
     TEMPORAL_PLAIN_DATE_TO_LOCALE_STRING_BLOCKER_FEATURES,
@@ -1987,6 +2011,54 @@ def _js_matching_token(tokens, start, opening, closing):
             if depth == 0:
                 return index
     raise RuntimeError(f"unmatched JavaScript {opening} in corpus audit")
+
+
+def _js_named_method_body(tokens, method_name):
+    bodies = []
+    for index, token in enumerate(tokens[:-1]):
+        if token != method_name or tokens[index + 1] != "(":
+            continue
+        parameters_end = _js_matching_token(tokens, index + 1, "(", ")")
+        if parameters_end + 1 >= len(tokens) or tokens[parameters_end + 1] != "{":
+            continue
+        body_end = _js_matching_token(tokens, parameters_end + 1, "{", "}")
+        bodies.append(tokens[parameters_end + 2 : body_end])
+    if len(bodies) != 1:
+        raise RuntimeError(
+            f"expected one JavaScript method body for {method_name}, found {len(bodies)}"
+        )
+    return bodies[0]
+
+
+def _with_calendar_call_counts(root):
+    counts = {}
+    for path in root.rglob("*.js"):
+        source = path.read_text()
+        if "withCalendar" not in source:
+            continue
+        count = len(
+            _js_property_call_indices(_js_executable_tokens(source), "withCalendar")
+        )
+        if count:
+            counts[path.relative_to(root).as_posix()] = count
+    return counts
+
+
+def _with_calendar_candidate_counts(root):
+    """Return a lexical superset of calls, references, and computed names."""
+    counts = {}
+    for path in root.rglob("*.js"):
+        source = path.read_text()
+        if "withCalendar" not in source:
+            continue
+        tokens = _js_executable_tokens(source)
+        count = sum(
+            token == "withCalendar" or token == ("string", "withCalendar")
+            for token in tokens
+        )
+        if count:
+            counts[path.relative_to(root).as_posix()] = count
+    return counts
 
 
 _TEMPORAL_HELPER_EQUALS_OWNERS = frozenset(
@@ -6858,6 +6930,590 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                         diagnostic,
                         "_run_with_diagnostics",
                         return_value=("fail", ("TypeError: wrong",)),
+                    ),
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "failure reasons drifted"):
+                        diagnostic.verify_expected_results(arguments)
+            finally:
+                diagnostic.test262_runner.TEST262 = original_root
+
+    def test_temporal_plain_date_with_calendar_siblings_are_exact_live_and_shared(self):
+        direct = TEMPORAL_PLAIN_DATE_WITH_CALENDAR_SIBLING_FILES
+        blockers = TEMPORAL_PLAIN_DATE_WITH_CALENDAR_SIBLING_BLOCKERS
+        complete = TEMPORAL_PLAIN_DATE_WITH_CALENDAR_SIBLING_SURFACE
+        explicit = TEMPORAL_PLAIN_DATE_WITH_CALENDAR_SIBLING_DOWNSTREAM_EXPLICIT
+        reused = TEMPORAL_PLAIN_DATE_WITH_CALENDAR_SIBLING_DOWNSTREAM_REUSED
+        downstream = TEMPORAL_PLAIN_DATE_WITH_CALENDAR_SIBLING_DOWNSTREAM_SURFACE
+
+        self.assertEqual((len(direct), len(blockers), len(complete)), (36, 9, 45))
+        self.assertEqual(complete, direct | blockers)
+        self.assertTrue(direct.isdisjoint(blockers))
+        self.assertEqual(
+            (len(explicit), len(reused), len(downstream)), (50, 87, 137)
+        )
+        self.assertEqual(downstream, explicit | reused)
+        self.assertTrue(explicit.isdisjoint(reused))
+        self.assertFalse(TEMPORAL_PLAIN_DATE_WITH_CALENDAR_SIBLING_DOWNSTREAM_FILES)
+        self.assertEqual(
+            downstream,
+            TEMPORAL_PLAIN_DATE_WITH_CALENDAR_SIBLING_DOWNSTREAM_BLOCKERS,
+        )
+        self.assertIs(
+            reused, TEMPORAL_PLAIN_YEAR_MONTH_TO_PLAIN_DATE_DOWNSTREAM_SURFACE
+        )
+        self.assertTrue(complete.isdisjoint(downstream))
+        self.assertEqual(direct, temporal_plain_date_with_calendar_diagnostic.SURFACE)
+        self.assertEqual(
+            complete, temporal_plain_date_with_calendar_complete_diagnostic.SURFACE
+        )
+        self.assertEqual(
+            blockers, temporal_plain_date_with_calendar_complete_diagnostic.BLOCKERS
+        )
+        self.assertEqual(
+            downstream, temporal_plain_date_with_calendar_downstream_diagnostic.SURFACE
+        )
+
+        for metadata_map, expected_surface in (
+            (TEMPORAL_PLAIN_DATE_WITH_CALENDAR_SIBLING_FEATURES, complete),
+            (TEMPORAL_PLAIN_DATE_WITH_CALENDAR_SIBLING_INCLUDES, complete),
+            (TEMPORAL_PLAIN_DATE_WITH_CALENDAR_SIBLING_FLAGS, complete),
+            (TEMPORAL_PLAIN_DATE_WITH_CALENDAR_SIBLING_NEGATIVE, complete),
+            (
+                TEMPORAL_PLAIN_DATE_WITH_CALENDAR_SIBLING_DOWNSTREAM_FEATURES,
+                downstream,
+            ),
+            (
+                TEMPORAL_PLAIN_DATE_WITH_CALENDAR_SIBLING_DOWNSTREAM_INCLUDES,
+                downstream,
+            ),
+            (
+                TEMPORAL_PLAIN_DATE_WITH_CALENDAR_SIBLING_DOWNSTREAM_FLAGS,
+                downstream,
+            ),
+            (
+                TEMPORAL_PLAIN_DATE_WITH_CALENDAR_SIBLING_DOWNSTREAM_NEGATIVE,
+                downstream,
+            ),
+        ):
+            self.assertEqual(set(metadata_map), set(expected_surface))
+
+        for combined, reused_metadata in (
+            (
+                TEMPORAL_PLAIN_DATE_WITH_CALENDAR_SIBLING_DOWNSTREAM_FEATURES,
+                TEMPORAL_PLAIN_YEAR_MONTH_TO_PLAIN_DATE_DOWNSTREAM_FEATURES,
+            ),
+            (
+                TEMPORAL_PLAIN_DATE_WITH_CALENDAR_SIBLING_DOWNSTREAM_INCLUDES,
+                TEMPORAL_PLAIN_YEAR_MONTH_TO_PLAIN_DATE_DOWNSTREAM_INCLUDES,
+            ),
+            (
+                TEMPORAL_PLAIN_DATE_WITH_CALENDAR_SIBLING_DOWNSTREAM_FLAGS,
+                TEMPORAL_PLAIN_YEAR_MONTH_TO_PLAIN_DATE_DOWNSTREAM_FLAGS,
+            ),
+            (
+                TEMPORAL_PLAIN_DATE_WITH_CALENDAR_SIBLING_DOWNSTREAM_NEGATIVE,
+                TEMPORAL_PLAIN_YEAR_MONTH_TO_PLAIN_DATE_DOWNSTREAM_NEGATIVE,
+            ),
+        ):
+            self.assertEqual(
+                {path: combined[path] for path in reused}, reused_metadata
+            )
+
+        tools_dir = Path(__file__).resolve().parent
+
+        def manifest_entries(name):
+            return tuple(
+                line
+                for raw_line in (tools_dir / name).read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            )
+
+        direct_manifest = (
+            "test262_temporal_plain_date_with_calendar_siblings_admission.txt"
+        )
+        blocker_manifest = (
+            "test262_temporal_plain_date_with_calendar_siblings_blockers.txt"
+        )
+        downstream_manifest = (
+            "test262_temporal_plain_date_with_calendar_siblings_downstream_blockers.txt"
+        )
+        for name, expected in (
+            (direct_manifest, direct),
+            (blocker_manifest, blockers),
+            (downstream_manifest, explicit),
+        ):
+            entries = manifest_entries(name)
+            self.assertEqual(entries, tuple(sorted(entries)), name)
+            self.assertEqual(len(entries), len(set(entries)), name)
+            self.assertEqual(frozenset(entries), expected, name)
+        self.assertTrue(reused.isdisjoint(manifest_entries(downstream_manifest)))
+        for manifest in tools_dir.glob("test262_*_admission.txt"):
+            if manifest.name == direct_manifest:
+                continue
+            existing = frozenset(manifest_entries(manifest.name))
+            self.assertTrue(direct.isdisjoint(existing), manifest.name)
+            self.assertTrue(blockers.isdisjoint(existing), manifest.name)
+            self.assertTrue(downstream.isdisjoint(existing), manifest.name)
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        corpus_required = "TEST262" in os.environ
+        required_roots = (
+            test_root / "built-ins/Temporal/PlainDate/prototype/withCalendar",
+            test_root / "built-ins/Temporal/PlainDateTime/prototype/withCalendar",
+            test_root / "built-ins/Temporal/ZonedDateTime/prototype/withCalendar",
+            test_root / "intl402/DateTimeFormat/prototype/formatRange",
+            test_root / "intl402/DateTimeFormat/prototype/formatRangeToParts",
+            test_root / "intl402/DateTimeFormat/prototype/formatToParts",
+            test_root / "intl402/Temporal/PlainDate",
+            test_root / "intl402/Temporal/PlainDateTime",
+            test_root / "intl402/Temporal/PlainYearMonth",
+            test_root / "intl402/Temporal/ZonedDateTime",
+            test_root.parent / "harness",
+        )
+        try:
+            corpus_available = all(root.is_dir() for root in required_roots)
+        except OSError:
+            if corpus_required:
+                raise
+            corpus_available = False
+        if corpus_required and not corpus_available:
+            raise FileNotFoundError(required_roots)
+        if corpus_available:
+            live_direct = set()
+            for directory in (
+                test_root / "built-ins/Temporal/PlainDate/prototype/withCalendar",
+                test_root / "built-ins/Temporal/PlainDateTime/prototype/withCalendar",
+                test_root / "intl402/Temporal/PlainDate/prototype/withCalendar",
+                test_root / "intl402/Temporal/PlainDateTime/prototype/withCalendar",
+            ):
+                live_direct.update(
+                    path.relative_to(test_root).as_posix()
+                    for path in directory.glob("*.js")
+                    if "_FIXTURE" not in path.name
+                )
+            self.assertEqual(live_direct, complete)
+
+            for metadata_map, surface, includes, flags, negative in (
+                (
+                    TEMPORAL_PLAIN_DATE_WITH_CALENDAR_SIBLING_FEATURES,
+                    complete,
+                    TEMPORAL_PLAIN_DATE_WITH_CALENDAR_SIBLING_INCLUDES,
+                    TEMPORAL_PLAIN_DATE_WITH_CALENDAR_SIBLING_FLAGS,
+                    TEMPORAL_PLAIN_DATE_WITH_CALENDAR_SIBLING_NEGATIVE,
+                ),
+                (
+                    TEMPORAL_PLAIN_DATE_WITH_CALENDAR_SIBLING_DOWNSTREAM_FEATURES,
+                    downstream,
+                    TEMPORAL_PLAIN_DATE_WITH_CALENDAR_SIBLING_DOWNSTREAM_INCLUDES,
+                    TEMPORAL_PLAIN_DATE_WITH_CALENDAR_SIBLING_DOWNSTREAM_FLAGS,
+                    TEMPORAL_PLAIN_DATE_WITH_CALENDAR_SIBLING_DOWNSTREAM_NEGATIVE,
+                ),
+            ):
+                for relative in surface:
+                    path = test_root / relative
+                    self.assertTrue(path.is_file(), relative)
+                    metadata = test262_runner.parse_meta(path.read_text())
+                    self.assertEqual(
+                        frozenset(metadata.get("features", [])),
+                        metadata_map[relative],
+                        relative,
+                    )
+                    self.assertEqual(
+                        frozenset(metadata.get("includes", [])),
+                        includes[relative],
+                        relative,
+                    )
+                    self.assertEqual(
+                        frozenset(metadata.get("flags", [])), flags[relative], relative
+                    )
+                    self.assertEqual(
+                        metadata.get("negative"), negative[relative], relative
+                    )
+                    for tool in (test262_runner, test262_analyze):
+                        admitted = relative in direct
+                        self.assertEqual(
+                            tool.temporal_plain_date_with_calendar_sibling_path(path),
+                            admitted,
+                            relative,
+                        )
+                        self.assertEqual(
+                            tool.temporal_plain_date_with_calendar_sibling_features(path),
+                            metadata_map[relative] if admitted else frozenset(),
+                            relative,
+                        )
+                        self.assertEqual(
+                            tool.should_skip(metadata, path), not admitted, relative
+                        )
+
+            candidate_counts = _with_calendar_candidate_counts(test_root)
+            serialized_candidates = "".join(
+                f"{path}\t{candidate_counts[path]}\n"
+                for path in sorted(candidate_counts)
+            )
+            self.assertEqual(
+                (len(candidate_counts), sum(candidate_counts.values())), (141, 300)
+            )
+            self.assertEqual(
+                hashlib.sha256(serialized_candidates.encode()).hexdigest(),
+                "49203454809587fc4c94e3e917763f8ee0fdbaf3ece2165a9bdee95f68b42dfa",
+            )
+            self.assertEqual(set(candidate_counts) & complete, complete)
+            self.assertEqual(set(candidate_counts) & explicit, explicit)
+            self.assertTrue(reused.isdisjoint(candidate_counts))
+
+            call_counts = _with_calendar_call_counts(test_root)
+            serialized = "".join(
+                f"{path}\t{call_counts[path]}\n" for path in sorted(call_counts)
+            )
+            self.assertEqual((len(call_counts), sum(call_counts.values())), (122, 228))
+            self.assertEqual(
+                hashlib.sha256(serialized.encode()).hexdigest(),
+                "8e421293c3315d51f1d5b6edf36b09100ffeded75738488e80c18e7276960073",
+            )
+            direct_calls = set(call_counts) & direct
+            blocker_calls = set(call_counts) & blockers
+            explicit_calls = set(call_counts) & explicit
+            outside_calls = set(call_counts) - direct - blockers - explicit
+            self.assertEqual(
+                (len(direct_calls), sum(call_counts[path] for path in direct_calls)),
+                (24, 28),
+            )
+            self.assertEqual(
+                (len(blocker_calls), sum(call_counts[path] for path in blocker_calls)),
+                (9, 34),
+            )
+            self.assertEqual(
+                (len(explicit_calls), sum(call_counts[path] for path in explicit_calls)),
+                (50, 94),
+            )
+            self.assertEqual(
+                (len(outside_calls), sum(call_counts[path] for path in outside_calls)),
+                (39, 72),
+            )
+            self.assertTrue(reused.isdisjoint(call_counts))
+            self.assertTrue(
+                all(
+                    path.startswith(
+                        (
+                            "built-ins/Temporal/ZonedDateTime/prototype/withCalendar/",
+                            "intl402/Temporal/ZonedDateTime/",
+                        )
+                    )
+                    for path in outside_calls
+                )
+            )
+
+            harness_counts = _with_calendar_call_counts(test_root.parent / "harness")
+            self.assertEqual(
+                harness_counts,
+                {
+                    "sm/non262-Temporal-PlainMonthDay-shell.js": 1,
+                    "temporalHelpers.js": 1,
+                },
+            )
+            temporal_helper_tokens = _js_executable_tokens(
+                (test_root.parent / "harness/temporalHelpers.js").read_text()
+            )
+            year_month_body = _js_named_method_body(
+                temporal_helper_tokens, "assertPlainYearMonth"
+            )
+            year_month_calls = _js_property_call_indices(
+                year_month_body, "withCalendar"
+            )
+            self.assertEqual(len(year_month_calls), 1)
+            index = year_month_calls[0]
+            self.assertEqual(
+                year_month_body[index - 12 : index + 9],
+                (
+                    "referenceISODay",
+                    "??",
+                    "yearMonth",
+                    ".",
+                    "toPlainDate",
+                    "(",
+                    "{",
+                    "day",
+                    ":",
+                    "1",
+                    "}",
+                    ")",
+                    ".",
+                    "withCalendar",
+                    "(",
+                    ("string", "iso8601"),
+                    ")",
+                    ".",
+                    "day",
+                    ";",
+                    "assert",
+                ),
+            )
+            spider_monkey_tokens = _js_executable_tokens(
+                (
+                    test_root.parent
+                    / "harness/sm/non262-Temporal-PlainMonthDay-shell.js"
+                ).read_text()
+            )
+            iso_fields_body = _js_named_method_body(spider_monkey_tokens, "ISOFields")
+            iso_fields_calls = _js_property_call_indices(
+                iso_fields_body, "withCalendar"
+            )
+            self.assertEqual(len(iso_fields_calls), 1)
+            index = iso_fields_calls[0]
+            self.assertEqual(
+                iso_fields_body[index - 12 : index + 9],
+                (
+                    ".",
+                    "PlainDate",
+                    ".",
+                    "from",
+                    "(",
+                    "str",
+                    ")",
+                    ";",
+                    "let",
+                    "isoDate",
+                    "=",
+                    "date",
+                    ".",
+                    "withCalendar",
+                    "(",
+                    ("string", "iso8601"),
+                    ")",
+                    ";",
+                    "assert",
+                    ".",
+                    "sameValue",
+                ),
+            )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = (
+                root
+                / "test/built-ins/Temporal/PlainDate/prototype/withCalendar/future.js"
+            )
+            outside = root / "test/built-ins/Temporal/Other/withCalendar/basic.js"
+            blocker = root / "test" / next(iter(blockers))
+            downstream_path = root / "test" / next(iter(downstream))
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    self.assertFalse(
+                        tool.temporal_plain_date_with_calendar_sibling_path(None)
+                    )
+                    self.assertEqual(
+                        tool.temporal_plain_date_with_calendar_sibling_features(None),
+                        frozenset(),
+                    )
+                    for relative in direct:
+                        path = root / "test" / relative
+                        self.assertTrue(
+                            tool.temporal_plain_date_with_calendar_sibling_path(path)
+                        )
+                        self.assertEqual(
+                            tool.temporal_plain_date_with_calendar_sibling_features(path),
+                            TEMPORAL_PLAIN_DATE_WITH_CALENDAR_SIBLING_FEATURES[relative],
+                        )
+                        self.assertFalse(
+                            tool.should_skip(
+                                {
+                                    "features": sorted(
+                                        TEMPORAL_PLAIN_DATE_WITH_CALENDAR_SIBLING_FEATURES[
+                                            relative
+                                        ]
+                                    )
+                                },
+                                path,
+                            )
+                        )
+                    for path in (future, outside, blocker, downstream_path):
+                        self.assertFalse(
+                            tool.temporal_plain_date_with_calendar_sibling_path(path)
+                        )
+                        self.assertEqual(
+                            tool.temporal_plain_date_with_calendar_sibling_features(path),
+                            frozenset(),
+                        )
+                        self.assertTrue(
+                            tool.should_skip({"features": ["Temporal"]}, path)
+                        )
+                finally:
+                    tool.TEST262 = original_root
+
+        diagnostics = (
+            (temporal_plain_date_with_calendar_diagnostic, direct),
+            (temporal_plain_date_with_calendar_complete_diagnostic, complete),
+            (temporal_plain_date_with_calendar_downstream_diagnostic, downstream),
+        )
+        for diagnostic, surface in diagnostics:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                original_root = diagnostic.test262_runner.TEST262
+                diagnostic.test262_runner.TEST262 = temp_dir
+                try:
+                    with self.assertRaises(FileNotFoundError):
+                        diagnostic.verify_expected_results(sorted(surface))
+                finally:
+                    diagnostic.test262_runner.TEST262 = original_root
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "test").mkdir()
+            diagnostic = temporal_plain_date_with_calendar_diagnostic
+            original_root = diagnostic.test262_runner.TEST262
+            diagnostic.test262_runner.TEST262 = str(root)
+            arguments = sorted(direct)
+            try:
+                with (
+                    patch.object(diagnostic, "_verify_corpus"),
+                    patch.object(
+                        diagnostic.test262_runner, "run_test", return_value="pass"
+                    ),
+                ):
+                    diagnostic.verify_expected_results(arguments)
+                    for invalid in (
+                        arguments[:-1],
+                        arguments[:-1] + [arguments[0]],
+                        arguments + ["built-ins/Temporal/Other/withCalendar.js"],
+                    ):
+                        with self.assertRaisesRegex(RuntimeError, "exact frozen"):
+                            diagnostic.verify_expected_results(invalid)
+                with (
+                    patch.object(diagnostic, "_verify_corpus"),
+                    patch.object(
+                        diagnostic.test262_runner, "run_test", return_value="fail"
+                    ),
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "results drifted"):
+                        diagnostic.verify_expected_results(arguments)
+            finally:
+                diagnostic.test262_runner.TEST262 = original_root
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "test").mkdir()
+            diagnostic = temporal_plain_date_with_calendar_complete_diagnostic
+            original_root = diagnostic.test262_runner.TEST262
+            diagnostic.test262_runner.TEST262 = str(root)
+            arguments = sorted(complete)
+
+            def relative_test_path(path):
+                return (
+                    Path(path)
+                    .resolve()
+                    .relative_to((root / "test").resolve())
+                    .as_posix()
+                )
+
+            def complete_result(path):
+                relative = relative_test_path(path)
+                if relative in blockers:
+                    message = diagnostic._EXPECTED_ERROR
+                    return "fail", (
+                        f"{message} (at line 1)",
+                        f"{message} (at line 2)",
+                    )
+                return "pass", ("", "")
+
+            try:
+                with (
+                    patch.object(diagnostic, "_verify_corpus"),
+                    patch.object(
+                        diagnostic,
+                        "_run_with_diagnostics",
+                        side_effect=complete_result,
+                    ),
+                ):
+                    diagnostic.verify_expected_results(arguments)
+                    for invalid in (
+                        arguments[:-1],
+                        arguments[:-1] + [arguments[0]],
+                        arguments + ["intl402/Temporal/Other/withCalendar.js"],
+                    ):
+                        with self.assertRaisesRegex(RuntimeError, "exact frozen"):
+                            diagnostic.verify_expected_results(invalid)
+                with (
+                    patch.object(diagnostic, "_verify_corpus"),
+                    patch.object(
+                        diagnostic,
+                        "_run_with_diagnostics",
+                        return_value=("pass", ("", "")),
+                    ),
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "results drifted"):
+                        diagnostic.verify_expected_results(arguments)
+                with (
+                    patch.object(diagnostic, "_verify_corpus"),
+                    patch.object(
+                        diagnostic,
+                        "_run_with_diagnostics",
+                        side_effect=lambda path: (
+                            (
+                                "fail",
+                                (
+                                    "RangeError: Invalid Temporal calendar identifier extra",
+                                ),
+                            )
+                            if relative_test_path(path) in blockers
+                            else ("pass", ("", ""))
+                        ),
+                    ),
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "failure reasons drifted"):
+                        diagnostic.verify_expected_results(arguments)
+            finally:
+                diagnostic.test262_runner.TEST262 = original_root
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "test").mkdir()
+            diagnostic = temporal_plain_date_with_calendar_downstream_diagnostic
+            original_root = diagnostic.test262_runner.TEST262
+            diagnostic.test262_runner.TEST262 = str(root)
+            arguments = sorted(downstream)
+
+            def downstream_result(path):
+                relative = relative_test_path(path)
+                message = diagnostic._expected_error(relative)
+                return "fail", (
+                    f"{message} (at line 1)",
+                    f"{message} (at line 2)",
+                )
+
+            try:
+                with (
+                    patch.object(diagnostic, "_verify_corpus"),
+                    patch.object(
+                        diagnostic,
+                        "_run_with_diagnostics",
+                        side_effect=downstream_result,
+                    ),
+                ):
+                    diagnostic.verify_expected_results(arguments)
+                    for invalid in (
+                        arguments[:-1],
+                        arguments[:-1] + [arguments[0]],
+                        arguments + ["intl402/Temporal/Other/withCalendar.js"],
+                    ):
+                        with self.assertRaisesRegex(RuntimeError, "exact frozen"):
+                            diagnostic.verify_expected_results(invalid)
+                with (
+                    patch.object(diagnostic, "_verify_corpus"),
+                    patch.object(
+                        diagnostic,
+                        "_run_with_diagnostics",
+                        return_value=("pass", ("", "")),
+                    ),
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "results drifted"):
+                        diagnostic.verify_expected_results(arguments)
+                with (
+                    patch.object(diagnostic, "_verify_corpus"),
+                    patch.object(
+                        diagnostic,
+                        "_run_with_diagnostics",
+                        return_value=("fail", ("TypeError: wrong blocker",)),
                     ),
                 ):
                     with self.assertRaisesRegex(RuntimeError, "failure reasons drifted"):

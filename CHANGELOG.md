@@ -4,6 +4,35 @@
 
 ### Changed
 
+- Added Realm-local, non-constructable, length-1
+  `Temporal.PlainDate.prototype.withCalendar` and
+  `Temporal.PlainDateTime.prototype.withCalendar`. Both methods brand the
+  receiver before converting the calendar-like argument, copy hidden ISO
+  fields without observing public getters, and allocate a fresh result with
+  the native method Realm intrinsic prototype. Calendar conversion reuses the
+  five-kind hidden Temporal calendar fast path and the existing String parser
+  and fuel accounting. Mutable globals, constructors, species, and subclasses
+  cannot alter result selection. ISO and fail-closed future-calendar behavior
+  form the supported surface; non-ISO calendar semantics remain explicit
+  blockers. Current exact accounting classifies 36 direct files as supported,
+  nine direct files as non-ISO blockers, and 137 downstream files as blockers
+  (50 explicit callers plus the existing 87-file PlainYearMonth helper
+  surface). Exact local forced diagnostics pass at **36/36** for admission,
+  **36 pass / 9 fail / 45** for the complete direct surface, and **0 pass /
+  137 fail / 137** for downstream blockers with normalized failure reasons.
+  Remote CI verification follows the pushed commit.
+  Existing ordinals remain stable: the PlainDate and PlainDateTime functions
+  are allocations 184 and 185, complete installation uses 185 allocations,
+  and installer preflight covers all 183 maximum live pins.
+
+  [Decision Log]
+  - 목적과 의도: PlainDate와 PlainDateTime의 calendar replacement를 hidden ISO record, method Realm 및 sandbox resource 불변식에 맞춰 함께 구현한다.
+  - 기존 구현 및 제약 조건: 두 receiver의 hidden fields와 Realm-local allocators 및 String calendar parser는 있었지만 withCalendar bridge가 없었고, non-ISO calendar field backend와 PlainDateTime formatting은 아직 없다.
+  - 검토한 주요 대안: public getters와 constructors 왕복, mutable globals를 통한 결과 생성, 두 receiver를 별도 단위로 구현, shared hidden-calendar conversion과 paired append를 검토했다.
+  - 선택한 방식: receiver를 먼저 brand-check하고 hidden ISO fields를 복사한 뒤 shared calendar conversion을 수행한다. hidden Temporal 값은 five-kind fast path, String은 기존 parser/fuel 경로를 사용하며 결과는 method-Realm intrinsic으로 새로 생성한다.
+  - 다른 대안 대신 이 방식을 선택한 이유: visible/global 경로는 명세에 없는 getter, constructor, subclass 관찰과 잘못된 Realm 선택을 만든다. paired 구현은 동일한 conversion 순서와 resource 계약을 두 sibling에 일관되게 적용한다.
+  - 장점, 단점 및 영향: ISO direct semantics, fresh identity, cross-Realm intrinsic selection, hidden getter 비관찰과 stable installer ordinals를 제공한다. non-ISO direct 9개와 downstream 137개는 backend가 생길 때까지 fail-closed로 유지하며 exact local diagnostics가 result 및 normalized error drift를 고정한다.
+
 - Added Realm-local, non-constructable, length-0
   `Temporal.PlainDate.prototype.toPlainMonthDay` and `toPlainYearMonth`.
   Both brand and copy hidden PlainDate slots without observing arguments or

@@ -5378,4 +5378,42 @@ preflights and pins its intrinsic prototype across GC-retrying allocation.
 - 장점, 단점 및 영향: intrinsic selection, fresh results, cross-Realm receivers, result-root and heap retry, zero native fuel, exact 183-allocation rollback이 고정된다. non-ISO는 backend가 생길 때까지 explicit RangeError다.
 ```
 
+### PlainDate and PlainDateTime withCalendar allocation
+
+`Temporal.PlainDate.prototype.withCalendar` and
+`Temporal.PlainDateTime.prototype.withCalendar` are Realm-local,
+non-constructable, length-1 native functions with one shared calendar
+conversion boundary. Each function brand-checks its receiver before observing
+the calendar-like argument, then copies the receiver's hidden ISO fields. No
+public receiver getter participates. A branded argument belonging to one of
+the five supported Temporal hidden-calendar record kinds supplies its hidden
+canonical identifier directly; every other input must already be a String and
+reuses the existing parser and byte-proportional fuel path.
+
+The PlainDate path copies `(year, month, day)`, while the PlainDateTime path
+also copies all six hidden time fields. Each call publishes a fresh object
+through the native method Realm's immutable intrinsic prototype registry.
+Mutable `%Temporal%` globals, constructors, species, and subclass constructors
+are outside result selection. ISO records preserve all copied fields while
+replacing the calendar identifier. Non-ISO identifiers fail closed until the
+calendar field and arithmetic backend can represent their semantics; the ISO
+record is never relabeled as a non-ISO date.
+
+Both functions append after all existing Temporal installer allocations. The
+PlainDate function is allocation 184 and the PlainDateTime function is
+allocation 185. Complete namespace installation uses 185 allocations and
+preflights the 183 maximum simultaneously live pins. Result allocation uses
+the existing Realm registry, rooting, and GC-retry boundary; no mutable global
+lookup is introduced.
+
+```text
+[Decision Log]
+- 목적과 의도: 두 withCalendar sibling의 receiver ordering, hidden-record copy, Realm intrinsic 선택과 installer resource 경계를 하나의 일관된 구조로 고정한다.
+- 기존 구현 및 제약 조건: PlainDate/PlainDateTime hidden records와 Realm registries, calendar String parser는 있었지만 public bridge가 없었다. non-ISO calendar backend와 PlainDateTime formatter는 아직 없다.
+- 검토한 주요 대안: public getters와 constructors 재호출, receiver별 calendar converter 복제, non-ISO identifier를 ISO fields에 단순 부착, shared converter와 paired append를 검토했다.
+- 선택한 방식: brand-first receiver slot copy 뒤 shared converter를 호출한다. five-kind branded Temporal input은 hidden calendar fast path를 사용하고 String input은 기존 parser/fuel 계약을 재사용하며, fresh result는 method-Realm registry에서 생성한다.
+- 다른 대안 대신 이 방식을 선택한 이유: public/global paths는 getter와 mutable constructor를 관찰하고 result Realm을 바꿀 수 있다. converter 복제는 coercion과 fuel 의미를 분기시키며, non-ISO relabeling은 calendar 계산을 조용히 오염시킨다.
+- 장점, 단점 및 영향: hidden getter 비관찰, brand-before-argument ordering, fresh method-Realm results, stable 184/185 ordinals와 185-allocation/183-pin 경계를 제공한다. non-ISO direct 및 downstream 표면은 backend 구현 전까지 explicit blocker이며 exact local direct/complete/downstream gates가 결과와 failure reason을 고정한다.
+```
+
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

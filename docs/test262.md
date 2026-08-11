@@ -15436,3 +15436,47 @@ allocation-free Boolean results, installer rollback, and String fuel.
 - 다른 대안 대신 이 방식을 선택한 이유: prefix/aggregate-only 검사는 future 및 wrong-error false positive를 숨긴다. Intl future pass 제외는 fail-closed calendar behavior를 누락하고 direct-only 보고는 실제 equals caller 7개를 숨긴다.
 - 장점, 단점 및 영향: built-ins 36/0/36, Intl 1/3/4, downstream 0/7/7과 metadata/disjointness/corpus/result/error-reason drift가 ordinary/full CI에서 재현된다. non-ISO backend 도입 뒤 ten blockers를 intended assertions까지 재실행해야 한다.
 ```
+
+## Temporal PlainDate/PlainDateTime prototype.withCalendar
+
+At pinned Test262 revision
+`9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the paired direct ownership
+surface contains 45 files. The supported set contains 36 files: all 34
+PlainDate and PlainDateTime built-ins files whose intended behavior is
+available, plus two Intl402 `future-calendar.js` files that require unsupported
+calendar identifiers to fail closed. The remaining nine direct files require
+real non-ISO calendar semantics and stay outside admission. Exact local gates
+run the admitted set at **36 pass / 0 fail / 36** and the complete direct set
+at **36 pass / 9 fail / 45**. Every blocker retains the normalized exact
+`RangeError: Invalid Temporal calendar identifier` reason.
+
+The paired implementation supplies Realm-local, non-constructable, length-1
+methods. The supported Test262 set covers branding and calendar conversion,
+hidden calendar extraction from branded Temporal values, String parsing,
+descriptors, nonconstruction, and subclass constructor independence. Local
+Rust regressions separately fix brand-before-argument ordering, hidden ISO
+field copying without public getter observation, fresh method-Realm results,
+mutable-global replacement, cross-Realm errors, GC/root retry, and exact fuel.
+Non-ISO cases remain fail-closed rather than accepting an ISO record relabeled
+with another calendar.
+
+Downstream ownership contains 137 blocker files. Fifty files are explicit
+PlainDate or PlainDateTime `withCalendar` callers. The other 87 are the already
+owned `TemporalHelpers.assertPlainYearMonth` surface that reaches
+`PlainYearMonth.prototype.toPlainDate` and then `withCalendar`; this existing
+manifest is reused instead of duplicated. The exact local downstream gate is
+**0 pass / 137 fail / 137**: 133 files fail during earlier non-ISO calendar
+construction or conversion with `RangeError: Invalid Temporal calendar
+identifier`, while four DateTimeFormat files fail with `TypeError: not a
+constructor`. It is not counted as direct method support. PlainDateTime
+formatting remains absent as a separate engine limitation.
+
+```text
+[Decision Log]
+- 목적과 의도: paired withCalendar의 complete direct denominator와 explicit 및 helper-mediated downstream caller를 분리해 현재 지원 경계를 과장 없이 기록한다.
+- 기존 구현 및 제약 조건: broad Temporal/Intl gates는 direct 45개와 downstream caller를 숨길 수 있고 absent method TypeError는 일부 expected-error fixture를 거짓 통과시킬 수 있었다. non-ISO backend, DateTimeFormat, PlainDateTime formatting은 아직 완전하지 않다.
+- 검토한 주요 대안: 두 method를 별도 denominator로 관리, built-ins directory prefix 전체 허용, 기존 87 helper files를 새 manifest에 복제, paired exact ownership과 manifest reuse를 검토했다.
+- 선택한 방식: direct 45개를 supported 36개와 non-ISO blocker 9개로 분리하고, downstream은 explicit 50개와 existing helper-owned 87개의 disjoint union 137개로 계상한다. fail-closed future-calendar files만 supported direct set에 포함한다.
+- 다른 대안 대신 이 방식을 선택한 이유: prefix와 aggregate-only 허용은 wrong-error 및 future sibling을 숨긴다. duplicate helper manifests는 소유권과 수치를 분기시키며, direct-only 보고는 실제 137-file dependency surface를 누락한다.
+- 장점, 단점 및 영향: paired method의 36/9/45 direct boundary와 50+87=137 downstream boundary가 명확해진다. exact local forced outcomes, normalized failure reasons와 live tooling이 검증되며 remote CI는 pushed commit에서 같은 literal gates를 재실행한다.
+```

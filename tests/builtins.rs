@@ -28931,6 +28931,100 @@ fn temporal_plain_date_sibling_conversions_are_fresh_and_use_intrinsics() {
 }
 
 #[test]
+fn temporal_plain_date_with_calendar_siblings_preserve_hidden_records_and_realms() {
+    assert_eq!(
+        run(r#"
+            class CustomDate extends Temporal.PlainDate {}
+            class CustomDateTime extends Temporal.PlainDateTime {}
+            var date = new CustomDate(2000, 5, 2);
+            var dateTime = new CustomDateTime(2000, 5, 2, 12, 34, 56, 987, 654, 321);
+            var calendarSource = new Temporal.PlainMonthDay(6, 3);
+            var reads = 0;
+            for (var value of [date, dateTime, calendarSource]) {
+              for (var key of ['calendar', 'calendarId', 'year', 'month', 'day', 'hour', 'toString']) {
+                Object.defineProperty(value, key, {
+                  get: function () { reads++; throw new Error('observed'); }
+                });
+              }
+            }
+            var changedDate = date.withCalendar(calendarSource);
+            var changedDateTime = dateTime.withCalendar(calendarSource);
+            var other = $262.createRealm().global;
+            var foreignDateMethod = other.Temporal.PlainDate.prototype.withCalendar;
+            var foreignDateTimeMethod = other.Temporal.PlainDateTime.prototype.withCalendar;
+            var foreignDate = foreignDateMethod.call(date, calendarSource);
+            var foreignDateTime = foreignDateTimeMethod.call(dateTime, calendarSource);
+            var receiverRealm = false;
+            var argumentRealm = false;
+            try { foreignDateMethod.call({}, 'iso8601'); }
+            catch (error) {
+              receiverRealm = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            try { foreignDateTimeMethod.call(dateTime, {}); }
+            catch (error) {
+              argumentRealm = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            [
+              changedDate !== date, changedDateTime !== dateTime,
+              changedDate.toString(),
+              [changedDateTime.year, changedDateTime.month, changedDateTime.day,
+               changedDateTime.hour, changedDateTime.minute, changedDateTime.second,
+               changedDateTime.millisecond, changedDateTime.microsecond,
+               changedDateTime.nanosecond].join(','),
+              Object.getPrototypeOf(changedDate) === Temporal.PlainDate.prototype,
+              Object.getPrototypeOf(changedDateTime) === Temporal.PlainDateTime.prototype,
+              Object.getPrototypeOf(foreignDate) === other.Temporal.PlainDate.prototype,
+              Object.getPrototypeOf(foreignDateTime) === other.Temporal.PlainDateTime.prototype,
+              reads, receiverRealm, argumentRealm
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "true|true|2000-05-02|2000,5,2,12,34,56,987,654,321|true|true|true|true|0|true|true"
+        ))
+    );
+}
+
+#[test]
+fn temporal_plain_date_with_calendar_siblings_are_fresh_intrinsic_and_nonconstructable() {
+    assert_eq!(
+        run(r#"
+            var date = new Temporal.PlainDate(2000, 5, 2);
+            var dateTime = new Temporal.PlainDateTime(2000, 5, 2, 12, 34, 56);
+            var dateMethod = Temporal.PlainDate.prototype.withCalendar;
+            var dateTimeMethod = Temporal.PlainDateTime.prototype.withCalendar;
+            var datePrototype = Temporal.PlainDate.prototype;
+            var dateTimePrototype = Temporal.PlainDateTime.prototype;
+            var firstDate = dateMethod.call(date, 'iso8601');
+            var secondDate = dateMethod.call(date, 'iso8601');
+            var firstDateTime = dateTimeMethod.call(dateTime, 'iso8601');
+            var secondDateTime = dateTimeMethod.call(dateTime, 'iso8601');
+            Temporal.PlainDate = function ReplacementDate() {};
+            Temporal.PlainDateTime = function ReplacementDateTime() {};
+            globalThis.Temporal = {};
+            var replacedDate = dateMethod.call(date, 'iso8601');
+            var replacedDateTime = dateTimeMethod.call(dateTime, 'iso8601');
+            var dateNonconstructable = false;
+            var dateTimeNonconstructable = false;
+            try { new dateMethod('iso8601'); }
+            catch (error) { dateNonconstructable = error instanceof TypeError; }
+            try { new dateTimeMethod('iso8601'); }
+            catch (error) { dateTimeNonconstructable = error instanceof TypeError; }
+            [
+              dateMethod.name, dateMethod.length,
+              dateTimeMethod.name, dateTimeMethod.length,
+              firstDate !== secondDate, firstDateTime !== secondDateTime,
+              Object.getPrototypeOf(replacedDate) === datePrototype,
+              Object.getPrototypeOf(replacedDateTime) === dateTimePrototype,
+              dateNonconstructable, dateTimeNonconstructable
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "withCalendar|1|withCalendar|1|true|true|true|true|true|true"
+        ))
+    );
+}
+
+#[test]
 fn temporal_plain_date_time_conversion_uses_plain_date_slots_at_midnight() {
     assert_eq!(
         run(r#"

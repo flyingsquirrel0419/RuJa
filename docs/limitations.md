@@ -752,9 +752,22 @@ guarantees are required.
 - PlainDate `toPlainMonthDay` and `toPlainYearMonth` implement their complete
   ISO direct surfaces (**7/7** and **8/8**) with canonical reference
   components and method-Realm intrinsic allocation. Three pinned Intl402
-  callers remain blocked earlier by Chinese/Dangi construction, missing
-  `Intl.DateTimeFormat`, or missing `PlainDate.prototype.withCalendar`; no
-  non-ISO result is admitted as sibling-conversion support
+  callers remain blocked by earlier non-ISO construction or missing
+  `Intl.DateTimeFormat`; `PlainDate.prototype.withCalendar` is no longer an
+  absent-method blocker. No non-ISO result is admitted as sibling-conversion
+  support
+- PlainDate and PlainDateTime `withCalendar` implement the ISO/full built-ins
+  behavior with brand-first receiver validation, hidden-field copying, and
+  fresh method-Realm intrinsic results. Non-ISO calendar identifiers still
+  fail closed because RuJa has no general calendar field/arithmetic backend.
+  Current accounting retains nine direct non-ISO blockers and 137 downstream
+  blockers: 50 explicit callers plus the reused 87-file PlainYearMonth helper
+  surface. Exact local diagnostics retain **36/36** supported direct passes,
+  **36 pass / 9 fail / 45** complete direct accounting, and **0 pass / 137
+  fail / 137** downstream accounting. Of the downstream failures, 133 are
+  earlier non-ISO calendar `RangeError`s and four are missing
+  `Intl.DateTimeFormat` constructor `TypeError`s. PlainDateTime formatting also
+  remains absent as a separate limitation
 - PlainYearMonth `toPlainDate` implements complete ISO conversion and default
   constrain semantics. Non-ISO `CalendarMergeFields`/`CalendarDateFromFields`
   remain unavailable; the 87 pinned Intl402 helper callers therefore fail at

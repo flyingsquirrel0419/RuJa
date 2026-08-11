@@ -6291,7 +6291,7 @@ pub(crate) fn install_temporal_namespace_in_env(
     global: Option<&Value>,
     object_proto: Value,
 ) -> error::Result<Value> {
-    vm.try_reserve_gc_pins(182)?;
+    vm.try_reserve_gc_pins(183)?;
     let mut pin_count = 0;
     let result = (|| {
         let instant_prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
@@ -8076,6 +8076,37 @@ pub(crate) fn install_temporal_namespace_in_env(
                 data_prop(plain_date_to_plain_year_month),
             );
         });
+        let plain_date_with_calendar = Value::Object(vm.new_native_function_in_env_with_gc_retry(
+            "withCalendar",
+            temporal_plain_date_with_calendar,
+            1,
+            env,
+        )?);
+        pin_count += vm.pin(&plain_date_with_calendar);
+        let plain_date_time_with_calendar =
+            Value::Object(vm.new_native_function_in_env_with_gc_retry(
+                "withCalendar",
+                temporal_plain_date_time_with_calendar,
+                1,
+                env,
+            )?);
+        vm.heap.with_obj(plain_date_prototype_index.0, |object| {
+            object.props().lock().insert(
+                PropertyKey::from("withCalendar"),
+                data_prop(plain_date_with_calendar),
+            );
+        });
+        let Value::Object(plain_date_time_prototype_index) = plain_date_time_prototype.clone()
+        else {
+            unreachable!()
+        };
+        vm.heap
+            .with_obj(plain_date_time_prototype_index.0, |object| {
+                object.props().lock().insert(
+                    PropertyKey::from("withCalendar"),
+                    data_prop(plain_date_time_with_calendar),
+                );
+            });
 
         vm.realm_temporal_instant_constructors
             .insert(env.0, instant_constructor);
@@ -13130,6 +13161,34 @@ fn temporal_plain_date_to_plain_year_month(
     };
     let realm = vm.native_callee_closure().unwrap_or(vm.global);
     create_temporal_plain_year_month_in_realm(vm, fields, calendar_identifier, realm)
+}
+
+fn temporal_plain_date_with_calendar(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let (fields, _) = temporal_plain_date_slots(vm, this)?;
+    let calendar_identifier = temporal_calendar_identifier_from_value(
+        vm,
+        args.first().cloned().unwrap_or(Value::Undefined),
+    )?;
+    let realm = vm.native_callee_closure().unwrap_or(vm.global);
+    create_temporal_plain_date_in_realm(vm, fields, calendar_identifier, realm)
+}
+
+fn temporal_plain_date_time_with_calendar(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let (fields, _) = temporal_plain_date_time_slots(vm, this)?;
+    let calendar_identifier = temporal_calendar_identifier_from_value(
+        vm,
+        args.first().cloned().unwrap_or(Value::Undefined),
+    )?;
+    let realm = vm.native_callee_closure().unwrap_or(vm.global);
+    create_temporal_plain_date_time_in_realm(vm, fields, calendar_identifier, realm)
 }
 
 fn temporal_plain_date_format(
