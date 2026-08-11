@@ -1,5 +1,45 @@
 # test262 conformance
 
+## Temporal PlainDateTime round
+
+Pinned Test262 `9e61c12835c5e4a3bdba93850427e6742c4f64c4`
+contains exactly 45 direct
+`Temporal.PlainDateTime.prototype.round` files. Forced dual-variant execution
+is **45 pass / 0 fail / 45**. The surface covers descriptors and branding,
+String shorthand, ordered option conversion, plural units, every rounding
+mode, valid and invalid increments, day rounding, midnight balance, BCE
+direction, exclusive range limits, and subclass isolation.
+
+The pinned revision contains no Intl402 PlainDateTime round directory. A
+token-aware archive of the complete `test` and `harness` trees freezes **54
+candidate files**, **54 ownership rows**, **85 direct PlainDateTime
+references / 73 direct calls**, and **59 homonym references and calls** owned
+by Duration or ZonedDateTime, plus **11 generic harness computed calls**. No true
+PlainDateTime downstream caller exists outside the direct directory. A second
+audit freezes bracket/computed syntax across all **1,341 executable-token
+PlainDateTime-bearing files**, causing unresolved computed aliases to fail
+closed even when the key is not statically `"round"`. Exact
+paths, metadata, candidate counts, call ownership, diagnostic arguments, and
+results fail closed; sparse checkouts must also contain the audited harness,
+direct directory, and eight homonym files.
+
+Focused runtime/resource tests, all-target/all-feature release Rust including
+Criterion, warnings-denied release Clippy, rustfmt/diff, Python/YAML, exact
+direct **45/45**, live tooling **249/249**, and corpus-unavailable tooling
+**249 tests / 5 skips** pass. Independent GPT-5.6 runtime and tooling reviews
+are clean after alias, dynamic computed-reference, same-count token-identity,
+and field-level metadata audit gaps were closed.
+
+```text
+[Decision Log]
+- 목적과 의도: direct 45 files를 정확히 admit하면서 같은 round 이름을 쓰는 다른 Temporal types를 PlainDateTime 지원으로 오분류하지 않는다.
+- 기존 구현 및 제약 조건: broad Temporal gate는 전체 directory를 숨기고 round는 Duration, Instant, PlainTime, ZonedDateTime에도 존재한다. sparse CI checkout만 검색하면 downstream과 homonym 소유권을 증명할 수 없다.
+- 검토한 주요 대안: directory prefix admission, direct aggregate만 검사, raw grep, complete pinned Git archive의 token-aware call audit을 검토했다.
+- 선택한 방식: sorted 45-file manifest와 field별 metadata map/digest를 고정하고 전체 test+harness archive에서 alias 가능한 round references, static calls, 동적 computed calls를 분류해 54 candidates/54 rows의 identity와 digest를 검증한다.
+- 다른 대안 대신 이 방식을 선택한 이유: prefix는 future files를 자동 허용하고 aggregate는 pass/fail swap을 숨기며 raw grep은 comments, Strings, regex, template raw와 homonyms를 오분류한다.
+- 장점, 단점 및 영향: direct 결과와 전체 caller 부재를 함께 증명한다. 향후 Intl/downstream 파일이 추가되거나 기존 homonym ownership이 변하면 CI가 재감사를 요구한다.
+```
+
 ## Temporal PlainDateTime ISO arithmetic
 
 Pinned Test262 `9e61c12835c5e4a3bdba93850427e6742c4f64c4`

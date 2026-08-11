@@ -309,6 +309,9 @@ jobs:
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_time_arithmetic_audit_is_token_aware_and_closed
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_time_arithmetic_direct_diagnostic_is_exact
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_time_arithmetic_complete_diagnostic_is_exact
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_time_round_surface_is_exact_live_and_shared
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_time_round_audit_is_token_aware_and_closed
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_time_round_diagnostic_is_exact
           -v
       - name: Verify exact Temporal.PlainDateTime.from admission
         working-directory: tools
@@ -2063,6 +2066,41 @@ jobs:
           cat temporal_plain_date_time_arithmetic_complete_result.txt
           grep -q '^RATE=34.6 PASS=84 FAIL=159 SKIP=0 TOTAL=243 RAN=243$' \
             temporal_plain_date_time_arithmetic_complete_result.txt
+
+  temporal-plain-date-time-round:
+    needs: [build, setup]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download RuJa binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ruja-release
+          path: target/release/
+      - run: chmod +x target/release/ruja
+      - name: Checkout pinned PlainDateTime round corpus and homonyms
+        uses: actions/checkout@v4
+        with:
+          repository: tc39/test262
+          ref: ${{ env.TEST262_REV }}
+          path: test262
+          sparse-checkout: |
+            harness
+            test/built-ins/Temporal/PlainDateTime/prototype/round
+            test/built-ins/Temporal/Duration/prototype/round
+            test/intl402/Temporal/Duration/prototype/round
+            test/intl402/Temporal/ZonedDateTime/prototype/round
+      - name: Require exact Temporal.PlainDateTime round (45/45)
+        run: |
+          mapfile -t files < <(grep -hEv '^(#|$)' \
+            tools/test262_temporal_plain_date_time_round_admission.txt)
+          test "${#files[@]}" -eq 45
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_plain_date_time_round_diagnostic.py \
+            "${files[@]}" > temporal_plain_date_time_round_result.txt 2>&1
+          cat temporal_plain_date_time_round_result.txt
+          grep -q '^RATE=100.0 PASS=45 FAIL=0 SKIP=0 TOTAL=45 RAN=45$' \
+            temporal_plain_date_time_round_result.txt
 
   temporal-plain-date-time-from:
     needs: [build, setup]

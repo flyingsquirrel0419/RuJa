@@ -140,7 +140,13 @@
   explicitly outside admission. Release Rust/Clippy, formatting,
   live/unavailable tooling, exact direct/complete diagnostics, and independent
   runtime/tooling reviews pass.
-  Remaining PlainDate arithmetic and PlainDateTime round/difference and
+  PlainDateTime `round` supports String shorthand and ordered options, day
+  through nanosecond units, all rounding modes, divisibility-checked
+  increments, positive time-of-day rounding for BCE correctness, midnight
+  date carry, complete range validation, and fresh method-Realm results. Its
+  pinned direct surface is **45/45**; a complete token-aware ownership audit
+  finds no Intl direct or true downstream caller outside the directory.
+  Remaining PlainDate arithmetic and PlainDateTime difference and
   conversion methods beyond these bridges, calendar-relative and zoned
   Duration operations beyond the supported `total` boundary, remaining
   PlainMonthDay/PlainYearMonth

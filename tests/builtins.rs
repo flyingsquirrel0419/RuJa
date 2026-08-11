@@ -29284,6 +29284,86 @@ fn temporal_plain_date_time_arithmetic_is_hidden_realm_local_and_ordered() {
 }
 
 #[test]
+fn temporal_plain_date_time_rounds_time_and_balances_iso_date() {
+    assert_eq!(
+        run(r#"
+            var value = new Temporal.PlainDateTime(
+              1976, 11, 18, 23, 59, 59, 999, 999, 999
+            );
+            var roundedDay = value.round({ smallestUnit: 'day' });
+            var roundedHour = value.round({ smallestUnit: 'hour' });
+            var halfEven = new Temporal.PlainDateTime(
+              1976, 11, 18, 14, 23, 30, 123, 987, 500
+            ).round({ smallestUnit: 'microsecond', roundingMode: 'halfEven' });
+            var ancient = new Temporal.PlainDateTime(-99, 12, 15, 12, 0, 0, 500);
+            var ancientFloor = ancient.round({
+              smallestUnit: 'second', roundingMode: 'floor'
+            });
+            var ancientCeil = ancient.round({
+              smallestUnit: 'second', roundingMode: 'ceil'
+            });
+            [
+              roundedDay.year, roundedDay.month, roundedDay.day, roundedDay.hour,
+              roundedHour.day, roundedHour.hour,
+              halfEven.microsecond, halfEven.nanosecond,
+              ancientFloor.second, ancientFloor.millisecond,
+              ancientCeil.second, ancientCeil.millisecond
+            ].join('|');
+        "#),
+        Value::String(Arc::from("1976|11|19|0|19|0|988|0|0|0|1|0"))
+    );
+}
+
+#[test]
+fn temporal_plain_date_time_round_is_hidden_realm_local_and_ordered() {
+    assert_eq!(
+        run(r#"
+            var receiver = new Temporal.PlainDateTime(2000, 5, 2, 12, 34, 56, 789);
+            var reads = 0;
+            for (var key of ['year', 'hour', 'calendarId']) {
+              Object.defineProperty(receiver, key, {
+                get: function () { reads++; throw new Error('receiver getter observed'); }
+              });
+            }
+            var other = $262.createRealm().global;
+            var round = other.Temporal.PlainDateTime.prototype.round;
+            var log = [];
+            var options = {};
+            for (var entry of [
+              ['roundingIncrement', { valueOf: function () { log.push('increment value'); return 15; } }],
+              ['roundingMode', { toString: function () { log.push('mode string'); return 'floor'; } }],
+              ['smallestUnit', { toString: function () { log.push('unit string'); return 'minute'; } }]
+            ]) {
+              Object.defineProperty(options, entry[0], {
+                get: (function (name, value) {
+                  return function () { log.push('get ' + name); return value; };
+                })(entry[0], entry[1])
+              });
+            }
+            var rounded = round.call(receiver, options);
+            var brandFirst = false;
+            try {
+              round.call({}, { get smallestUnit() { throw new Error('observed'); } });
+            } catch (error) {
+              brandFirst = error instanceof other.TypeError &&
+                !(error instanceof TypeError) && error.message.indexOf('observed') < 0;
+            }
+            var constructable = true;
+            try { new round(); } catch (_) { constructable = false; }
+            [
+              round.name, round.length,
+              Object.getPrototypeOf(rounded) === other.Temporal.PlainDateTime.prototype,
+              rounded.hour, rounded.minute, reads, brandFirst, constructable,
+              log.join(',')
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "round|1|true|12|30|0|true|false|get roundingIncrement,increment value,get roundingMode,mode string,get smallestUnit,unit string"
+        ))
+    );
+}
+
+#[test]
 fn temporal_plain_date_time_conversion_uses_plain_date_slots_at_midnight() {
     assert_eq!(
         run(r#"

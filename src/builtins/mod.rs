@@ -8198,6 +8198,19 @@ pub(crate) fn install_temporal_namespace_in_env(
                     data_prop(plain_date_time_subtract),
                 );
             });
+        let plain_date_time_round = Value::Object(vm.new_native_function_in_env_with_gc_retry(
+            "round",
+            temporal_plain_date_time_round,
+            1,
+            env,
+        )?);
+        vm.heap
+            .with_obj(plain_date_time_prototype_index.0, |object| {
+                object
+                    .props()
+                    .lock()
+                    .insert(PropertyKey::from("round"), data_prop(plain_date_time_round));
+            });
 
         vm.realm_temporal_instant_constructors
             .insert(env.0, instant_constructor);
@@ -10104,6 +10117,112 @@ fn temporal_plain_date_time_subtract(
     this: Option<Value>,
 ) -> error::Result<Value> {
     temporal_plain_date_time_add_or_subtract(vm, args, this, true)
+}
+
+fn temporal_plain_date_time_round(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let (receiver, calendar_identifier) = temporal_plain_date_time_slots(vm, this)?;
+    let round_to = args.first().cloned().unwrap_or(Value::Undefined);
+    if round_to.is_undefined() {
+        return Err(Error::type_err(
+            "Temporal.PlainDateTime.prototype.round requires an argument",
+        ));
+    }
+
+    let (rounding_increment, rounding_mode, smallest_unit) = match round_to {
+        Value::String(unit) => (
+            1,
+            temporal::InstantRoundingMode::HalfExpand,
+            temporal_plain_date_time_round_unit(&unit)?,
+        ),
+        Value::Object(_) => {
+            vm.try_reserve_value_roots(std::slice::from_ref(&round_to))?;
+            let options_pin = vm.pin(&round_to);
+            let result = (|| {
+                let rounding_increment = match vm.get_property(&round_to, "roundingIncrement")? {
+                    Value::Undefined => 1,
+                    value => {
+                        let increment = temporal_integer_with_truncation(vm, value)?;
+                        if increment < BigInt::from(1_u8)
+                            || increment > BigInt::from(1_000_000_000_u32)
+                        {
+                            return Err(Error::range("Invalid Temporal roundingIncrement option"));
+                        }
+                        increment.to_u32().ok_or_else(|| {
+                            Error::range("Invalid Temporal roundingIncrement option")
+                        })?
+                    }
+                };
+                let rounding_mode = match vm.get_property(&round_to, "roundingMode")? {
+                    Value::Undefined => temporal::InstantRoundingMode::HalfExpand,
+                    value => {
+                        let value = temporal_option_to_string(vm, &value)?;
+                        temporal_instant_rounding_mode(Some(&value))?
+                    }
+                };
+                let smallest_unit = match vm.get_property(&round_to, "smallestUnit")? {
+                    Value::Undefined => {
+                        return Err(Error::range(
+                            "Temporal.PlainDateTime.prototype.round requires smallestUnit",
+                        ));
+                    }
+                    value => {
+                        let value = temporal_option_to_string(vm, &value)?;
+                        temporal_plain_date_time_round_unit(&value)?
+                    }
+                };
+                Ok((rounding_increment, rounding_mode, smallest_unit))
+            })();
+            vm.unpin_many(options_pin);
+            result?
+        }
+        _ => {
+            return Err(Error::type_err(
+                "Temporal.PlainDateTime.prototype.round argument must be a String or object",
+            ));
+        }
+    };
+
+    let maximum = smallest_unit.maximum_rounding_increment();
+    if (smallest_unit == temporal::TimeUnit::Day && rounding_increment != 1)
+        || (smallest_unit != temporal::TimeUnit::Day
+            && (rounding_increment >= maximum || maximum % rounding_increment != 0))
+    {
+        return Err(Error::range(
+            "Invalid Temporal roundingIncrement for smallestUnit",
+        ));
+    }
+    let rounded = temporal::round_iso_date_time(
+        temporal::IsoDateTimeFields {
+            year: i128::from(receiver.year),
+            month: i128::from(receiver.month),
+            day: i128::from(receiver.day),
+            hour: i128::from(receiver.hour),
+            minute: i128::from(receiver.minute),
+            second: i128::from(receiver.second),
+            millisecond: i128::from(receiver.millisecond),
+            microsecond: i128::from(receiver.microsecond),
+            nanosecond: i128::from(receiver.nanosecond),
+        },
+        rounding_increment,
+        smallest_unit,
+        rounding_mode,
+    )
+    .ok_or_else(|| Error::range("Temporal.PlainDateTime rounding failed"))?;
+    let fields = temporal_plain_date_time_fields_from_iso(rounded)?;
+    let realm = vm.native_callee_closure().unwrap_or(vm.global);
+    create_temporal_plain_date_time_in_realm(vm, fields, calendar_identifier, realm)
+}
+
+fn temporal_plain_date_time_round_unit(value: &str) -> error::Result<temporal::TimeUnit> {
+    if matches!(value, "day" | "days") {
+        Ok(temporal::TimeUnit::Day)
+    } else {
+        temporal_plain_time_round_unit(value)
+    }
 }
 
 #[derive(Clone, Copy)]

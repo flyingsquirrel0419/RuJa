@@ -43,9 +43,11 @@ The following resource limits are enforced:
   projections, and complete PlainTime replacement through `withPlainTime` are
   supported. ISO `add` and `subtract` support complete Duration-like inputs,
   all date/time units, signed time carry, and constrain/reject overflow with
-  method-Realm results. Non-ISO calendar arithmetic, prototype
-  `round`/difference operations, locale formatting, and remaining conversion
-  methods are not implemented.
+  method-Realm results. `round` supports complete day-through-nanosecond ISO
+  date-time rounding, including BCE direction, midnight carry, all rounding
+  modes, and method-Realm results. Non-ISO calendar arithmetic, prototype
+  difference operations, locale formatting, and remaining conversion methods
+  are not implemented.
   Realm-local `%Temporal.PlainDate%` supports distinct hidden-slot
   construction, subclassing, 16 ISO/calendar accessors, `@@toStringTag`,
   always-throwing `valueOf`, static `from` for branded Temporal values, ISO

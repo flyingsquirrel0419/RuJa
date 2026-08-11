@@ -738,6 +738,7 @@ pub(crate) enum ZonedDateTimeOffsetOption {
     Use,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct IsoDateTimeFields {
     pub year: i128,
     pub month: i128,
@@ -1178,6 +1179,7 @@ pub(crate) enum InstantRoundingMode {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum TimeUnit {
+    Day,
     Hour,
     Minute,
     Second,
@@ -1189,6 +1191,7 @@ pub(crate) enum TimeUnit {
 impl TimeUnit {
     pub(crate) fn maximum_rounding_increment(self) -> u32 {
         match self {
+            Self::Day => 1,
             Self::Hour => 24,
             Self::Minute | Self::Second => 60,
             Self::Millisecond | Self::Microsecond | Self::Nanosecond => 1_000,
@@ -1197,6 +1200,7 @@ impl TimeUnit {
 
     fn nanoseconds(self) -> i128 {
         match self {
+            Self::Day => SECONDS_PER_DAY * NS_PER_SECOND,
             Self::Hour => 3_600 * NS_PER_SECOND,
             Self::Minute => 60 * NS_PER_SECOND,
             Self::Second => NS_PER_SECOND,
@@ -1272,7 +1276,7 @@ pub(crate) fn round_signed_to_increment(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn round_plain_time(
+fn round_time_with_day_carry(
     hour: u8,
     minute: u8,
     second: u8,
@@ -1282,7 +1286,7 @@ pub(crate) fn round_plain_time(
     increment: u32,
     unit: TimeUnit,
     rounding_mode: InstantRoundingMode,
-) -> Option<(u8, u8, u8, u16, u16, u16)> {
+) -> Option<(i128, u8, u8, u8, u16, u16, u16)> {
     let total = (((((i128::from(hour) * 60 + i128::from(minute)) * 60 + i128::from(second))
         * 1_000
         + i128::from(millisecond))
@@ -1291,7 +1295,7 @@ pub(crate) fn round_plain_time(
         * 1_000)
         + i128::from(nanosecond);
     let prefix = match unit {
-        TimeUnit::Hour => 0,
+        TimeUnit::Day | TimeUnit::Hour => 0,
         TimeUnit::Minute => i128::from(hour) * 3_600 * NS_PER_SECOND,
         TimeUnit::Second => (i128::from(hour) * 3_600 + i128::from(minute) * 60) * NS_PER_SECOND,
         TimeUnit::Millisecond => {
@@ -1318,6 +1322,7 @@ pub(crate) fn round_plain_time(
         rounding_mode,
     )?)?;
     let day_nanoseconds = SECONDS_PER_DAY.checked_mul(NS_PER_SECOND)?;
+    let day_carry = rounded.div_euclid(day_nanoseconds);
     let mut remainder = rounded.rem_euclid(day_nanoseconds);
 
     let rounded_hour = remainder / (3_600 * NS_PER_SECOND);
@@ -1332,6 +1337,7 @@ pub(crate) fn round_plain_time(
     let rounded_nanosecond = remainder % 1_000;
 
     Some((
+        day_carry,
         u8::try_from(rounded_hour).ok()?,
         u8::try_from(rounded_minute).ok()?,
         u8::try_from(rounded_second).ok()?,
@@ -1339,6 +1345,66 @@ pub(crate) fn round_plain_time(
         u16::try_from(rounded_microsecond).ok()?,
         u16::try_from(rounded_nanosecond).ok()?,
     ))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn round_plain_time(
+    hour: u8,
+    minute: u8,
+    second: u8,
+    millisecond: u16,
+    microsecond: u16,
+    nanosecond: u16,
+    increment: u32,
+    unit: TimeUnit,
+    rounding_mode: InstantRoundingMode,
+) -> Option<(u8, u8, u8, u16, u16, u16)> {
+    let (_, hour, minute, second, millisecond, microsecond, nanosecond) =
+        round_time_with_day_carry(
+            hour,
+            minute,
+            second,
+            millisecond,
+            microsecond,
+            nanosecond,
+            increment,
+            unit,
+            rounding_mode,
+        )?;
+    Some((hour, minute, second, millisecond, microsecond, nanosecond))
+}
+
+pub(crate) fn round_iso_date_time(
+    fields: IsoDateTimeFields,
+    increment: u32,
+    unit: TimeUnit,
+    rounding_mode: InstantRoundingMode,
+) -> Option<IsoDateTimeFields> {
+    let (day_carry, hour, minute, second, millisecond, microsecond, nanosecond) =
+        round_time_with_day_carry(
+            u8::try_from(fields.hour).ok()?,
+            u8::try_from(fields.minute).ok()?,
+            u8::try_from(fields.second).ok()?,
+            u16::try_from(fields.millisecond).ok()?,
+            u16::try_from(fields.microsecond).ok()?,
+            u16::try_from(fields.nanosecond).ok()?,
+            increment,
+            unit,
+            rounding_mode,
+        )?;
+    let epoch_days = days_from_civil(fields.year, fields.month, fields.day)?;
+    let (year, month, day) = civil_from_days(epoch_days.checked_add(day_carry)?)?;
+    Some(IsoDateTimeFields {
+        year,
+        month,
+        day,
+        hour: i128::from(hour),
+        minute: i128::from(minute),
+        second: i128::from(second),
+        millisecond: i128::from(millisecond),
+        microsecond: i128::from(microsecond),
+        nanosecond: i128::from(nanosecond),
+    })
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -1561,8 +1561,12 @@ fn temporal_namespace_installation_restores_roots_after_plain_date_time_conversi
 }
 
 #[test]
-fn temporal_namespace_installation_restores_roots_after_plain_date_time_arithmetic_failures() {
-    for (capacity, method) in [(190, "PlainDateTime.add"), (191, "PlainDateTime.subtract")] {
+fn temporal_namespace_installation_restores_roots_after_plain_date_time_operation_failures() {
+    for (capacity, method) in [
+        (190, "PlainDateTime.add"),
+        (191, "PlainDateTime.subtract"),
+        (192, "PlainDateTime.round"),
+    ] {
         let mut vm = Vm::new().expect("failed to initialize VM");
         vm.gc();
         let original = vm.get_global("Temporal");
@@ -1577,7 +1581,7 @@ fn temporal_namespace_installation_restores_roots_after_plain_date_time_arithmet
             crate::builtins::install_temporal_namespace_in_env(&mut vm, global, None, object_proto);
 
         vm.set_max_heap_objects(None);
-        let error = result.expect_err("PlainDateTime arithmetic allocation must hit the cap");
+        let error = result.expect_err("PlainDateTime operation allocation must hit the cap");
         assert_eq!(error.kind, crate::error::ErrorKind::Range, "{method}");
         assert_eq!(error.message, "heap limit exceeded", "{method}");
         assert_eq!(vm.gc_pins.len(), baseline_pins, "{method}");
@@ -1907,11 +1911,11 @@ fn temporal_namespace_installation_rolls_back_last_boundary_on_default_stack() {
     let baseline_registries = realm_registry_counts(&vm);
     let global = vm.global;
 
-    vm.set_max_heap_objects(Some(baseline_live + 191));
+    vm.set_max_heap_objects(Some(baseline_live + 192));
     let object_proto = vm.object_proto.clone();
     let error =
         crate::builtins::install_temporal_namespace_in_env(&mut vm, global, None, object_proto)
-            .expect_err("allocation 192 must fail on the ordinary test stack");
+            .expect_err("allocation 193 must fail on the ordinary test stack");
     vm.set_max_heap_objects(None);
 
     assert_eq!(error.kind, crate::error::ErrorKind::Range);
@@ -1931,9 +1935,9 @@ fn temporal_namespace_installation_covers_every_allocation_boundary_inner() {
     let baseline_live = vm.heap.live_count();
     let global = vm.global;
 
-    // Allocations 18 through 192 cover the method/accessor batches, namespace
+    // Allocations 18 through 193 cover the method/accessor batches, namespace
     // objects, and appended PlainDate/PlainDateTime methods.
-    for extra_capacity in 17..192 {
+    for extra_capacity in 17..193 {
         vm.set_max_heap_objects(Some(baseline_live + extra_capacity));
         let object_proto = vm.object_proto.clone();
         let result =
@@ -1954,16 +1958,16 @@ fn temporal_namespace_installation_covers_every_allocation_boundary_inner() {
         );
     }
 
-    vm.set_max_heap_objects(Some(baseline_live + 192));
+    vm.set_max_heap_objects(Some(baseline_live + 193));
     let object_proto = vm.object_proto.clone();
     let temporal =
         crate::builtins::install_temporal_namespace_in_env(&mut vm, global, None, object_proto)
-            .expect("exact 192-object capacity must install the complete namespace");
+            .expect("exact 193-object capacity must install the complete namespace");
     vm.set_max_heap_objects(None);
     assert_eq!(vm.gc_pins.len(), baseline_pins);
     assert_eq!(vm.get_global("Temporal"), temporal);
     assert_eq!(
-        vm.run("typeof Temporal.Duration.from === 'function' && typeof Temporal.Duration.prototype.with === 'function' && typeof Temporal.Duration.prototype.abs === 'function' && typeof Temporal.Duration.prototype.negated === 'function' && typeof Temporal.Duration.prototype.total === 'function' && typeof Temporal.Duration.prototype.toString === 'function' && typeof Temporal.Duration.prototype.toJSON === 'function' && typeof Temporal.Duration.prototype.valueOf === 'function' && typeof Temporal.PlainDate === 'function' && typeof Temporal.PlainDate.from === 'function' && typeof Temporal.PlainDate.compare === 'function' && typeof Temporal.PlainDate.prototype.equals === 'function' && typeof Temporal.PlainDate.prototype.toPlainDateTime === 'function' && typeof Temporal.PlainDate.prototype.toPlainMonthDay === 'function' && typeof Temporal.PlainDate.prototype.toPlainYearMonth === 'function' && typeof Temporal.PlainDate.prototype.withCalendar === 'function' && typeof Temporal.PlainDate.prototype.toString === 'function' && typeof Temporal.PlainDate.prototype.toJSON === 'function' && typeof Temporal.PlainMonthDay === 'function' && typeof Temporal.PlainMonthDay.prototype.with === 'function' && typeof Temporal.PlainMonthDay.prototype.toString === 'function' && typeof Temporal.PlainMonthDay.prototype.toJSON === 'function' && typeof Temporal.PlainMonthDay.prototype.toPlainDate === 'function' && typeof Temporal.PlainMonthDay.prototype.equals === 'function' && typeof Temporal.PlainMonthDay.prototype.valueOf === 'function' && typeof Temporal.PlainYearMonth === 'function' && typeof Temporal.PlainYearMonth.compare === 'function' && typeof Temporal.PlainYearMonth.prototype.with === 'function' && typeof Temporal.PlainYearMonth.prototype.add === 'function' && typeof Temporal.PlainYearMonth.prototype.subtract === 'function' && typeof Temporal.PlainYearMonth.prototype.equals === 'function' && typeof Temporal.PlainYearMonth.prototype.toString === 'function' && typeof Temporal.PlainYearMonth.prototype.toJSON === 'function' && typeof Temporal.PlainYearMonth.prototype.toPlainDate === 'function' && typeof Temporal.PlainYearMonth.prototype.valueOf === 'function' && typeof Temporal.PlainTime === 'function' && typeof Temporal.PlainTime.from === 'function' && typeof Temporal.PlainTime.compare === 'function' && typeof Temporal.PlainTime.prototype.equals === 'function' && typeof Temporal.PlainTime.prototype.toString === 'function' && typeof Temporal.PlainTime.prototype.toJSON === 'function' && typeof Temporal.PlainTime.prototype.round === 'function' && typeof Temporal.PlainTime.prototype.with === 'function' && typeof Temporal.PlainTime.prototype.add === 'function' && typeof Temporal.PlainTime.prototype.subtract === 'function' && typeof Temporal.PlainTime.prototype.valueOf === 'function' && typeof Temporal.PlainDateTime.compare === 'function' && typeof Temporal.PlainDateTime.prototype.equals === 'function' && typeof Temporal.PlainDateTime.prototype.withCalendar === 'function' && typeof Temporal.PlainDateTime.prototype.toString === 'function' && typeof Temporal.PlainDateTime.prototype.toJSON === 'function' && typeof Temporal.PlainDateTime.prototype.toPlainDate === 'function' && typeof Temporal.PlainDateTime.prototype.toPlainTime === 'function' && typeof Temporal.PlainDateTime.prototype.withPlainTime === 'function' && typeof Temporal.PlainDateTime.prototype.add === 'function' && typeof Temporal.PlainDateTime.prototype.subtract")
+        vm.run("typeof Temporal.Duration.from === 'function' && typeof Temporal.Duration.prototype.with === 'function' && typeof Temporal.Duration.prototype.abs === 'function' && typeof Temporal.Duration.prototype.negated === 'function' && typeof Temporal.Duration.prototype.total === 'function' && typeof Temporal.Duration.prototype.toString === 'function' && typeof Temporal.Duration.prototype.toJSON === 'function' && typeof Temporal.Duration.prototype.valueOf === 'function' && typeof Temporal.PlainDate === 'function' && typeof Temporal.PlainDate.from === 'function' && typeof Temporal.PlainDate.compare === 'function' && typeof Temporal.PlainDate.prototype.equals === 'function' && typeof Temporal.PlainDate.prototype.toPlainDateTime === 'function' && typeof Temporal.PlainDate.prototype.toPlainMonthDay === 'function' && typeof Temporal.PlainDate.prototype.toPlainYearMonth === 'function' && typeof Temporal.PlainDate.prototype.withCalendar === 'function' && typeof Temporal.PlainDate.prototype.toString === 'function' && typeof Temporal.PlainDate.prototype.toJSON === 'function' && typeof Temporal.PlainMonthDay === 'function' && typeof Temporal.PlainMonthDay.prototype.with === 'function' && typeof Temporal.PlainMonthDay.prototype.toString === 'function' && typeof Temporal.PlainMonthDay.prototype.toJSON === 'function' && typeof Temporal.PlainMonthDay.prototype.toPlainDate === 'function' && typeof Temporal.PlainMonthDay.prototype.equals === 'function' && typeof Temporal.PlainMonthDay.prototype.valueOf === 'function' && typeof Temporal.PlainYearMonth === 'function' && typeof Temporal.PlainYearMonth.compare === 'function' && typeof Temporal.PlainYearMonth.prototype.with === 'function' && typeof Temporal.PlainYearMonth.prototype.add === 'function' && typeof Temporal.PlainYearMonth.prototype.subtract === 'function' && typeof Temporal.PlainYearMonth.prototype.equals === 'function' && typeof Temporal.PlainYearMonth.prototype.toString === 'function' && typeof Temporal.PlainYearMonth.prototype.toJSON === 'function' && typeof Temporal.PlainYearMonth.prototype.toPlainDate === 'function' && typeof Temporal.PlainYearMonth.prototype.valueOf === 'function' && typeof Temporal.PlainTime === 'function' && typeof Temporal.PlainTime.from === 'function' && typeof Temporal.PlainTime.compare === 'function' && typeof Temporal.PlainTime.prototype.equals === 'function' && typeof Temporal.PlainTime.prototype.toString === 'function' && typeof Temporal.PlainTime.prototype.toJSON === 'function' && typeof Temporal.PlainTime.prototype.round === 'function' && typeof Temporal.PlainTime.prototype.with === 'function' && typeof Temporal.PlainTime.prototype.add === 'function' && typeof Temporal.PlainTime.prototype.subtract === 'function' && typeof Temporal.PlainTime.prototype.valueOf === 'function' && typeof Temporal.PlainDateTime.compare === 'function' && typeof Temporal.PlainDateTime.prototype.equals === 'function' && typeof Temporal.PlainDateTime.prototype.withCalendar === 'function' && typeof Temporal.PlainDateTime.prototype.toString === 'function' && typeof Temporal.PlainDateTime.prototype.toJSON === 'function' && typeof Temporal.PlainDateTime.prototype.toPlainDate === 'function' && typeof Temporal.PlainDateTime.prototype.toPlainTime === 'function' && typeof Temporal.PlainDateTime.prototype.withPlainTime === 'function' && typeof Temporal.PlainDateTime.prototype.add === 'function' && typeof Temporal.PlainDateTime.prototype.subtract === 'function' && typeof Temporal.PlainDateTime.prototype.round")
             .expect("installed namespace should remain usable"),
         Value::String(Arc::from("function"))
     );
@@ -2477,6 +2481,111 @@ fn temporal_plain_time_round_roots_options_and_retries_every_reservation_failure
         Value::Number(56.0)
     );
     assert_eq!(vm.gc_pins.len(), baseline_pins);
+}
+
+#[test]
+fn temporal_plain_date_time_round_result_allocation_restores_roots_and_retries() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        "globalThis.plainDateTimeRoundValue = new Temporal.PlainDateTime(2000, 5, 2, 23, 59, 59, 999, 999, 999); \
+         globalThis.plainDateTimeRoundOptions = { smallestUnit: 'second' };",
+    )
+    .expect("PlainDateTime.round fixtures should initialize");
+    vm.gc();
+    let baseline_pins = vm.gc_pins.len();
+    let baseline_live = vm.heap.live_count();
+
+    vm.set_max_heap_objects(Some(baseline_live));
+    let error = vm
+        .run("plainDateTimeRoundValue.round(plainDateTimeRoundOptions);")
+        .expect_err("PlainDateTime.round result allocation must obey the exact heap cap");
+    vm.set_max_heap_objects(None);
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(error.message, "heap limit exceeded");
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.heap.live_count(), baseline_live);
+
+    let _garbage = vm.new_object().expect("garbage allocation should succeed");
+    vm.set_max_heap_objects(Some(vm.heap.live_count()));
+    let result = vm
+        .run("plainDateTimeRoundValue.round(plainDateTimeRoundOptions).day;")
+        .expect("PlainDateTime.round should retry after collection");
+    vm.set_max_heap_objects(None);
+    assert_eq!(result, Value::Number(3.0));
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+}
+
+#[test]
+fn temporal_plain_date_time_round_roots_options_across_observable_gc() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forcePlainDateTimeRoundGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC hook should register");
+    vm.run(
+        r#"
+        globalThis.plainDateTimeRoundRootValue =
+          new Temporal.PlainDateTime(2000, 5, 2, 12, 34, 56, 789);
+        globalThis.plainDateTimeRoundRootOrder = [];
+        globalThis.plainDateTimeRoundGcOptions = {};
+        for (var key of ['roundingIncrement', 'roundingMode', 'smallestUnit']) {
+          Object.defineProperty(plainDateTimeRoundGcOptions, key, {
+            get: (function (name) { return function () {
+              plainDateTimeRoundRootOrder.push('get ' + name);
+              forcePlainDateTimeRoundGc();
+              var result = {};
+              result[name === 'roundingIncrement' ? 'valueOf' : 'toString'] = function () {
+                plainDateTimeRoundRootOrder.push('coerce ' + name);
+                forcePlainDateTimeRoundGc();
+                return name === 'roundingIncrement' ? 15 :
+                  name === 'roundingMode' ? 'floor' : 'minute';
+              };
+              return result;
+            }; })(key)
+          });
+        }
+        globalThis.plainDateTimeRoundRootGets = 0;
+        globalThis.plainDateTimeRoundFailOptions = {
+          roundingIncrement: 15,
+          roundingMode: 'floor',
+          smallestUnit: 'minute'
+        };
+        Object.defineProperty(plainDateTimeRoundFailOptions, 'roundingIncrement', {
+          get: function () { plainDateTimeRoundRootGets++; return 15; }
+        });
+        "#,
+    )
+    .expect("PlainDateTime.round root fixtures should initialize");
+    vm.gc();
+    let baseline_pins = vm.gc_pins.len();
+
+    assert_eq!(
+        vm.run("plainDateTimeRoundRootValue.round(plainDateTimeRoundGcOptions).toString() + '|' + plainDateTimeRoundRootOrder.join(',');")
+            .expect("round options should survive getter and coercion GC"),
+        Value::String(Arc::from(
+            "2000-05-02T12:30:00|get roundingIncrement,coerce roundingIncrement,get roundingMode,coerce roundingMode,get smallestUnit,coerce smallestUnit"
+        ))
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    // Native dispatch reserves first; fail the method's options-root preflight.
+    vm.gc_pin_reservation_failure_countdown = Some(1);
+    let error = vm
+        .run("plainDateTimeRoundRootValue.round(plainDateTimeRoundFailOptions);")
+        .expect_err("round options-root reservation should fail before getters");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.gc_pin_reservation_failure_countdown, None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run("plainDateTimeRoundRootGets;")
+            .expect("round getter count should remain readable"),
+        Value::Number(0.0)
+    );
 }
 
 #[test]

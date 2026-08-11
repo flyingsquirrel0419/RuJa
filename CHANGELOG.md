@@ -5,6 +5,38 @@
 ### Changed
 
 - Added Realm-local, non-constructable, length-1
+  `Temporal.PlainDateTime.prototype.round`. The method brands before observing
+  its argument, accepts String shorthand or ordered options, supports day
+  through nanosecond units, all nine rounding modes, valid divisibility
+  increments, plural units, and date carry across midnight. Rounding is
+  performed against the non-negative time within the ISO day instead of the
+  signed epoch distance, preserving specification direction for BCE dates.
+  The complete PlainDateTime range is revalidated before a fresh method-Realm
+  intrinsic is allocated. Existing ordinals 1..192 remain stable; `round` is
+  allocation 193 and complete installation uses exactly 193 allocations.
+  Pinned direct Test262 is **45/45**. A full pinned `test+harness` token audit
+  freezes **54 candidate files / 54 ownership rows / 85 direct references /
+  73 direct calls / 59 Duration or ZonedDateTime homonym references and
+  calls / 11 generic harness computed calls**, with no Intl direct or true
+  downstream PlainDateTime caller. A second digest freezes bracket/computed
+  syntax across all **1,341 PlainDateTime-bearing pinned files**, so an unknown
+  computed alias cannot bypass candidate selection.
+  Runtime/resource tests, all-target/all-feature release Rust including
+  Criterion, warnings-denied release Clippy, rustfmt/diff, Python/YAML, exact
+  direct **45/45**, live tooling **249/249**, and corpus-unavailable tooling
+  **249 tests / 5 skips** pass. Two GPT-5.6 reviews are clean after alias,
+  computed-reference, same-count token-identity, and field-level metadata gaps
+  were closed.
+
+  [Decision Log]
+  - 목적과 의도: PlainDateTime의 day~nanosecond 반올림을 날짜 carry, Realm, resource 경계까지 완결하고 direct 45 files를 실제 지원으로 전환한다.
+  - 기존 구현 및 제약 조건: PlainTime은 같은 options와 time rounding을 지원했지만 midnight carry를 버렸고, epoch 전체를 signed rounding하면 BCE의 floor/trunc/ceil 방향이 명세와 달라진다.
+  - 검토한 주요 대안: PlainTime.round 호출 후 날짜 비교, local epoch nanoseconds signed rounding, method 전용 전체 복제, shared time-with-carry primitive 확장을 검토했다.
+  - 선택한 방식: 기존 time rounding을 day carry까지 반환하는 내부 primitive로 일반화하고 PlainTime은 carry를 버리며 PlainDateTime은 ISO civil date에 carry를 적용한다. day unit도 같은 positive time-of-day 알고리즘으로 처리한다.
+  - 다른 대안 대신 이 방식을 선택한 이유: public PlainTime 왕복은 getters/Realm/species를 관찰하고 signed epoch rounding은 BCE 방향을 깨며 전체 복제는 두 round 구현의 mode/increment semantics를 분기시킨다.
+  - 장점, 단점 및 영향: midnight/range/BCE/half-mode 결과와 옵션 관찰 순서가 하나의 primitive에 고정된다. non-ISO calendar 생성은 여전히 별도 calendar backend 범위지만 round 자체에는 calendar dispatch가 필요 없다.
+
+- Added Realm-local, non-constructable, length-1
   `Temporal.PlainDateTime.prototype.add` and `subtract`. Both brand the
   receiver before argument observation, completely convert Duration inputs,
   then read `overflow`. Subtraction negates every exact duration field without

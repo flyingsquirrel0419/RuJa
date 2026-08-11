@@ -96,6 +96,7 @@ jobs:
             test/built-ins/Temporal/Duration/prototype/toString
             test/built-ins/Temporal/Duration/prototype/toJSON
             test/built-ins/Temporal/Duration/prototype/total
+            test/built-ins/Temporal/Duration/prototype/round
             test/built-ins/Temporal/PlainMonthDay
             test/intl402/Temporal/PlainMonthDay
             test/intl402/DateTimeFormat/prototype/formatRangeToParts
@@ -117,6 +118,8 @@ jobs:
             test/intl402/Temporal/PlainDate
             test/intl402/Temporal/PlainDateTime
             test/intl402/Temporal/ZonedDateTime
+            test/intl402/Temporal/Duration/prototype/round
+            test/intl402/Temporal/ZonedDateTime/prototype/round
             test/intl402/DateTimeFormat/prototype/formatRange
             test/staging/Temporal
       - name: Verify live Temporal.PlainYearMonth tooling
@@ -148,6 +151,9 @@ jobs:
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_time_arithmetic_audit_is_token_aware_and_closed
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_time_arithmetic_direct_diagnostic_is_exact
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_time_arithmetic_complete_diagnostic_is_exact
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_time_round_surface_is_exact_live_and_shared
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_time_round_audit_is_token_aware_and_closed
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_time_round_diagnostic_is_exact
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_calendar_siblings_formatter_surface_is_exact
           -v
       - name: Run exact Temporal.Duration.prototype.with admission
@@ -508,6 +514,16 @@ jobs:
             "${files[@]}" | tee temporal_plain_date_time_arithmetic_complete_result.txt
           grep -q '^RATE=34.6 PASS=84 FAIL=159 SKIP=0 TOTAL=243 RAN=243$' \
             temporal_plain_date_time_arithmetic_complete_result.txt
+      - name: Require exact Temporal.PlainDateTime round (45/45)
+        run: |
+          mapfile -t files < <(grep -hEv '^(#|$)' \
+            tools/test262_temporal_plain_date_time_round_admission.txt)
+          test "${#files[@]}" -eq 45
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_plain_date_time_round_diagnostic.py \
+            "${files[@]}" | tee temporal_plain_date_time_round_result.txt
+          grep -q '^RATE=100.0 PASS=45 FAIL=0 SKIP=0 TOTAL=45 RAN=45$' \
+            temporal_plain_date_time_round_result.txt
       - name: Run exact Temporal.PlainYearMonth.prototype.toPlainDate admission
         run: |
           mapfile -t files < <(grep -hEv '^(#|$)' \

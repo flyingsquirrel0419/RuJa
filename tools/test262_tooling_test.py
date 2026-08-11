@@ -40,6 +40,8 @@ import test262_temporal_plain_date_time_conversions_intl_diagnostic as temporal_
 import test262_temporal_plain_date_time_arithmetic_admission as temporal_plain_date_time_arithmetic_admission
 import test262_temporal_plain_date_time_arithmetic_complete_diagnostic as temporal_plain_date_time_arithmetic_complete_diagnostic
 import test262_temporal_plain_date_time_arithmetic_diagnostic as temporal_plain_date_time_arithmetic_diagnostic
+import test262_temporal_plain_date_time_round_admission as temporal_plain_date_time_round_admission
+import test262_temporal_plain_date_time_round_diagnostic as temporal_plain_date_time_round_diagnostic
 import test262_temporal_plain_year_month_arithmetic_diagnostic as temporal_year_month_arithmetic_diagnostic
 import test262_temporal_plain_year_month_compare_diagnostic as temporal_year_month_compare_diagnostic
 import test262_temporal_plain_year_month_compare_intl_diagnostic as temporal_year_month_compare_intl_diagnostic
@@ -8391,6 +8393,215 @@ class Hidden { ["withPlainTime"]() {} }
                         intl_diagnostic.verify_expected_results(intl_arguments)
             finally:
                 intl_diagnostic.test262_runner.TEST262 = original_root
+
+    def test_temporal_plain_date_time_round_surface_is_exact_live_and_shared(self):
+        admission = temporal_plain_date_time_round_admission
+        direct = admission.TEMPORAL_PLAIN_DATE_TIME_ROUND_FILES
+        self.assertEqual(len(direct), 45)
+        self.assertEqual(
+            direct, temporal_plain_date_time_round_diagnostic.SURFACE
+        )
+        self.assertEqual(
+            set(admission.TEMPORAL_PLAIN_DATE_TIME_ROUND_FEATURES), direct
+        )
+        self.assertEqual(
+            set(admission.TEMPORAL_PLAIN_DATE_TIME_ROUND_INCLUDES), direct
+        )
+        self.assertEqual(set(admission.TEMPORAL_PLAIN_DATE_TIME_ROUND_FLAGS), direct)
+        self.assertEqual(
+            set(admission.TEMPORAL_PLAIN_DATE_TIME_ROUND_NEGATIVE), direct
+        )
+        manifest = (
+            Path(__file__).resolve().parent
+            / "test262_temporal_plain_date_time_round_admission.txt"
+        )
+        entries = tuple(
+            line
+            for raw_line in manifest.read_text().splitlines()
+            if (line := raw_line.strip()) and not line.startswith("#")
+        )
+        self.assertEqual(entries, tuple(sorted(entries)))
+        self.assertEqual(len(entries), len(set(entries)))
+        self.assertEqual(frozenset(entries), direct)
+        for other_manifest in manifest.parent.glob("test262_*_admission.txt"):
+            if other_manifest == manifest:
+                continue
+            existing = {
+                line
+                for raw_line in other_manifest.read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            self.assertTrue(direct.isdisjoint(existing), other_manifest.name)
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        corpus_root = test_root.parent
+        corpus_required = "TEST262" in os.environ
+        try:
+            corpus_available = corpus_root.is_dir() and all(
+                (corpus_root / root).is_dir() for root in admission.AUDIT_TREE_ROOTS
+            )
+        except OSError:
+            if corpus_required:
+                raise
+            corpus_available = False
+        if corpus_required and not corpus_available:
+            raise FileNotFoundError(corpus_root)
+        if corpus_available:
+            candidates = admission.audit_corpus(corpus_root, test262_runner.parse_meta)
+            self.assertEqual(len(candidates), 54)
+            self.assertEqual(len(admission._ownership_rows(candidates)), 54)
+            for relative in direct:
+                path = test_root / relative
+                metadata = test262_runner.parse_meta(path.read_text())
+                for tool in (test262_runner, test262_analyze):
+                    self.assertTrue(tool.temporal_plain_date_time_round_path(path))
+                    self.assertEqual(
+                        tool.temporal_plain_date_time_round_features(path),
+                        admission.TEMPORAL_PLAIN_DATE_TIME_ROUND_FEATURES[relative],
+                    )
+                    self.assertFalse(tool.should_skip(metadata, path), relative)
+            def drift_metadata(source):
+                metadata = test262_runner.parse_meta(source)
+                metadata["features"] = list(metadata.get("features", [])) + ["future"]
+                return metadata
+
+            with self.assertRaisesRegex(RuntimeError, "metadata fields drifted"):
+                admission.audit_corpus(corpus_root, drift_metadata)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = (
+                root
+                / "test/built-ins/Temporal/PlainDateTime/prototype/round/future.js"
+            )
+            outside = root / "test/built-ins/Temporal/Other/round/basic.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, features in admission.TEMPORAL_PLAIN_DATE_TIME_ROUND_FEATURES.items():
+                        path = root / "test" / relative
+                        self.assertTrue(tool.temporal_plain_date_time_round_path(path))
+                        self.assertEqual(
+                            tool.temporal_plain_date_time_round_features(path), features
+                        )
+                    for path in (future, outside, None, object()):
+                        self.assertFalse(tool.temporal_plain_date_time_round_path(path))
+                        self.assertEqual(
+                            tool.temporal_plain_date_time_round_features(path), frozenset()
+                        )
+                    for path in (future, outside):
+                        self.assertTrue(tool.should_skip({"features": ["Temporal"]}, path))
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_temporal_plain_date_time_round_audit_is_token_aware_and_closed(self):
+        admission = temporal_plain_date_time_round_admission
+        source = r'''
+const comment = "value.round()";
+const regexp = /value\.round\(\)/;
+const template = `ignored.round(${value.round()})`;
+// ignored.round();
+const value = new Temporal.PlainDateTime(2000, 1, 1);
+value.round("second");
+value?.round?.("minute");
+value["round"]("hour");
+const alias = value.round;
+alias.call(value, "second");
+const key = "round";
+value[key]("hour");
+const computedAlias = value[key];
+computedAlias.call(value, "minute");
+'''
+        path = "built-ins/Temporal/PlainDateTime/prototype/round/synthetic.js"
+        candidates = admission._candidate_stats({path: source})
+        counts, tokens = candidates[path]
+        self.assertEqual(counts[2:], (6, 4, 3))
+        self.assertEqual(len(admission.property_call_indices(tokens, "round")), 4)
+        self.assertEqual(len(admission.property_reference_indices(tokens, "round")), 6)
+        self.assertEqual(len(admission.computed_call_indices(tokens)), 2)
+        self.assertEqual(len(admission.computed_member_indices(tokens)), 3)
+        destructured_path = "built-ins/Temporal/Other/destructured-round.js"
+        destructured = admission._candidate_stats(
+            {
+                destructured_path: (
+                    "const value = new Temporal.PlainDateTime(2000, 1, 1); "
+                    "const { round: fn } = value; fn.call(value, 'second');"
+                )
+            }
+        )
+        self.assertIn(destructured_path, destructured)
+        with self.assertRaisesRegex(RuntimeError, "computed-reference ambiguity"):
+            admission.verify_computed_ambiguity_contract(
+                {
+                    "built-ins/Temporal/Other/computed-alias.js": (
+                        "const value = new Temporal.PlainDateTime(2000, 1, 1); "
+                        "const fn = value[key]; fn.call(value, 'second');"
+                    )
+                }
+            )
+        with self.assertRaisesRegex(RuntimeError, "candidate surface drifted"):
+            admission.verify_candidate_contract(candidates)
+        with self.assertRaises(FileNotFoundError):
+            admission.audit_corpus(
+                "/definitely/missing/test262", test262_runner.parse_meta
+            )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            for relative in admission.AUDIT_TREE_ROOTS:
+                (root / relative).mkdir(parents=True)
+            for relative in admission.AUDIT_TREE_FILES:
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.touch()
+            with patch.object(
+                admission,
+                "_run_git",
+                side_effect=[
+                    admission.PINNED_TEST262_REVISION + "\n",
+                    "",
+                    "harness/future.js\n",
+                ],
+            ):
+                with self.assertRaisesRegex(RuntimeError, "sparse corpus/harness"):
+                    admission._verify_pinned_tree(root)
+            with patch.object(
+                admission.subprocess, "Popen", side_effect=OSError("configured")
+            ):
+                with self.assertRaisesRegex(RuntimeError, "archive failed closed"):
+                    admission._pinned_sources(root)
+
+    def test_temporal_plain_date_time_round_diagnostic_is_exact(self):
+        diagnostic = temporal_plain_date_time_round_diagnostic
+        arguments = sorted(diagnostic.SURFACE)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "test").mkdir()
+            original_root = diagnostic.test262_runner.TEST262
+            diagnostic.test262_runner.TEST262 = str(root)
+            try:
+                with (
+                    patch.object(diagnostic, "audit_corpus"),
+                    patch.object(diagnostic.test262_runner, "run_test", return_value="pass"),
+                ):
+                    diagnostic.verify_expected_results(arguments)
+                    for invalid in (
+                        arguments[:-1],
+                        arguments[:-1] + [arguments[0]],
+                        arguments + ["built-ins/Temporal/Other/future.js"],
+                    ):
+                        with self.assertRaisesRegex(
+                            RuntimeError, "exact frozen 45-file surface"
+                        ):
+                            diagnostic.verify_expected_results(invalid)
+                with (
+                    patch.object(diagnostic, "audit_corpus"),
+                    patch.object(diagnostic.test262_runner, "run_test", return_value="fail"),
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "results drifted"):
+                        diagnostic.verify_expected_results(arguments)
+            finally:
+                diagnostic.test262_runner.TEST262 = original_root
 
     def test_temporal_plain_date_time_arithmetic_surface_is_exact_live_and_shared(self):
         admission = temporal_plain_date_time_arithmetic_admission
