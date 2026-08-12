@@ -5561,4 +5561,58 @@ published immediately on the provisional prototype, preserving the existing
 - 장점, 단점 및 영향: exact getter/coercion order, missing-field identity, month/monthCode agreement, range, GC/root/heap retry와 stable allocation 194가 고정된다. non-ISO calendar merge는 backend 도입 전 fail-closed다.
 ```
 
+### PlainDateTime ISO difference
+
+`Temporal.PlainDateTime.prototype.until` and `since` are Realm-local,
+non-constructable, length-1 functions sharing one hidden-record difference
+pipeline. Receiver branding precedes argument work. `other` and options are
+reserved and pinned together, complete PlainDateTime conversion and hidden
+calendar equality finish first, then options observe `largestUnit`,
+`roundingIncrement`, `roundingMode`, and `smallestUnit`. Semantic validation
+is deliberately deferred until all four option values are converted.
+
+The ISO algorithm maps each local record to checked epoch nanoseconds but does
+not flatten calendar semantics. For year/month largest units it estimates a
+whole-month anchor from civil year/month indices and adjusts only adjacent
+boundaries, avoiding iteration over the represented date span. Residual
+day/time nanoseconds are balanced from that anchor, so opposite-sign calendar
+and time components normalize correctly. Week and smaller largest units use
+exact constant-length divisors. Irregular year/month/week rounding constructs
+an increment-sized calendar nudge window from the raw duration and compares
+the exact elapsed fraction. Day/time rounding changes only the combined
+24-hour-day/time remainder. When either nudge expands a calendar unit, a
+bounded year/month/week bubble checks actual ISO boundaries instead of fully
+decomposing the rounded endpoint again. `since` negates its rounding mode
+before this pipeline and negates the final internal duration afterward,
+preserving receiver-relative semantics.
+
+If the first calendar nudge window does not contain the destination, the
+algorithm recomputes the next signed window (`additionalShift = true`) as
+required by the current Temporal specification. Whole-month discovery compares
+conceptual year/month/original-day tuples, so an invalid conceptual date such
+as February 29 is not prematurely constrained. Before calendar comparison,
+the destination date and residual time are adjusted when date and time signs
+would otherwise disagree. Exact nanosecond/increment-one differences return
+the raw record without probing an out-of-range adjacent calendar boundary.
+
+Difference publication has a dedicated internal conversion to Number-valued
+Duration slots. Unlike Duration-like input validation, it intentionally
+allows an exact i128 result to become the nearest integral Float64 value, as
+required by `TemporalDurationFromInternal`; all subsequent formatting sees
+that published value. Results use the method Realm's immutable Duration
+intrinsic. `until` and `since` append as allocations 195 and 196 without
+renumbering earlier methods. Immediate prototype publication preserves the
+186 maximum simultaneous pins, while every failure boundary remains
+transactional.
+
+```text
+[Decision Log]
+- 목적과 의도: ISO PlainDateTime difference의 calendar decomposition과 relative rounding을 hidden slots 및 sandbox resource 경계에 연결한다.
+- 기존 구현 및 제약 조건: checked ISO add/civil helpers와 signed time rounding은 있었지만 month anchor, irregular increment nudge, internal Float64 Duration publication이 없었다.
+- 검토한 주요 대안: absolute nanosecond-only difference, day/month 반복 walk, public Temporal method composition, bounded month-anchor state machine을 검토했다.
+- 선택한 방식: civil month estimate와 adjacent correction으로 raw calendar duration을 구하고 calendar/day-time nudge 뒤 actual ISO boundary에 따라 year/month/week를 bubble한다. since는 mode/result sign을 대칭 변환한다.
+- 다른 대안 대신 이 방식을 선택한 이유: absolute-only 계산은 calendar 결과를 잃고 반복 walk는 최대 date span에 비례한다. public composition은 override/getter/Realm 관찰을 추가한다.
+- 장점, 단점 및 영향: year~nanosecond, all modes, range edges, Float64 publication, ordered conversion, GC/root/heap retry와 append-only 195/196가 고정된다. non-ISO calendar dispatch와 Duration add/compare는 별도 ownership 단위다.
+```
+
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

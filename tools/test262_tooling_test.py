@@ -7711,7 +7711,7 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                 blockers,
             ),
             (
-                "test262_temporal_plain_date_time_serialization_downstream_blockers.txt",
+                "test262_temporal_plain_date_time_serialization_downstream_admission.txt",
                 downstream,
             ),
             (
@@ -7725,9 +7725,9 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
             self.assertEqual(len(entries), len(set(entries)), name)
             self.assertEqual(frozenset(entries), expected, name)
 
-        direct_manifest = manifest_cases[0][0]
+        owned_manifests = {name for name, _ in manifest_cases}
         for manifest in tools_dir.glob("test262_*_admission.txt"):
-            if manifest.name == direct_manifest:
+            if manifest.name in owned_manifests:
                 continue
             existing = frozenset(manifest_entries(manifest.name))
             self.assertTrue(admitted.isdisjoint(existing), manifest.name)
@@ -7791,6 +7791,7 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                 )
                 for tool in (test262_runner, test262_analyze):
                     is_admitted = relative in admitted
+                    is_supported = relative in admitted or relative in downstream
                     self.assertEqual(
                         tool.temporal_plain_date_time_serialization_path(path),
                         is_admitted,
@@ -7806,7 +7807,7 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                         relative,
                     )
                     self.assertEqual(
-                        tool.should_skip(metadata, path), not is_admitted, relative
+                        tool.should_skip(metadata, path), not is_supported, relative
                     )
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -7853,10 +7854,13 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                             tool.temporal_plain_date_time_serialization_features(path),
                             frozenset(),
                         )
-                    for path in (future, blocker, downstream_path):
+                    for path in (future, blocker):
                         self.assertTrue(
                             tool.should_skip({"features": ["Temporal"]}, path)
                         )
+                    self.assertFalse(
+                        tool.should_skip({"features": ["Temporal"]}, downstream_path)
+                    )
                     self.assertFalse(
                         tool.should_skip({"features": ["Temporal"]}, outside)
                     )
@@ -7920,20 +7924,12 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
             finally:
                 diagnostic.test262_runner.TEST262 = original_root
 
-            for diagnostic, surface, failed, expected_error in (
-                (
-                    temporal_plain_date_time_serialization_complete_diagnostic,
-                    direct,
-                    blockers,
-                    "RangeError: Invalid Temporal calendar identifier",
-                ),
-                (
-                    temporal_plain_date_time_serialization_downstream_diagnostic,
-                    downstream,
-                    downstream,
-                    "TypeError: undefined is not a function",
-                ),
-            ):
+            for diagnostic, surface, failed, expected_error in ((
+                temporal_plain_date_time_serialization_complete_diagnostic,
+                direct,
+                blockers,
+                "RangeError: Invalid Temporal calendar identifier",
+            ),):
                 original_root = diagnostic.test262_runner.TEST262
                 diagnostic.test262_runner.TEST262 = str(root)
                 arguments = sorted(surface)
@@ -7994,6 +7990,27 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                             diagnostic.verify_expected_results(arguments)
                 finally:
                     diagnostic.test262_runner.TEST262 = original_root
+
+            diagnostic = temporal_plain_date_time_serialization_downstream_diagnostic
+            original_root = diagnostic.test262_runner.TEST262
+            diagnostic.test262_runner.TEST262 = str(root)
+            arguments = sorted(downstream)
+            try:
+                with (
+                    patch.object(diagnostic, "_verify_corpus"),
+                    patch.object(diagnostic.test262_runner, "run_test", return_value="pass"),
+                ):
+                    diagnostic.verify_expected_results(arguments)
+                    with self.assertRaisesRegex(RuntimeError, "exact frozen"):
+                        diagnostic.verify_expected_results([])
+                with (
+                    patch.object(diagnostic, "_verify_corpus"),
+                    patch.object(diagnostic.test262_runner, "run_test", return_value="fail"),
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "results drifted"):
+                        diagnostic.verify_expected_results(arguments)
+            finally:
+                diagnostic.test262_runner.TEST262 = original_root
 
     def test_temporal_plain_date_time_formatter_call_ownership_is_exact_live(self):
         all_files = TEMPORAL_PLAIN_DATE_TIME_SERIALIZATION_ALL_FILES

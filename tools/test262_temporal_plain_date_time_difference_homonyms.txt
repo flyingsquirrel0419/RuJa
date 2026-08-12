@@ -1,0 +1,12 @@
+# Exact until/since homonyms excluded from PlainDateTime ownership: 11.
+built-ins/Temporal/PlainDate/prototype/since/argument-plaindatetime.js
+built-ins/Temporal/PlainDate/prototype/until/argument-plaindatetime.js
+built-ins/Temporal/PlainTime/prototype/since/argument-zoneddatetime-balance-negative-time-units.js
+built-ins/Temporal/PlainTime/prototype/until/argument-zoneddatetime-balance-negative-time-units.js
+built-ins/Temporal/ZonedDateTime/prototype/since/argument-at-limits.js
+built-ins/Temporal/ZonedDateTime/prototype/until/argument-at-limits.js
+intl402/Temporal/ZonedDateTime/prototype/since/argument-at-limits.js
+intl402/Temporal/ZonedDateTime/prototype/since/leap-year-since.js
+intl402/Temporal/ZonedDateTime/prototype/until/argument-at-limits.js
+intl402/Temporal/ZonedDateTime/prototype/until/dst-rounding-result.js
+intl402/Temporal/ZonedDateTime/prototype/until/leap-year-until.js

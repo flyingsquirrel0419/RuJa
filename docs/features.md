@@ -118,8 +118,9 @@
   calendar annotation. `toJSON` ignores arguments and public `toString`, using
   auto/trunc/auto formatting directly. Both return primitive Strings without a
   VM heap-object allocation. Exact local forced coverage is **57/57** direct,
-  with seven non-ISO Intl blockers and one earlier-arithmetic downstream
-  blocker. Local release Rust, warnings-denied Clippy, formatting, and live
+  with seven non-ISO Intl blockers; its former arithmetic downstream now
+  passes after PlainDateTime difference support. Local release Rust,
+  warnings-denied Clippy, formatting, and live
   tooling gates pass; remote CI verification follows the pushed commit.
   PlainDateTime also provides hidden-slot `toPlainDate` and `toPlainTime`
   projections plus `withPlainTime` recomposition. Projections ignore arguments
@@ -154,7 +155,13 @@
   coverage is **29/29**; one earlier `Temporal.Now` dependency and 70 non-ISO
   Intl402 callers remain explicit blockers in the complete **29/71/100**
   boundary.
-  Remaining PlainDate arithmetic and PlainDateTime difference and
+  PlainDateTime `until` and `since` provide hidden-record ISO difference from
+  year through nanosecond units, calendar-relative balancing, all rounding
+  modes and valid increments, receiver-relative `since` semantics, and fresh
+  method-Realm Duration results. Direct coverage is **191 pass / 2 exact
+  Duration add/compare prerequisite blockers / 193**; the true downstream
+  math file passes and 117 Intl402 callers remain non-ISO calendar blockers.
+  Remaining PlainDate arithmetic and PlainDateTime
   conversion methods beyond these bridges, calendar-relative and zoned
   Duration operations beyond the supported `total` boundary, remaining
   PlainMonthDay/PlainYearMonth

@@ -300,6 +300,10 @@ try:
         TEMPORAL_PLAIN_DATE_TIME_WITH_FEATURES,
         TEMPORAL_PLAIN_DATE_TIME_WITH_FILES,
     )
+    from test262_temporal_plain_date_time_difference_admission import (
+        TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_FEATURES,
+        TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_FILES,
+    )
     from test262_temporal_plain_date_to_locale_string_admission import (
         TEMPORAL_PLAIN_DATE_TO_LOCALE_STRING_FEATURES,
         TEMPORAL_PLAIN_DATE_TO_LOCALE_STRING_FILES,
@@ -824,6 +828,10 @@ except ModuleNotFoundError:
     from tools.test262_temporal_plain_date_time_with_admission import (
         TEMPORAL_PLAIN_DATE_TIME_WITH_FEATURES,
         TEMPORAL_PLAIN_DATE_TIME_WITH_FILES,
+    )
+    from tools.test262_temporal_plain_date_time_difference_admission import (
+        TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_FEATURES,
+        TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_FILES,
     )
     from tools.test262_temporal_plain_date_to_locale_string_admission import (
         TEMPORAL_PLAIN_DATE_TO_LOCALE_STRING_FEATURES,
@@ -3737,6 +3745,21 @@ def temporal_plain_date_time_with_features(path):
     rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
     return TEMPORAL_PLAIN_DATE_TIME_WITH_FEATURES[rel.as_posix()]
 
+def temporal_plain_date_time_difference_path(path):
+    if path is None:
+        return False
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except (OSError, TypeError, ValueError):
+        return False
+    return rel.as_posix() in TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_FILES
+
+def temporal_plain_date_time_difference_features(path):
+    if not temporal_plain_date_time_difference_path(path):
+        return frozenset()
+    rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    return TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_FEATURES[rel.as_posix()]
+
 def temporal_plain_date_to_locale_string_path(path):
     if path is None:
         return False
@@ -5795,6 +5818,8 @@ def should_skip(meta, path=None):
         feats.difference_update(temporal_plain_date_time_round_features(path))
     if path is not None and temporal_plain_date_time_with_path(path):
         feats.difference_update(temporal_plain_date_time_with_features(path))
+    if path is not None and temporal_plain_date_time_difference_path(path):
+        feats.difference_update(temporal_plain_date_time_difference_features(path))
     if path is not None and temporal_plain_date_to_locale_string_path(path):
         feats.difference_update(temporal_plain_date_to_locale_string_features(path))
     if path is not None and temporal_plain_date_to_locale_string_intl_path(path):

@@ -5,6 +5,42 @@
 ### Changed
 
 - Added Realm-local, non-constructable, length-1
+  `Temporal.PlainDateTime.prototype.until` and `since` over one hidden-record
+  ISO difference pipeline. Both brand before converting `other`, compare
+  hidden calendars, then read `largestUnit`, `roundingIncrement`,
+  `roundingMode`, and `smallestUnit` in specification order before validating
+  unit relationships or increments. Calendar-relative year/month balancing,
+  weeks through nanoseconds, all nine rounding modes, exact calendar
+  increment boundaries, receiver-relative `since` rounding, negative
+  durations, range edges, and deliberate Float64 representation of large
+  internal Duration fields are supported. Existing ordinals 1..194 remain
+  stable; `until` and `since` are allocations 195 and 196, complete
+  installation uses exactly 196 allocations with 186 maximum live pins.
+  Pinned direct Test262 is **191 pass / 2 exact prerequisite blockers / 193**:
+  both `float64-representable-integer.js` variants pass their difference,
+  field, and serialization assertions before reaching the separately missing
+  `Duration.prototype.add` / `Temporal.Duration.compare`. The true downstream
+  `datetime-math.js` passes **1/1**; 117 Intl402 files remain exact earlier
+  non-ISO calendar blockers. Forced executable ownership is therefore **192
+  pass / 119 fail / 311**, with 11 homonym files separately excluded by the
+  full candidate audit. Runtime tests cover method shape and Realm, hidden
+  receiver non-observation, exact argument/options order, calendar and regular
+  rounding, Float64 publication, observable GC, root preflight, exact heap-cap
+  retry, and every installer boundary.
+
+  [Decision Log]
+  - 목적과 의도: PlainDateTime difference를 calendar-relative decomposition, rounding, Realm, resource 계약까지 구현하고 direct/downstream/non-ISO prerequisite 경계를 정확히 분리한다.
+  - 기존 구현 및 제약 조건: date add, civil conversion, signed time rounding은 있었지만 DifferenceISODateTime과 relative calendar rounding은 없었다. 기존 exact-i128 Duration 변환은 명세가 요구하는 큰 내부 필드의 Float64 precision loss를 거부했다.
+  - 검토한 주요 대안: 전체 구간 epoch nanoseconds 평탄화, 날짜별 반복 CalendarDateUntil, public add/subtract/round 조합, constant-time month anchors와 hidden internal-duration publication을 검토했다.
+  - 선택한 방식: ISO month index로 raw calendar duration을 상수 시간에 구한 뒤 NudgeToCalendarUnit 또는 NudgeToDayOrTime으로 최소 단위만 반올림하고, calendar expansion 때 BubbleRelativeDuration으로 larger units를 올린다. since는 rounding mode와 최종 duration 부호를 각각 반전한다.
+  - 다른 대안 대신 이 방식을 선택한 이유: flat arithmetic은 month/year 및 receiver-relative rounding을 깨고 날짜별 반복은 sandbox fuel 없이 입력 범위에 비례한다. public 조합은 mutable methods, getters, species, Realm을 관찰한다.
+  - 장점, 단점 및 영향: 191 intended direct assertions와 downstream math, exact option order, range/half boundaries, GC/root/heap 및 stable 195/196 ordinals가 고정된다. 두 direct prerequisites는 Duration add/compare 단위에서 해제하고 117 Intl files는 non-ISO backend 뒤 intended assertions까지 재실행해야 한다.
+
+  Current-spec regressions also cover the post-2025 `additionalShift` calendar
+  nudge window, conceptual invalid month dates, date/time-sign adjustment,
+  week-preserving nudge, calendar bubbling, and exact maximum-range fast paths.
+
+- Added Realm-local, non-constructable, length-1
   `Temporal.PlainDateTime.prototype.with`. It brands before observing input,
   rejects branded date/time Temporal objects without public getter access,
   reads `calendar`, `timeZone`, and the ten partial fields in specification
@@ -150,8 +186,8 @@
   allocations and preflights 184 maximum live pins. Exact local forced
   execution confirms **57/57** admitted direct files, **57 pass / 7 fail /
   64** over the complete direct and Intl surface, and **0 pass / 1 fail / 1**
-  downstream; the seven direct blockers require non-ISO calendar support, and
-  the downstream file stops at earlier `until`/`add` support. Local
+  downstream; the seven direct blockers require non-ISO calendar support. The
+  former downstream file now passes after PlainDateTime difference support. Local
   all-target/all-feature release Rust including Criterion, warnings-denied
   release Clippy, rustfmt/diff/YAML/Python checks, live tooling **238/238**,
   corpus-unavailable tooling **238 tests / 5 expected skips**, and focused
@@ -166,7 +202,7 @@
   - 검토한 주요 대안: PlainTime 문자열과 PlainDate 문자열을 결합, public toString을 toJSON에서 재호출, complete local ISO nanoseconds를 한 번에 반올림하고 hidden slots에서 직접 format하는 방식을 검토했다.
   - 선택한 방식: receiver를 먼저 brand-check하고 toString options를 root한 뒤 네 option을 canonical parser로 순서대로 읽는다. complete local ISO nanoseconds를 반올림하고 range를 재검증한 뒤 year/time/calendar를 format하며, toJSON은 auto/trunc/auto 설정으로 hidden record를 직접 직렬화한다.
   - 다른 대안 대신 이 방식을 선택한 이유: PlainTime 문자열 결합은 자정 carry와 반올림 후 날짜 경계 검증을 잃는다. public toString 재호출은 override와 argument 관찰을 추가해 toJSON 명세를 위반한다.
-  - 장점, 단점 및 영향: ordered getters, midnight carry, exclusive range, hidden calendar annotation, method-Realm errors와 allocation-free primitive 결과가 고정된다. local direct 57개와 full gates는 통과하며 non-ISO Intl 7개와 earlier-arithmetic downstream 1개는 blocker로 남는다.
+  - 장점, 단점 및 영향: ordered getters, midnight carry, exclusive range, hidden calendar annotation, method-Realm errors와 allocation-free primitive 결과가 고정된다. local direct 57개와 full gates는 통과하며 non-ISO Intl 7개는 blocker로 남고 former arithmetic downstream 1개는 difference 지원 뒤 pass로 승격됐다.
 
 - Added Realm-local, non-constructable, length-1
   `Temporal.PlainDate.prototype.withCalendar` and

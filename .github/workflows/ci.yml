@@ -52,6 +52,9 @@ jobs:
         run: cargo check --target wasm32-unknown-unknown --all-features
       - name: Test test262 tooling
         run: python3 tools/test262_tooling_test.py
+      - name: Test PlainDateTime difference tooling
+        working-directory: tools
+        run: python3 -m unittest test262_temporal_plain_date_time_difference_tooling_test -v
 
   test262:
     runs-on: ubuntu-latest
@@ -107,13 +110,21 @@ jobs:
             test/built-ins/Temporal/PlainDate/prototype/toPlainYearMonth
             test/built-ins/Temporal/PlainDate/prototype/with
             test/built-ins/Temporal/PlainDate/prototype/withCalendar
+            test/built-ins/Temporal/PlainDate/prototype/since/argument-plaindatetime.js
+            test/built-ins/Temporal/PlainDate/prototype/until/argument-plaindatetime.js
+            test/built-ins/Temporal/PlainTime/prototype/since/argument-zoneddatetime-balance-negative-time-units.js
+            test/built-ins/Temporal/PlainTime/prototype/until/argument-zoneddatetime-balance-negative-time-units.js
             test/built-ins/Temporal/PlainDateTime/prototype/withCalendar
             test/built-ins/Temporal/PlainDateTime/prototype/toString
             test/built-ins/Temporal/PlainDateTime/prototype/toJSON
             test/built-ins/Temporal/PlainDateTime/prototype/until/balance.js
             test/built-ins/Temporal/ZonedDateTime/prototype/withCalendar
             test/built-ins/Temporal/ZonedDateTime/prototype/with
+            test/built-ins/Temporal/ZonedDateTime/prototype/since/argument-at-limits.js
+            test/built-ins/Temporal/ZonedDateTime/prototype/until/argument-at-limits.js
             test/intl402/Temporal/ZonedDateTime/prototype/with
+            test/intl402/Temporal/ZonedDateTime/prototype/since
+            test/intl402/Temporal/ZonedDateTime/prototype/until
             test/built-ins/Temporal/PlainYearMonth
             test/built-ins/Temporal/PlainYearMonth/prototype/toJSON
             test/built-ins/Temporal/PlainYearMonth/prototype/toPlainDate
@@ -162,6 +173,11 @@ jobs:
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_time_with_diagnostics_are_exact
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_calendar_siblings_formatter_surface_is_exact
           -v
+      - name: Verify live Temporal.PlainDateTime difference tooling
+        working-directory: tools
+        run: >-
+          TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
+          test262_temporal_plain_date_time_difference_tooling_test -v
       - name: Run exact Temporal.Duration.prototype.with admission
         run: |
           mapfile -t files < <(
@@ -471,11 +487,11 @@ jobs:
       - name: Diagnose Temporal.PlainDateTime serialization downstream
         run: |
           mapfile -t files < <(grep -hEv '^(#|$)' \
-            tools/test262_temporal_plain_date_time_serialization_downstream_blockers.txt)
+            tools/test262_temporal_plain_date_time_serialization_downstream_admission.txt)
           TEST262="$GITHUB_WORKSPACE/test262" \
             python3 tools/test262_temporal_plain_date_time_serialization_downstream_diagnostic.py \
             "${files[@]}" | tee temporal_plain_date_time_serialization_downstream_result.txt
-          grep -q '^RATE=0.0 PASS=0 FAIL=1 SKIP=0 TOTAL=1 RAN=1$' \
+          grep -q '^RATE=100.0 PASS=1 FAIL=0 SKIP=0 TOTAL=1 RAN=1$' \
             temporal_plain_date_time_serialization_downstream_result.txt
       - name: Require exact Temporal.PlainDateTime conversions (52/52)
         run: |
@@ -552,6 +568,29 @@ jobs:
             "${files[@]}" | tee temporal_plain_date_time_with_complete_result.txt
           grep -q '^RATE=29.0 PASS=29 FAIL=71 SKIP=0 TOTAL=100 RAN=100$' \
             temporal_plain_date_time_with_complete_result.txt
+      - name: Require exact Temporal.PlainDateTime difference (191/191)
+        run: |
+          mapfile -t files < <(grep -hEv '^(#|$)' \
+            tools/test262_temporal_plain_date_time_difference_direct.txt)
+          test "${#files[@]}" -eq 191
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_plain_date_time_difference_diagnostic.py \
+            "${files[@]}" | tee temporal_plain_date_time_difference_result.txt
+          grep -q '^RATE=100.0 PASS=191 FAIL=0 SKIP=0 TOTAL=191 RAN=191$' \
+            temporal_plain_date_time_difference_result.txt
+      - name: Diagnose complete Temporal.PlainDateTime difference (192/119/311)
+        run: |
+          mapfile -t files < <(grep -hEv '^(#|$)' \
+            tools/test262_temporal_plain_date_time_difference_direct.txt \
+            tools/test262_temporal_plain_date_time_difference_direct_blockers.txt \
+            tools/test262_temporal_plain_date_time_difference_downstream.txt \
+            tools/test262_temporal_plain_date_time_difference_intl_blockers.txt)
+          test "${#files[@]}" -eq 311
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_plain_date_time_difference_complete_diagnostic.py \
+            "${files[@]}" | tee temporal_plain_date_time_difference_complete_result.txt
+          grep -q '^RATE=61.7 PASS=192 FAIL=119 SKIP=0 TOTAL=311 RAN=311$' \
+            temporal_plain_date_time_difference_complete_result.txt
       - name: Run exact Temporal.PlainYearMonth.prototype.toPlainDate admission
         run: |
           mapfile -t files < <(grep -hEv '^(#|$)' \

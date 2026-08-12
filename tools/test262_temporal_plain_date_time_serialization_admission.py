@@ -24,8 +24,8 @@ TEMPORAL_PLAIN_DATE_TIME_SERIALIZATION_FILES = _read_manifest(
 TEMPORAL_PLAIN_DATE_TIME_SERIALIZATION_BLOCKERS = _read_manifest(
     "test262_temporal_plain_date_time_serialization_blockers.txt"
 )
-TEMPORAL_PLAIN_DATE_TIME_SERIALIZATION_DOWNSTREAM_BLOCKERS = _read_manifest(
-    "test262_temporal_plain_date_time_serialization_downstream_blockers.txt"
+TEMPORAL_PLAIN_DATE_TIME_SERIALIZATION_DOWNSTREAM_FILES = _read_manifest(
+    "test262_temporal_plain_date_time_serialization_downstream_admission.txt"
 )
 TEMPORAL_PLAIN_DATE_TIME_SERIALIZATION_FALSE_POSITIVES = _read_manifest(
     "test262_temporal_plain_date_time_serialization_false_positives.txt"
@@ -35,7 +35,7 @@ TEMPORAL_PLAIN_DATE_TIME_SERIALIZATION_SURFACE = (
     | TEMPORAL_PLAIN_DATE_TIME_SERIALIZATION_BLOCKERS
 )
 TEMPORAL_PLAIN_DATE_TIME_SERIALIZATION_DOWNSTREAM_SURFACE = (
-    TEMPORAL_PLAIN_DATE_TIME_SERIALIZATION_DOWNSTREAM_BLOCKERS
+    TEMPORAL_PLAIN_DATE_TIME_SERIALIZATION_DOWNSTREAM_FILES
 )
 
 
@@ -120,5 +120,5 @@ if (
     != TEMPORAL_PLAIN_DATE_TIME_SERIALIZATION_ALL_FILES
 ):
     raise RuntimeError(
-        "PlainDateTime serialization must contain 57 pass / 7 fail / 1 downstream"
+        "PlainDateTime serialization must contain 57 pass / 7 fail / 1 passing downstream"
     )

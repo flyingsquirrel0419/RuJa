@@ -29481,6 +29481,140 @@ fn temporal_plain_date_time_with_is_hidden_realm_local_and_ordered() {
 }
 
 #[test]
+fn temporal_plain_date_time_difference_balances_and_rounds_relative_units() {
+    assert_eq!(
+        run(r#"
+            var a = Temporal.PlainDateTime.from('2017-10-05T08:07:14');
+            var b = Temporal.PlainDateTime.from('2021-03-05T03:32:45');
+            var forward = a.until(b, { largestUnit: 'month' });
+            var reverse = b.since(a, { largestUnit: 'month' });
+            var yearRound = new Temporal.PlainDateTime(2019, 1, 1).until(
+              new Temporal.PlainDateTime(2020, 7, 2),
+              { smallestUnit: 'year', roundingMode: 'halfExpand' }
+            );
+            var exactMonth = new Temporal.PlainDateTime(2012, 1, 1, 12).until(
+              new Temporal.PlainDateTime(2012, 2, 1, 12),
+              { largestUnit: 'month', smallestUnit: 'week', roundingMode: 'ceil' }
+            );
+            var huge = new Temporal.PlainDateTime(1970, 1, 1).until(
+              new Temporal.PlainDateTime(2554, 7, 21, 23, 34, 33, 709, 551, 616),
+              { largestUnit: 'microsecond' }
+            );
+            var weekNudge = new Temporal.PlainDateTime(2020, 1, 1).until(
+              new Temporal.PlainDateTime(2020, 1, 30),
+              { largestUnit: 'month', smallestUnit: 'week', roundingMode: 'ceil' }
+            );
+            var dayRemainder = new Temporal.PlainDateTime(2020, 1, 1).until(
+              new Temporal.PlainDateTime(2020, 1, 20),
+              { largestUnit: 'week', smallestUnit: 'day', roundingIncrement: 3, roundingMode: 'ceil' }
+            );
+            var monthBubble = new Temporal.PlainDateTime(2020, 1, 31, 23).until(
+              new Temporal.PlainDateTime(2020, 2, 29, 12),
+              { largestUnit: 'month', smallestUnit: 'day', roundingIncrement: 3, roundingMode: 'ceil' }
+            );
+            var maximum = new Temporal.PlainDateTime(
+              275760, 9, 13, 23, 59, 59, 999, 999, 999
+            );
+            var conceptual = new Temporal.PlainDateTime(2019, 1, 29, 12).until(
+              new Temporal.PlainDateTime(2019, 2, 28, 12),
+              { largestUnit: 'month' }
+            );
+            var maximumMonth = new Temporal.PlainDateTime(
+              275760, 8, 13, 23, 59, 59, 999, 999, 999
+            ).until(maximum, { largestUnit: 'month' });
+            var adjustedTime = new Temporal.PlainDateTime(2019, 1, 29, 12);
+            var adjustedEnd = new Temporal.PlainDateTime(2019, 3, 1, 0);
+            [
+              forward.months, forward.days, forward.hours, forward.minutes, forward.seconds,
+              reverse.months, reverse.days, reverse.hours, reverse.minutes, reverse.seconds,
+              yearRound.years, exactMonth.months, exactMonth.weeks, exactMonth.days,
+              huge.microseconds, huge.nanoseconds, huge.toString(),
+              weekNudge.toString(), dayRemainder.toString(), monthBubble.toString(),
+              maximum.until(maximum, { smallestUnit: 'month' }).toString(),
+              conceptual.toString(), maximumMonth.toString(),
+              adjustedTime.until(adjustedEnd, { largestUnit: 'month' }).toString(),
+              adjustedTime.until(adjustedEnd, {
+                largestUnit: 'month', smallestUnit: 'month', roundingMode: 'trunc'
+              }).toString(),
+              adjustedTime.until(adjustedEnd, {
+                largestUnit: 'month', smallestUnit: 'month', roundingMode: 'ceil'
+              }).toString(),
+              adjustedTime.until(adjustedEnd, {
+                largestUnit: 'month', smallestUnit: 'week'
+              }).toString()
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "40|27|19|25|31|40|30|19|25|31|2|1|0|0|18446744073709550|616|PT18446744073.709552616S|P5W|P2W6D|P1M|PT0S|P30D|P1M|P30DT12H|P1M|P2M|P4W"
+        ))
+    );
+}
+
+#[test]
+fn temporal_plain_date_time_difference_is_hidden_realm_local_and_ordered() {
+    assert_eq!(
+        run(r#"
+            var receiver = new Temporal.PlainDateTime(2000, 5, 2, 12);
+            var receiverReads = 0;
+            for (var key of ['year', 'hour', 'calendarId']) {
+              Object.defineProperty(receiver, key, {
+                get: function () { receiverReads++; throw new Error('receiver observed'); }
+              });
+            }
+            var log = [];
+            var other = {};
+            for (var entry of [
+              ['calendar', 'iso8601'], ['day', 3], ['hour', 13],
+              ['microsecond', 0], ['millisecond', 0], ['minute', 0],
+              ['month', 5], ['monthCode', undefined], ['nanosecond', 0],
+              ['second', 0], ['year', 2000]
+            ]) {
+              Object.defineProperty(other, entry[0], {
+                get: (function (name, value) { return function () {
+                  log.push('other.' + name); return value;
+                }; })(entry[0], entry[1])
+              });
+            }
+            var options = {};
+            for (var entry of [
+              ['largestUnit', 'day'], ['roundingIncrement', 1],
+              ['roundingMode', 'trunc'], ['smallestUnit', 'hour']
+            ]) {
+              Object.defineProperty(options, entry[0], {
+                get: (function (name, value) { return function () {
+                  log.push('options.' + name); return value;
+                }; })(entry[0], entry[1])
+              });
+            }
+            var foreign = $262.createRealm().global;
+            var until = foreign.Temporal.PlainDateTime.prototype.until;
+            var since = foreign.Temporal.PlainDateTime.prototype.since;
+            var result = until.call(receiver, other, options);
+            var brandFirst = false;
+            try { until.call({}, { get calendar() { throw new Error('observed'); } }); }
+            catch (error) {
+              brandFirst = error instanceof foreign.TypeError &&
+                !(error instanceof TypeError) && error.message.indexOf('observed') < 0;
+            }
+            var constructable = [];
+            for (var method of [until, since]) {
+              try { new method(); constructable.push(true); }
+              catch (_) { constructable.push(false); }
+            }
+            [
+              until.name, until.length, since.name, since.length,
+              Object.getPrototypeOf(result) === foreign.Temporal.Duration.prototype,
+              result.days, result.hours, receiverReads, brandFirst,
+              constructable.join(','), log.join(',')
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "until|1|since|1|true|1|1|0|true|false,false|other.calendar,other.day,other.hour,other.microsecond,other.millisecond,other.minute,other.month,other.monthCode,other.nanosecond,other.second,other.year,options.largestUnit,options.roundingIncrement,options.roundingMode,options.smallestUnit"
+        ))
+    );
+}
+
+#[test]
 fn temporal_plain_date_time_conversion_uses_plain_date_slots_at_midnight() {
     assert_eq!(
         run(r#"

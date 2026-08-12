@@ -15664,9 +15664,9 @@ serialization without an observable public `toString` call.
 The complete direct and Intl ownership surface contains 64 files. Seven
 Intl402 `toString` companions require non-ISO calendar construction and remain
 outside admission with the earlier calendar `RangeError`; exact local forced
-execution is **57 pass / 7 fail / 64**. One explicit downstream file calls the
-formatter six times but first requires unsupported `until`/`add` behavior, so
-its exact local result remains **0 pass / 1 fail / 1**. The local
+execution is **57 pass / 7 fail / 64**. The one explicit downstream file calls
+the formatter six times and now passes **1/1** after PlainDateTime difference
+support reaches its intended arithmetic and serialization assertions. The local
 all-target/all-feature release Rust and Criterion gate, warnings-denied release
 Clippy, rustfmt/diff/YAML/Python checks, live tooling **238/238**, and
 corpus-unavailable tooling **238 tests / 5 expected skips** pass; remote CI
@@ -15688,9 +15688,54 @@ complete installation uses 187 allocations and 184 maximum live pins.
 ```text
 [Decision Log]
 - 목적과 의도: PlainDateTime toString/toJSON의 complete direct denominator, non-ISO Intl complement와 true downstream dependency를 exact accounting으로 고정한다.
-- 기존 구현 및 제약 조건: broad Temporal gate는 64 direct/Intl files를 숨겼고 inherited Object.prototype.toString으로 일부 shape fixtures가 거짓 통과할 수 있었다. non-ISO calendar construction과 downstream until/add는 아직 없다.
-- 검토한 주요 대안: direct directory prefix admission, aggregate result만 검사, Intl files도 formatter 지원으로 계상, exact 57-file admission과 7-file Intl 및 1-file downstream blocker 분리를 검토했다.
-- 선택한 방식: 49 toString 및 8 toJSON built-ins paths만 admit하고 57/57 forced result를 고정한다. Intl 7개와 downstream 1개는 선행 blocker reason과 함께 complete diagnostics에서 별도 유지한다.
+- 기존 구현 및 제약 조건: broad Temporal gate는 64 direct/Intl files를 숨겼고 inherited Object.prototype.toString으로 일부 shape fixtures가 거짓 통과할 수 있었다. non-ISO calendar construction과 당시 downstream until/add가 assertion 도달을 막았다.
+- 검토한 주요 대안: direct directory prefix admission, aggregate result만 검사, Intl files도 formatter 지원으로 계상, exact 57-file admission과 7-file Intl 및 1-file downstream ownership 분리를 검토했다.
+- 선택한 방식: 49 toString 및 8 toJSON built-ins paths만 admit하고 57/57 forced result를 고정한다. Intl 7개는 calendar blocker로 유지하고 downstream 1개는 별도 passing admission으로 강제한다.
 - 다른 대안 대신 이 방식을 선택한 이유: prefix와 aggregate-only 검사는 wrong-error false positive와 future files를 숨긴다. Intl admission은 아직 생성할 수 없는 non-ISO receiver 지원을 과장하고 downstream omission은 실제 formatter call surface를 누락한다.
-- 장점, 단점 및 영향: local 57/57, complete 57/7/64, downstream 0/1 경계와 구현의 ordered options, midnight carry, range, JSON non-observation, Realm/resource 계약이 함께 기록된다. local full gates는 통과했으며 remote CI는 pushed commit에서 같은 literal 경계를 재검증한다.
+- 장점, 단점 및 영향: local 57/57, complete 57/7/64, downstream 1/1 경계와 구현의 ordered options, midnight carry, range, JSON non-observation, Realm/resource 계약이 함께 기록된다. non-ISO backend 뒤 seven blockers를 재검사해야 한다.
+```
+
+## Temporal PlainDateTime prototype.until and since
+
+At pinned Test262 revision
+`9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the paired built-ins direct
+surface contains **193 files**: 98 `until` and 95 `since`. Forced execution
+passes **191** intended method files. The two
+`float64-representable-integer.js` files pass their large-field and exact
+Duration serialization assertions, then fail only when they call the
+separately unavailable `Duration.prototype.add` and
+`Temporal.Duration.compare`; they remain exact prerequisite blockers rather
+than admitted false greens. Before implementation, eight expected-error files
+passed accidentally because the absent target method threw TypeError. They
+remain inside the exact direct denominator and now exercise their intended
+conversion or options error.
+
+The only true built-ins downstream owner,
+`Temporal/PlainDateTime/datetime-math.js`, passes **1/1** after both methods are
+installed. The Intl402 companion contains 117 files, all blocked before the
+difference call by non-ISO calendar construction with the exact earlier
+`RangeError: Invalid Temporal calendar identifier`. Executable forced
+ownership is therefore **192 pass / 119 fail / 311**. A complete candidate
+audit additionally classifies 11 PlainDate, PlainTime, and ZonedDateTime
+homonym files outside this method ownership instead of silently counting
+their `.until` or `.since` calls.
+
+The ownership contract freezes 322 executable candidates and 328 ownership
+rows, exact direct/Intl/downstream path sets, metadata, direct and computed
+references/calls, false positives, normalized blocker reasons and
+variant-specific locations, and runner/analyzer parity. Runtime coverage
+separately proves method shape, method-Realm errors/results, hidden receiver
+non-observation, complete `other` conversion before ordered options,
+calendar-relative and regular rounding, large internal Float64 fields,
+observable GC, root preflight, exact heap-cap retry, and installer boundaries
+195/196.
+
+```text
+[Decision Log]
+- 목적과 의도: paired PlainDateTime difference의 direct denominator, true downstream, Intl non-ISO prerequisites와 homonyms를 재현 가능한 exact ownership으로 분리한다.
+- 기존 구현 및 제약 조건: broad Temporal gate는 310 direct/Intl files를 숨겼고 absent method TypeError가 direct 여덟 파일을 거짓 통과시켰다. 두 large-field files는 intended assertions 뒤 Duration add/compare에 의존한다.
+- 검토한 주요 대안: 두 directory prefix admission, aggregate pass count, prerequisite 두 파일 제외, exact direct/blocker/downstream manifests와 full-corpus token ownership을 검토했다.
+- 선택한 방식: 193 direct paths를 고정하되 191 intended pass와 2 exact later blockers로 분류한다. downstream 1개는 pass로 강제하고 Intl 117개는 exact non-ISO failure로 유지하며 homonyms는 candidate audit에서 명시적으로 제외한다.
+- 다른 대안 대신 이 방식을 선택한 이유: prefix와 aggregate-only 검사는 future/wrong-error drift를 숨긴다. prerequisite 제외는 difference 자체가 이미 통과한 Float64 assertions를 누락하고 direct-only accounting은 실제 datetime-math caller를 숨긴다.
+- 장점, 단점 및 영향: 191/2/193 direct, 1/1 downstream, 0/117 Intl 및 11 homonym 경계가 고정된다. Duration add/compare와 non-ISO calendar가 구현되면 blocker files를 intended final assertions까지 재분류해야 한다.
 ```

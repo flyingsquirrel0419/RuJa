@@ -8224,6 +8224,32 @@ pub(crate) fn install_temporal_namespace_in_env(
                     .lock()
                     .insert(PropertyKey::from("with"), data_prop(plain_date_time_with));
             });
+        let plain_date_time_until = Value::Object(vm.new_native_function_in_env_with_gc_retry(
+            "until",
+            temporal_plain_date_time_until,
+            1,
+            env,
+        )?);
+        vm.heap
+            .with_obj(plain_date_time_prototype_index.0, |object| {
+                object
+                    .props()
+                    .lock()
+                    .insert(PropertyKey::from("until"), data_prop(plain_date_time_until));
+            });
+        let plain_date_time_since = Value::Object(vm.new_native_function_in_env_with_gc_retry(
+            "since",
+            temporal_plain_date_time_since,
+            1,
+            env,
+        )?);
+        vm.heap
+            .with_obj(plain_date_time_prototype_index.0, |object| {
+                object
+                    .props()
+                    .lock()
+                    .insert(PropertyKey::from("since"), data_prop(plain_date_time_since));
+            });
 
         vm.realm_temporal_instant_constructors
             .insert(env.0, instant_constructor);
@@ -10429,6 +10455,819 @@ fn temporal_plain_date_time_with(
     let fields = result?;
     let realm = vm.native_callee_closure().unwrap_or(vm.global);
     create_temporal_plain_date_time_in_realm(vm, fields, calendar_identifier, realm)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum TemporalDateTimeDifferenceUnit {
+    Year,
+    Month,
+    Week,
+    Day,
+    Hour,
+    Minute,
+    Second,
+    Millisecond,
+    Microsecond,
+    Nanosecond,
+}
+
+impl TemporalDateTimeDifferenceUnit {
+    fn parse(value: &str) -> error::Result<Self> {
+        Ok(match value {
+            "year" | "years" => Self::Year,
+            "month" | "months" => Self::Month,
+            "week" | "weeks" => Self::Week,
+            "day" | "days" => Self::Day,
+            "hour" | "hours" => Self::Hour,
+            "minute" | "minutes" => Self::Minute,
+            "second" | "seconds" => Self::Second,
+            "millisecond" | "milliseconds" => Self::Millisecond,
+            "microsecond" | "microseconds" => Self::Microsecond,
+            "nanosecond" | "nanoseconds" => Self::Nanosecond,
+            _ => return Err(Error::range("Invalid Temporal difference unit option")),
+        })
+    }
+
+    fn nanoseconds(self) -> Option<i128> {
+        Some(match self {
+            Self::Week => 7 * TEMPORAL_DURATION_DAY_NANOSECONDS,
+            Self::Day => TEMPORAL_DURATION_DAY_NANOSECONDS,
+            Self::Hour => 3_600_000_000_000,
+            Self::Minute => 60_000_000_000,
+            Self::Second => 1_000_000_000,
+            Self::Millisecond => 1_000_000,
+            Self::Microsecond => 1_000,
+            Self::Nanosecond => 1,
+            Self::Year | Self::Month => return None,
+        })
+    }
+
+    fn maximum_rounding_increment(self) -> Option<i128> {
+        Some(match self {
+            Self::Hour => 24,
+            Self::Minute | Self::Second => 60,
+            Self::Millisecond | Self::Microsecond | Self::Nanosecond => 1_000,
+            Self::Year | Self::Month | Self::Week | Self::Day => return None,
+        })
+    }
+}
+
+struct TemporalDateTimeDifferenceSettings {
+    largest_unit: TemporalDateTimeDifferenceUnit,
+    rounding_increment: i128,
+    rounding_mode: temporal::InstantRoundingMode,
+    smallest_unit: TemporalDateTimeDifferenceUnit,
+}
+
+fn temporal_negate_rounding_mode(
+    mode: temporal::InstantRoundingMode,
+) -> temporal::InstantRoundingMode {
+    match mode {
+        temporal::InstantRoundingMode::Ceil => temporal::InstantRoundingMode::Floor,
+        temporal::InstantRoundingMode::Floor => temporal::InstantRoundingMode::Ceil,
+        temporal::InstantRoundingMode::HalfCeil => temporal::InstantRoundingMode::HalfFloor,
+        temporal::InstantRoundingMode::HalfFloor => temporal::InstantRoundingMode::HalfCeil,
+        other => other,
+    }
+}
+
+fn temporal_plain_date_time_difference_settings(
+    vm: &mut Vm,
+    options: &Value,
+    since: bool,
+) -> error::Result<TemporalDateTimeDifferenceSettings> {
+    if !matches!(options, Value::Undefined | Value::Object(_)) {
+        return Err(Error::type_err("Temporal options must be an object"));
+    }
+    let mut largest_unit = None;
+    let mut rounding_increment = BigInt::from(1_u8);
+    let mut rounding_mode = temporal::InstantRoundingMode::Trunc;
+    let mut smallest_unit = TemporalDateTimeDifferenceUnit::Nanosecond;
+    if !options.is_undefined() {
+        largest_unit = match vm.get_property(options, "largestUnit")? {
+            Value::Undefined => None,
+            value => {
+                let value = temporal_option_to_string(vm, &value)?;
+                if value.as_ref() == "auto" {
+                    None
+                } else {
+                    Some(TemporalDateTimeDifferenceUnit::parse(&value)?)
+                }
+            }
+        };
+        rounding_increment = match vm.get_property(options, "roundingIncrement")? {
+            Value::Undefined => BigInt::from(1_u8),
+            value => temporal_integer_with_truncation(vm, value)?,
+        };
+        rounding_mode = match vm.get_property(options, "roundingMode")? {
+            Value::Undefined => temporal::InstantRoundingMode::Trunc,
+            value => {
+                let value = temporal_option_to_string(vm, &value)?;
+                temporal_instant_rounding_mode(Some(&value))?
+            }
+        };
+        smallest_unit = match vm.get_property(options, "smallestUnit")? {
+            Value::Undefined => TemporalDateTimeDifferenceUnit::Nanosecond,
+            value => {
+                let value = temporal_option_to_string(vm, &value)?;
+                TemporalDateTimeDifferenceUnit::parse(&value)?
+            }
+        };
+    }
+
+    let largest_unit = largest_unit
+        .unwrap_or_else(|| std::cmp::min(TemporalDateTimeDifferenceUnit::Day, smallest_unit));
+    let rounding_increment = rounding_increment
+        .to_i128()
+        .filter(|value| (1..=1_000_000_000).contains(value))
+        .ok_or_else(|| Error::range("Invalid Temporal roundingIncrement option"))?;
+    if largest_unit > smallest_unit {
+        return Err(Error::range(
+            "Temporal smallestUnit must not be larger than largestUnit",
+        ));
+    }
+    if let Some(maximum) = smallest_unit.maximum_rounding_increment() {
+        if rounding_increment >= maximum || maximum % rounding_increment != 0 {
+            return Err(Error::range(
+                "Invalid Temporal roundingIncrement for smallestUnit",
+            ));
+        }
+    }
+    if since {
+        rounding_mode = temporal_negate_rounding_mode(rounding_mode);
+    }
+    Ok(TemporalDateTimeDifferenceSettings {
+        largest_unit,
+        rounding_increment,
+        rounding_mode,
+        smallest_unit,
+    })
+}
+
+fn temporal_plain_date_time_epoch_nanoseconds(
+    fields: TemporalPlainDateTimeFields,
+) -> error::Result<i128> {
+    let day = temporal::days_from_civil(
+        i128::from(fields.year),
+        i128::from(fields.month),
+        i128::from(fields.day),
+    )
+    .ok_or_else(|| Error::range("Temporal.PlainDateTime is out of range"))?;
+    day.checked_mul(TEMPORAL_DURATION_DAY_NANOSECONDS)
+        .and_then(|value| value.checked_add(i128::from(fields.hour) * 3_600_000_000_000))
+        .and_then(|value| value.checked_add(i128::from(fields.minute) * 60_000_000_000))
+        .and_then(|value| value.checked_add(i128::from(fields.second) * 1_000_000_000))
+        .and_then(|value| value.checked_add(i128::from(fields.millisecond) * 1_000_000))
+        .and_then(|value| value.checked_add(i128::from(fields.microsecond) * 1_000))
+        .and_then(|value| value.checked_add(i128::from(fields.nanosecond)))
+        .ok_or_else(|| Error::range("Temporal.PlainDateTime is out of range"))
+}
+
+fn temporal_plain_date_time_from_epoch_nanoseconds(
+    epoch_nanoseconds: i128,
+) -> error::Result<TemporalPlainDateTimeFields> {
+    let fields = temporal::iso_date_time(&BigInt::from(epoch_nanoseconds), 0)
+        .ok_or_else(|| Error::range("Rounded Temporal.PlainDateTime is out of range"))?;
+    temporal_plain_date_time_fields_from_iso(temporal::IsoDateTimeFields {
+        year: fields.year,
+        month: fields.month,
+        day: fields.day,
+        hour: fields.hour,
+        minute: fields.minute,
+        second: fields.second,
+        millisecond: fields.millisecond,
+        microsecond: fields.microsecond,
+        nanosecond: fields.nanosecond,
+    })
+}
+
+fn temporal_round_rational_to_increment(
+    numerator: i128,
+    denominator: i128,
+    increment: i128,
+    mode: temporal::InstantRoundingMode,
+) -> error::Result<i128> {
+    let negative = numerator < 0;
+    let magnitude = numerator
+        .checked_abs()
+        .ok_or_else(|| Error::range("Temporal difference rounding failed"))?;
+    let step = denominator
+        .checked_mul(increment)
+        .ok_or_else(|| Error::range("Temporal difference rounding failed"))?;
+    let quotient = magnitude / step;
+    let remainder = magnitude % step;
+    let unsigned_mode = if negative {
+        match mode {
+            temporal::InstantRoundingMode::Ceil => temporal::InstantRoundingMode::Trunc,
+            temporal::InstantRoundingMode::Floor => temporal::InstantRoundingMode::Expand,
+            temporal::InstantRoundingMode::HalfCeil => temporal::InstantRoundingMode::HalfTrunc,
+            temporal::InstantRoundingMode::HalfFloor => temporal::InstantRoundingMode::HalfExpand,
+            other => other,
+        }
+    } else {
+        mode
+    };
+    let round_up = if remainder == 0 {
+        false
+    } else {
+        match unsigned_mode {
+            temporal::InstantRoundingMode::Ceil | temporal::InstantRoundingMode::Expand => true,
+            temporal::InstantRoundingMode::Floor | temporal::InstantRoundingMode::Trunc => false,
+            temporal::InstantRoundingMode::HalfCeil
+            | temporal::InstantRoundingMode::HalfEven
+            | temporal::InstantRoundingMode::HalfExpand
+            | temporal::InstantRoundingMode::HalfFloor
+            | temporal::InstantRoundingMode::HalfTrunc => {
+                let doubled = remainder
+                    .checked_mul(2)
+                    .ok_or_else(|| Error::range("Temporal difference rounding failed"))?;
+                if doubled != step {
+                    doubled > step
+                } else {
+                    match unsigned_mode {
+                        temporal::InstantRoundingMode::HalfCeil
+                        | temporal::InstantRoundingMode::HalfExpand => true,
+                        temporal::InstantRoundingMode::HalfEven => quotient % 2 != 0,
+                        temporal::InstantRoundingMode::HalfFloor
+                        | temporal::InstantRoundingMode::HalfTrunc => false,
+                        _ => unreachable!(),
+                    }
+                }
+            }
+        }
+    };
+    let rounded = quotient
+        .checked_add(i128::from(round_up))
+        .and_then(|value| value.checked_mul(increment))
+        .ok_or_else(|| Error::range("Temporal difference rounding failed"))?;
+    if negative {
+        rounded
+            .checked_neg()
+            .ok_or_else(|| Error::range("Temporal difference rounding failed"))
+    } else {
+        Ok(rounded)
+    }
+}
+
+fn temporal_plain_date_time_add_months(
+    fields: TemporalPlainDateTimeFields,
+    months: i128,
+) -> error::Result<TemporalPlainDateTimeFields> {
+    let epoch_day = temporal_iso_date_add(
+        TemporalPlainDateFields {
+            year: fields.year,
+            month: fields.month,
+            day: fields.day,
+        },
+        0,
+        months,
+        0,
+        0,
+        TemporalOverflow::Constrain,
+    )?;
+    let (year, month, day) = temporal::civil_from_days(epoch_day)
+        .ok_or_else(|| Error::range("Rounded Temporal date is out of range"))?;
+    temporal_plain_date_time_fields_from_iso(temporal::IsoDateTimeFields {
+        year,
+        month,
+        day,
+        hour: i128::from(fields.hour),
+        minute: i128::from(fields.minute),
+        second: i128::from(fields.second),
+        millisecond: i128::from(fields.millisecond),
+        microsecond: i128::from(fields.microsecond),
+        nanosecond: i128::from(fields.nanosecond),
+    })
+}
+
+fn temporal_plain_date_time_whole_months(
+    start: TemporalPlainDateTimeFields,
+    end_nanoseconds: i128,
+) -> error::Result<(i128, i128)> {
+    let start_nanoseconds = temporal_plain_date_time_epoch_nanoseconds(start)?;
+    let direction = end_nanoseconds.cmp(&start_nanoseconds);
+    if direction == std::cmp::Ordering::Equal {
+        return Ok((0, start_nanoseconds));
+    }
+    let end = temporal_plain_date_time_from_epoch_nanoseconds(end_nanoseconds)?;
+    let start_day = temporal::days_from_civil(
+        i128::from(start.year),
+        i128::from(start.month),
+        i128::from(start.day),
+    )
+    .ok_or_else(|| Error::range("Temporal difference date is out of range"))?;
+    let end_day = temporal::days_from_civil(
+        i128::from(end.year),
+        i128::from(end.month),
+        i128::from(end.day),
+    )
+    .ok_or_else(|| Error::range("Temporal difference date is out of range"))?;
+    let start_time = start_nanoseconds.rem_euclid(TEMPORAL_DURATION_DAY_NANOSECONDS);
+    let end_time = end_nanoseconds.rem_euclid(TEMPORAL_DURATION_DAY_NANOSECONDS);
+    let date_sign = temporal_difference_sign(end_day - start_day);
+    let time_sign = temporal_difference_sign(end_time - start_time);
+    let adjusted_end_day = if time_sign != 0 && date_sign != time_sign {
+        end_day
+            .checked_add(time_sign)
+            .ok_or_else(|| Error::range("Temporal difference date is out of range"))?
+    } else {
+        end_day
+    };
+    let (adjusted_end_year, adjusted_end_month, adjusted_end_date) =
+        temporal::civil_from_days(adjusted_end_day)
+            .ok_or_else(|| Error::range("Temporal difference date is out of range"))?;
+    let mut months = (adjusted_end_year - i128::from(start.year)) * 12 + adjusted_end_month
+        - i128::from(start.month);
+    let sign = if direction == std::cmp::Ordering::Greater {
+        1
+    } else {
+        -1
+    };
+    let conceptual_cmp = |months: i128| -> error::Result<std::cmp::Ordering> {
+        let month_index = i128::from(start.year)
+            .checked_mul(12)
+            .and_then(|value| value.checked_add(i128::from(start.month) - 1))
+            .and_then(|value| value.checked_add(months))
+            .ok_or_else(|| Error::range("Temporal difference month is out of range"))?;
+        Ok((
+            month_index.div_euclid(12),
+            month_index.rem_euclid(12) + 1,
+            i128::from(start.day),
+        )
+            .cmp(&(adjusted_end_year, adjusted_end_month, adjusted_end_date)))
+    };
+    loop {
+        let overshot = if sign > 0 {
+            conceptual_cmp(months)? == std::cmp::Ordering::Greater
+        } else {
+            conceptual_cmp(months)? == std::cmp::Ordering::Less
+        };
+        if !overshot {
+            break;
+        }
+        months -= sign;
+    }
+    loop {
+        let candidate = months + sign;
+        let fits = if sign > 0 {
+            conceptual_cmp(candidate)? != std::cmp::Ordering::Greater
+        } else {
+            conceptual_cmp(candidate)? != std::cmp::Ordering::Less
+        };
+        if !fits {
+            break;
+        }
+        months = candidate;
+    }
+    let boundary = temporal_plain_date_time_epoch_nanoseconds(
+        temporal_plain_date_time_add_months(start, months)?,
+    )?;
+    Ok((months, boundary))
+}
+
+fn temporal_balance_regular_difference(
+    mut nanoseconds: i128,
+    largest_unit: TemporalDateTimeDifferenceUnit,
+) -> error::Result<[i128; 10]> {
+    let mut values = [0_i128; 10];
+    let units = [
+        (
+            TemporalDateTimeDifferenceUnit::Week,
+            2,
+            7 * TEMPORAL_DURATION_DAY_NANOSECONDS,
+        ),
+        (
+            TemporalDateTimeDifferenceUnit::Day,
+            3,
+            TEMPORAL_DURATION_DAY_NANOSECONDS,
+        ),
+        (TemporalDateTimeDifferenceUnit::Hour, 4, 3_600_000_000_000),
+        (TemporalDateTimeDifferenceUnit::Minute, 5, 60_000_000_000),
+        (TemporalDateTimeDifferenceUnit::Second, 6, 1_000_000_000),
+        (TemporalDateTimeDifferenceUnit::Millisecond, 7, 1_000_000),
+        (TemporalDateTimeDifferenceUnit::Microsecond, 8, 1_000),
+        (TemporalDateTimeDifferenceUnit::Nanosecond, 9, 1),
+    ];
+    for (unit, index, divisor) in units {
+        if unit >= largest_unit {
+            values[index] = nanoseconds / divisor;
+            nanoseconds %= divisor;
+        }
+    }
+    Ok(values)
+}
+
+fn temporal_balance_calendar_difference(
+    start: TemporalPlainDateTimeFields,
+    end_nanoseconds: i128,
+    largest_unit: TemporalDateTimeDifferenceUnit,
+) -> error::Result<[i128; 10]> {
+    let (months, boundary) = temporal_plain_date_time_whole_months(start, end_nanoseconds)?;
+    let mut values = temporal_balance_regular_difference(
+        end_nanoseconds
+            .checked_sub(boundary)
+            .ok_or_else(|| Error::range("Temporal difference is out of range"))?,
+        TemporalDateTimeDifferenceUnit::Day,
+    )?;
+    if largest_unit == TemporalDateTimeDifferenceUnit::Year {
+        values[0] = months / 12;
+        values[1] = months % 12;
+    } else {
+        values[1] = months;
+    }
+    Ok(values)
+}
+
+fn temporal_duration_fields_from_internal_values(
+    values: [i128; 10],
+) -> error::Result<TemporalDurationFields> {
+    let numbers = values.map(|value| {
+        value
+            .to_f64()
+            .filter(|number| number.is_finite())
+            .ok_or_else(|| Error::range("Temporal difference is out of range"))
+    });
+    let [years, months, weeks, days, hours, minutes, seconds, milliseconds, microseconds, nanoseconds] =
+        numbers;
+    let fields = TemporalDurationFields {
+        years: years?,
+        months: months?,
+        weeks: weeks?,
+        days: days?,
+        hours: hours?,
+        minutes: minutes?,
+        seconds: seconds?,
+        milliseconds: milliseconds?,
+        microseconds: microseconds?,
+        nanoseconds: nanoseconds?,
+    };
+    temporal_duration_is_valid(&fields)
+        .then_some(fields)
+        .ok_or_else(|| Error::range("Invalid Temporal difference"))
+}
+
+fn temporal_difference_sign(value: i128) -> i128 {
+    match value.cmp(&0) {
+        std::cmp::Ordering::Less => -1,
+        std::cmp::Ordering::Equal => 0,
+        std::cmp::Ordering::Greater => 1,
+    }
+}
+
+fn temporal_plain_date_time_add_date_duration(
+    start: TemporalPlainDateTimeFields,
+    values: [i128; 10],
+) -> error::Result<i128> {
+    let epoch_day = temporal_iso_date_add(
+        TemporalPlainDateFields {
+            year: start.year,
+            month: start.month,
+            day: start.day,
+        },
+        values[0],
+        values[1],
+        values[2],
+        values[3],
+        TemporalOverflow::Constrain,
+    )?;
+    epoch_day
+        .checked_mul(TEMPORAL_DURATION_DAY_NANOSECONDS)
+        .and_then(|value| value.checked_add(i128::from(start.hour) * 3_600_000_000_000))
+        .and_then(|value| value.checked_add(i128::from(start.minute) * 60_000_000_000))
+        .and_then(|value| value.checked_add(i128::from(start.second) * 1_000_000_000))
+        .and_then(|value| value.checked_add(i128::from(start.millisecond) * 1_000_000))
+        .and_then(|value| value.checked_add(i128::from(start.microsecond) * 1_000))
+        .and_then(|value| value.checked_add(i128::from(start.nanosecond)))
+        .ok_or_else(|| Error::range("Temporal difference boundary is out of range"))
+}
+
+fn temporal_difference_time_nanoseconds(values: [i128; 10]) -> error::Result<i128> {
+    values[4]
+        .checked_mul(3_600_000_000_000)
+        .and_then(|value| value.checked_add(values[5].checked_mul(60_000_000_000)?))
+        .and_then(|value| value.checked_add(values[6].checked_mul(1_000_000_000)?))
+        .and_then(|value| value.checked_add(values[7].checked_mul(1_000_000)?))
+        .and_then(|value| value.checked_add(values[8].checked_mul(1_000)?))
+        .and_then(|value| value.checked_add(values[9]))
+        .ok_or_else(|| Error::range("Temporal difference time is out of range"))
+}
+
+fn temporal_plain_date_time_calendar_nudge(
+    start: TemporalPlainDateTimeFields,
+    end_nanoseconds: i128,
+    raw: [i128; 10],
+    increment: i128,
+    unit: TemporalDateTimeDifferenceUnit,
+    rounding_mode: temporal::InstantRoundingMode,
+    sign: i128,
+) -> error::Result<([i128; 10], i128, bool)> {
+    let initial_r1 = match unit {
+        TemporalDateTimeDifferenceUnit::Year => raw[0] / increment * increment,
+        TemporalDateTimeDifferenceUnit::Month => raw[1] / increment * increment,
+        TemporalDateTimeDifferenceUnit::Week => {
+            let weeks = raw[2]
+                .checked_add(raw[3] / 7)
+                .ok_or_else(|| Error::range("Temporal week rounding failed"))?;
+            weeks / increment * increment
+        }
+        _ => return Err(Error::internal("Invalid Temporal calendar nudge unit")),
+    };
+    let make_duration = |rounded: i128| {
+        let mut values = [0_i128; 10];
+        match unit {
+            TemporalDateTimeDifferenceUnit::Year => values[0] = rounded,
+            TemporalDateTimeDifferenceUnit::Month => {
+                values[0] = raw[0];
+                values[1] = rounded;
+            }
+            TemporalDateTimeDifferenceUnit::Week => {
+                values[0] = raw[0];
+                values[1] = raw[1];
+                values[2] = rounded;
+            }
+            _ => unreachable!(),
+        }
+        values
+    };
+    let mut shifted = false;
+    let mut r1 = initial_r1;
+    let mut start_duration = make_duration(r1);
+    let mut r2 = r1
+        .checked_add(sign * increment)
+        .ok_or_else(|| Error::range("Temporal calendar rounding failed"))?;
+    let mut end_duration = make_duration(r2);
+    let mut start_boundary = temporal_plain_date_time_add_date_duration(start, start_duration)?;
+    let mut end_boundary = temporal_plain_date_time_add_date_duration(start, end_duration)?;
+    let contains = |start_boundary: i128, end_boundary: i128| {
+        if sign > 0 {
+            start_boundary <= end_nanoseconds && end_nanoseconds <= end_boundary
+        } else {
+            end_boundary <= end_nanoseconds && end_nanoseconds <= start_boundary
+        }
+    };
+    if !contains(start_boundary, end_boundary) {
+        shifted = true;
+        r1 = r2;
+        start_duration = end_duration;
+        start_boundary = end_boundary;
+        r2 = r1
+            .checked_add(sign * increment)
+            .ok_or_else(|| Error::range("Temporal calendar rounding failed"))?;
+        end_duration = make_duration(r2);
+        end_boundary = temporal_plain_date_time_add_date_duration(start, end_duration)?;
+    }
+    if !contains(start_boundary, end_boundary) || start_boundary == end_boundary {
+        return Err(Error::range("Temporal calendar rounding failed"));
+    }
+    let span = end_boundary
+        .checked_sub(start_boundary)
+        .and_then(i128::checked_abs)
+        .ok_or_else(|| Error::range("Temporal calendar rounding failed"))?;
+    let progress = end_nanoseconds
+        .checked_sub(start_boundary)
+        .and_then(i128::checked_abs)
+        .ok_or_else(|| Error::range("Temporal calendar rounding failed"))?;
+    let numerator = r1
+        .checked_mul(span)
+        .and_then(|value| {
+            progress
+                .checked_mul(increment)?
+                .checked_mul(sign)?
+                .checked_add(value)
+        })
+        .ok_or_else(|| Error::range("Temporal calendar rounding failed"))?;
+    let rounded = temporal_round_rational_to_increment(numerator, span, increment, rounding_mode)?;
+    if rounded == r2 {
+        Ok((end_duration, end_boundary, true))
+    } else if rounded == r1 {
+        Ok((start_duration, start_boundary, shifted))
+    } else {
+        Err(Error::internal(
+            "Temporal calendar rounding chose no boundary",
+        ))
+    }
+}
+
+fn temporal_plain_date_time_day_or_time_nudge(
+    end_nanoseconds: i128,
+    raw: [i128; 10],
+    largest_unit: TemporalDateTimeDifferenceUnit,
+    increment: i128,
+    smallest_unit: TemporalDateTimeDifferenceUnit,
+    rounding_mode: temporal::InstantRoundingMode,
+) -> error::Result<([i128; 10], i128, bool)> {
+    let time = raw[3]
+        .checked_mul(TEMPORAL_DURATION_DAY_NANOSECONDS)
+        .and_then(|value| value.checked_add(temporal_difference_time_nanoseconds(raw).ok()?))
+        .ok_or_else(|| Error::range("Temporal difference time is out of range"))?;
+    let rounding_increment = smallest_unit
+        .nanoseconds()
+        .and_then(|value| value.checked_mul(increment))
+        .ok_or_else(|| Error::range("Temporal difference rounding failed"))?;
+    let rounded = temporal::round_signed_to_increment(time, rounding_increment, rounding_mode)
+        .ok_or_else(|| Error::range("Temporal difference rounding failed"))?;
+    let difference = rounded
+        .checked_sub(time)
+        .ok_or_else(|| Error::range("Temporal difference rounding failed"))?;
+    let nudged = end_nanoseconds
+        .checked_add(difference)
+        .ok_or_else(|| Error::range("Temporal difference rounding failed"))?;
+    let whole_days = time / TEMPORAL_DURATION_DAY_NANOSECONDS;
+    let rounded_whole_days = rounded / TEMPORAL_DURATION_DAY_NANOSECONDS;
+    let day_delta = rounded_whole_days - whole_days;
+    let did_expand = temporal_difference_sign(day_delta) == temporal_difference_sign(time);
+
+    let mut result = raw;
+    result[3..].fill(0);
+    let remainder = if largest_unit <= TemporalDateTimeDifferenceUnit::Day {
+        result[3] = rounded_whole_days;
+        rounded % TEMPORAL_DURATION_DAY_NANOSECONDS
+    } else {
+        result[..4].fill(0);
+        rounded
+    };
+    let balanced = temporal_balance_regular_difference(
+        remainder,
+        if largest_unit <= TemporalDateTimeDifferenceUnit::Day {
+            TemporalDateTimeDifferenceUnit::Hour
+        } else {
+            largest_unit
+        },
+    )?;
+    result[4..].copy_from_slice(&balanced[4..]);
+    Ok((result, nudged, did_expand))
+}
+
+fn temporal_plain_date_time_bubble_difference(
+    start: TemporalPlainDateTimeFields,
+    mut duration: [i128; 10],
+    nudged_nanoseconds: i128,
+    largest_unit: TemporalDateTimeDifferenceUnit,
+    start_unit: TemporalDateTimeDifferenceUnit,
+    sign: i128,
+) -> error::Result<[i128; 10]> {
+    for unit in [
+        TemporalDateTimeDifferenceUnit::Week,
+        TemporalDateTimeDifferenceUnit::Month,
+        TemporalDateTimeDifferenceUnit::Year,
+    ] {
+        if unit >= start_unit || unit < largest_unit {
+            continue;
+        }
+        if unit == TemporalDateTimeDifferenceUnit::Week
+            && largest_unit != TemporalDateTimeDifferenceUnit::Week
+        {
+            continue;
+        }
+        let mut candidate = [0_i128; 10];
+        match unit {
+            TemporalDateTimeDifferenceUnit::Year => {
+                candidate[0] = duration[0]
+                    .checked_add(sign)
+                    .ok_or_else(|| Error::range("Temporal difference bubbling failed"))?;
+            }
+            TemporalDateTimeDifferenceUnit::Month => {
+                candidate[0] = duration[0];
+                candidate[1] = duration[1]
+                    .checked_add(sign)
+                    .ok_or_else(|| Error::range("Temporal difference bubbling failed"))?;
+            }
+            TemporalDateTimeDifferenceUnit::Week => {
+                candidate[0] = duration[0];
+                candidate[1] = duration[1];
+                candidate[2] = duration[2]
+                    .checked_add(sign)
+                    .ok_or_else(|| Error::range("Temporal difference bubbling failed"))?;
+            }
+            _ => unreachable!(),
+        }
+        let boundary = temporal_plain_date_time_add_date_duration(start, candidate)?;
+        let beyond_sign = temporal_difference_sign(
+            nudged_nanoseconds
+                .checked_sub(boundary)
+                .ok_or_else(|| Error::range("Temporal difference bubbling failed"))?,
+        );
+        if beyond_sign == -sign {
+            break;
+        }
+        duration = candidate;
+    }
+    Ok(duration)
+}
+
+fn temporal_plain_date_time_difference_values(
+    start: TemporalPlainDateTimeFields,
+    end: TemporalPlainDateTimeFields,
+    settings: &TemporalDateTimeDifferenceSettings,
+) -> error::Result<[i128; 10]> {
+    let start_nanoseconds = temporal_plain_date_time_epoch_nanoseconds(start)?;
+    let end_nanoseconds = temporal_plain_date_time_epoch_nanoseconds(end)?;
+    let delta = end_nanoseconds
+        .checked_sub(start_nanoseconds)
+        .ok_or_else(|| Error::range("Temporal difference is out of range"))?;
+    if delta == 0 {
+        return Ok([0; 10]);
+    }
+    let raw = if matches!(
+        settings.largest_unit,
+        TemporalDateTimeDifferenceUnit::Year | TemporalDateTimeDifferenceUnit::Month
+    ) {
+        temporal_balance_calendar_difference(start, end_nanoseconds, settings.largest_unit)?
+    } else {
+        temporal_balance_regular_difference(delta, settings.largest_unit)?
+    };
+    if settings.smallest_unit == TemporalDateTimeDifferenceUnit::Nanosecond
+        && settings.rounding_increment == 1
+    {
+        return Ok(raw);
+    }
+    let sign = temporal_difference_sign(delta);
+    let (mut rounded, nudged, did_expand) =
+        if settings.smallest_unit <= TemporalDateTimeDifferenceUnit::Week {
+            temporal_plain_date_time_calendar_nudge(
+                start,
+                end_nanoseconds,
+                raw,
+                settings.rounding_increment,
+                settings.smallest_unit,
+                settings.rounding_mode,
+                sign,
+            )?
+        } else {
+            temporal_plain_date_time_day_or_time_nudge(
+                end_nanoseconds,
+                raw,
+                settings.largest_unit,
+                settings.rounding_increment,
+                settings.smallest_unit,
+                settings.rounding_mode,
+            )?
+        };
+    if did_expand && settings.smallest_unit != TemporalDateTimeDifferenceUnit::Week {
+        rounded = temporal_plain_date_time_bubble_difference(
+            start,
+            rounded,
+            nudged,
+            settings.largest_unit,
+            std::cmp::min(settings.smallest_unit, TemporalDateTimeDifferenceUnit::Day),
+            sign,
+        )?;
+    }
+    Ok(rounded)
+}
+
+fn temporal_plain_date_time_difference(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+    since: bool,
+) -> error::Result<Value> {
+    let (receiver, receiver_calendar) = temporal_plain_date_time_slots(vm, this)?;
+    let other = args.first().cloned().unwrap_or(Value::Undefined);
+    let options = args.get(1).cloned().unwrap_or(Value::Undefined);
+    vm.try_reserve_value_roots(&[other.clone(), options.clone()])?;
+    let pins = vm.pin_many(&[other.clone(), options.clone()]);
+    let result = (|| {
+        let (other, other_calendar) = to_temporal_plain_date_time(vm, &other, None)?;
+        if !temporal_calendar_equals(&receiver_calendar, &other_calendar) {
+            return Err(Error::range("Temporal calendars must match"));
+        }
+        if receiver_calendar.as_ref() != "iso8601" {
+            return Err(Error::range(
+                "Temporal.PlainDateTime difference requires the ISO 8601 calendar",
+            ));
+        }
+        let settings = temporal_plain_date_time_difference_settings(vm, &options, since)?;
+        let mut values = temporal_plain_date_time_difference_values(receiver, other, &settings)?;
+        if since {
+            for value in &mut values {
+                *value = value
+                    .checked_neg()
+                    .ok_or_else(|| Error::range("Temporal difference is out of range"))?;
+            }
+        }
+        temporal_duration_fields_from_internal_values(values)
+    })();
+    vm.unpin_many(pins);
+    let fields = result?;
+    let realm = vm.native_callee_closure().unwrap_or(vm.global);
+    create_temporal_duration_in_realm(vm, fields, realm)
+}
+
+fn temporal_plain_date_time_until(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    temporal_plain_date_time_difference(vm, args, this, false)
+}
+
+fn temporal_plain_date_time_since(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    temporal_plain_date_time_difference(vm, args, this, true)
 }
 
 #[derive(Clone, Copy)]

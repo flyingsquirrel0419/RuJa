@@ -43,10 +43,15 @@ The following resource limits are enforced:
   projections, and complete PlainTime replacement through `withPlainTime` are
   supported. ISO `add` and `subtract` support complete Duration-like inputs,
   all date/time units, signed time carry, and constrain/reject overflow with
-  method-Realm results. `round` supports complete day-through-nanosecond ISO
+  method-Realm results. `until` and `since` support ISO differences from year
+  through nanosecond units, calendar-relative balancing, all rounding modes,
+  valid increments, and method-Realm Duration results. Two direct files remain
+  blocked only after their intended difference assertions by missing Duration
+  add/compare; 117 Intl402 callers remain blocked by non-ISO construction.
+  `round` supports complete day-through-nanosecond ISO
   date-time rounding, including BCE direction, midnight carry, all rounding
-  modes, and method-Realm results. Non-ISO calendar arithmetic, prototype
-  difference operations, locale formatting, and remaining conversion methods
+  modes, and method-Realm results. Non-ISO calendar arithmetic, locale
+  formatting, and remaining conversion methods
   are not implemented. `with` supports the complete ISO partial-field merge,
   overflow, hidden-slot, and method-Realm behavior. Its one direct
   `Temporal.Now`-fixture dependency and 70 Intl402 non-ISO calendar files stay

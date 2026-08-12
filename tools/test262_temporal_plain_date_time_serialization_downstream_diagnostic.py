@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""Force the exact PlainDateTime serialization downstream blocker."""
+"""Force the exact passing PlainDateTime serialization downstream owner."""
 
 from pathlib import Path
-import re
 import sys
 
 import test262_runner
@@ -16,9 +15,7 @@ from test262_temporal_plain_date_time_serialization_admission import (
 
 
 SURFACE = TEMPORAL_PLAIN_DATE_TIME_SERIALIZATION_DOWNSTREAM_SURFACE
-BLOCKERS = SURFACE
 _SHARED_SHOULD_SKIP = test262_runner.should_skip
-_EXPECTED_ERROR = "TypeError: undefined is not a function"
 
 
 def _relative(path):
@@ -63,25 +60,6 @@ def _verify_corpus(test_root):
             )
 
 
-def _run_with_diagnostics(path):
-    source = test262_runner.read_source(path)
-    metadata = test262_runner.parse_meta(source)
-    timeout = test262_runner.test_timeout_seconds(path)
-    results = []
-    for label, strict in test262_runner.execution_variants(metadata):
-        full = test262_runner.assemble_source(source, metadata, strict=strict)
-        status, diagnostic = test262_runner.execute_source(
-            full, metadata, test262_runner.RUJA, timeout=timeout
-        )
-        results.append((label, status, diagnostic))
-    status, _ = test262_runner.combine_variant_results(results)
-    return status, tuple(diagnostic for _, _, diagnostic in results)
-
-
-def _normalize_error(message):
-    return re.sub(r" \(at line \d+\)$", "", message)
-
-
 def verify_expected_results(arguments):
     test_root = Path(test262_runner.TEST262) / "test"
     if not test_root.is_dir():
@@ -99,25 +77,13 @@ def verify_expected_results(arguments):
             "frozen 1-file surface"
         )
     _verify_corpus(test_root)
-    diagnostics = {
-        path: _run_with_diagnostics(test_root / path) for path in sorted(SURFACE)
+    actual = {
+        path: test262_runner.run_test(test_root / path) for path in sorted(SURFACE)
     }
-    actual = {path: result[0] for path, result in diagnostics.items()}
-    expected = {path: "fail" for path in SURFACE}
+    expected = {path: "pass" for path in SURFACE}
     if actual != expected:
         raise RuntimeError(
             f"PlainDateTime serialization downstream results drifted: {actual}"
-        )
-    wrong_errors = {
-        path: messages
-        for path, (_, messages) in diagnostics.items()
-        if not messages
-        or any(_normalize_error(message) != _EXPECTED_ERROR for message in messages)
-    }
-    if wrong_errors:
-        raise RuntimeError(
-            "PlainDateTime serialization downstream failure reasons drifted: "
-            f"{wrong_errors}"
         )
 
 
