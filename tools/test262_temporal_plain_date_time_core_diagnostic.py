@@ -19,7 +19,7 @@ def read_manifest(name):
 
 SURFACE = read_manifest(
     "test262_temporal_plain_date_time_core_admission.txt"
-) | read_manifest("test262_temporal_plain_date_time_core_blockers.txt")
+) | read_manifest("test262_temporal_plain_date_time_core_downstream_admission.txt")
 _SHARED_SHOULD_SKIP = test262_runner.should_skip
 
 

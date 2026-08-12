@@ -23,7 +23,9 @@
   `datetime-math.js` passes **1/1**; 117 Intl402 files remain exact earlier
   non-ISO calendar blockers. Forced executable ownership is therefore **192
   pass / 119 fail / 311**, with 11 homonym files separately excluded by the
-  full candidate audit. Runtime tests cover method shape and Realm, hidden
+  full candidate audit. Its older PlainDateTime core complement is now an
+  exact downstream admission instead of a stale blocker assertion. Runtime
+  tests cover method shape and Realm, hidden
   receiver non-observation, exact argument/options order, calendar and regular
   rounding, Float64 publication, observable GC, root preflight, exact heap-cap
   retry, and every installer boundary.

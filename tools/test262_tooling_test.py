@@ -13118,17 +13118,17 @@ var TemporalHelpers = {
     def test_temporal_plain_date_time_core_manifest_is_exact_live_disjoint_and_shared(self):
         files = TEMPORAL_PLAIN_DATE_TIME_CORE_FILES
         features_by_file = TEMPORAL_PLAIN_DATE_TIME_CORE_FEATURES
-        blockers = {
+        downstream_admission = {
             line
             for raw_line in Path(__file__).with_name(
-                "test262_temporal_plain_date_time_core_blockers.txt"
+                "test262_temporal_plain_date_time_core_downstream_admission.txt"
             ).read_text().splitlines()
             if (line := raw_line.strip()) and not line.startswith("#")
         }
         self.assertEqual(len(files), 105)
-        self.assertEqual(len(blockers), 1)
+        self.assertEqual(len(downstream_admission), 1)
         self.assertEqual(set(features_by_file), set(files))
-        self.assertTrue(files.isdisjoint(blockers))
+        self.assertTrue(files.isdisjoint(downstream_admission))
 
         test_root = Path(test262_runner.TEST262) / "test"
         plain_dir = test_root / "built-ins/Temporal/PlainDateTime"
@@ -13164,7 +13164,7 @@ var TemporalHelpers = {
         except OSError:
             live_files = None
         if live_files is not None:
-            self.assertEqual(live_files, set(files) | blockers)
+            self.assertEqual(live_files, set(files) | downstream_admission)
             for relative in files:
                 path = test_root / relative
                 metadata = test262_runner.parse_meta(path.read_text())
@@ -13180,11 +13180,11 @@ var TemporalHelpers = {
                         features_by_file[relative],
                     )
                     self.assertFalse(tool.should_skip(metadata, path), relative)
-            for relative in blockers:
+            for relative in downstream_admission:
                 path = test_root / relative
                 metadata = test262_runner.parse_meta(path.read_text())
                 for tool in (test262_runner, test262_analyze):
-                    self.assertTrue(tool.should_skip(metadata, path), relative)
+                    self.assertFalse(tool.should_skip(metadata, path), relative)
 
         tools_dir = Path(__file__).resolve().parent
         for manifest in tools_dir.glob("test262_*_admission.txt"):

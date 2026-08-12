@@ -15712,7 +15712,10 @@ conversion or options error.
 
 The only true built-ins downstream owner,
 `Temporal/PlainDateTime/datetime-math.js`, passes **1/1** after both methods are
-installed. The Intl402 companion contains 117 files, all blocked before the
+installed. This also changes the older PlainDateTime core complement from an
+exact blocker to an exact downstream admission; both audits now require the
+file to execute instead of retaining a stale skip assertion. The Intl402
+companion contains 117 files, all blocked before the
 difference call by non-ISO calendar construction with the exact earlier
 `RangeError: Invalid Temporal calendar identifier`. Executable forced
 ownership is therefore **192 pass / 119 fail / 311**. A complete candidate
