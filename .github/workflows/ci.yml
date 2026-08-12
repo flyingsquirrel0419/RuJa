@@ -523,18 +523,18 @@ jobs:
             "${files[@]}" | tee temporal_plain_date_time_arithmetic_result.txt
           grep -q '^RATE=100.0 PASS=84 FAIL=0 SKIP=0 TOTAL=84 RAN=84$' \
             temporal_plain_date_time_arithmetic_result.txt
-      - name: Diagnose complete Temporal.PlainDateTime arithmetic (84/159/243)
+      - name: Diagnose complete Temporal.PlainDateTime arithmetic (88/155/243)
         run: |
           mapfile -t files < <(grep -hEv '^(#|$)' \
             tools/test262_temporal_plain_date_time_arithmetic_admission.txt \
             tools/test262_temporal_plain_date_time_arithmetic_intl_blockers.txt \
-            tools/test262_temporal_plain_date_time_arithmetic_downstream_blockers.txt \
+            tools/test262_temporal_plain_date_time_arithmetic_downstream_admission.txt \
             tools/test262_temporal_plain_date_time_arithmetic_intl_downstream_blockers.txt)
           test "${#files[@]}" -eq 243
           TEST262="$GITHUB_WORKSPACE/test262" \
             python3 tools/test262_temporal_plain_date_time_arithmetic_complete_diagnostic.py \
             "${files[@]}" | tee temporal_plain_date_time_arithmetic_complete_result.txt
-          grep -q '^RATE=34.6 PASS=84 FAIL=159 SKIP=0 TOTAL=243 RAN=243$' \
+          grep -q '^RATE=36.2 PASS=88 FAIL=155 SKIP=0 TOTAL=243 RAN=243$' \
             temporal_plain_date_time_arithmetic_complete_result.txt
       - name: Require exact Temporal.PlainDateTime round (45/45)
         run: |

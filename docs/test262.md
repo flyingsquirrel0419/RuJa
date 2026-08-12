@@ -96,9 +96,9 @@ positives rather than baseline support.
 
 The complete ownership denominator is **243 files**. The 148 Intl direct files
 and seven Intl downstream files remain exact earlier non-ISO calendar
-`RangeError` blockers. Four built-ins downstream files remain exact earlier
-missing-`since`/`until` `TypeError` blockers. Complete forced execution is
-therefore **84 pass / 159 fail / 243**. Six Duration/ZonedDateTime homonym
+`RangeError` blockers. After `until`/`since`, all four built-ins downstream
+files are exact passing admissions. Complete forced execution is therefore
+**88 pass / 155 fail / 243**. Six Duration/ZonedDateTime homonym
 files own 25 calls and remain outside the PlainDateTime result denominator.
 
 A token-aware archive audit freezes **249 candidate files**, **239 ownership
@@ -108,7 +108,7 @@ rows**, direct call totals **166 add / 165 subtract**, Intl direct **2271 /
 than trusting sparse checkout contents. Exact paths, metadata, directory
 identity, candidates, ownership, arguments, results, and normalized error
 reasons fail closed. Focused runtime/resource tests, tooling **4/4**, direct
-**84/84**, complete **84/159/243**, all-target/all-feature release Rust,
+**84/84**, complete **88/155/243**, all-target/all-feature release Rust,
 warnings-denied release Clippy, rustfmt/diff, Python/YAML, live tooling
 **246/246**, and corpus-unavailable tooling **246 tests / 5 skips** pass.
 Independent GPT-5.6 runtime and tooling/docs reviews are clean after closing
@@ -117,10 +117,10 @@ downstream identity gaps.
 
 ```text
 [Decision Log]
-- 목적과 의도: add/subtract direct 84 files를 지원으로 admit하면서 non-ISO와 downstream 159 blockers 및 25 homonym calls를 완전한 denominator 안에 유지한다.
+- 목적과 의도: add/subtract direct 84 files를 지원으로 admit하면서 non-ISO 155 blockers, later downstream admissions 4개 및 25 homonym calls를 완전한 denominator 안에 유지한다.
 - 기존 구현 및 제약 조건: broad Temporal gate가 direct/Intl를 함께 숨겼고 absent method TypeError가 각 directory의 네 파일을 우연히 통과시켰다. add/subtract 이름은 다른 Temporal types에도 존재하며 sparse CI checkout은 전체 caller를 보여주지 않는다.
 - 검토한 주요 대안: 두 directory prefix 전체 허용, direct pass aggregate만 검사, Intl files 제외, grep ownership, exact manifests와 full pinned Git-tree lexical audit을 검토했다.
-- 선택한 방식: direct 84, Intl 148, built-ins downstream 4, Intl downstream 7을 네 disjoint manifests로 고정하고 complete 84/159/243 exact-error diagnostic과 249-file token ownership audit을 함께 실행한다.
+- 선택한 방식: direct 84, Intl 148, built-ins downstream admission 4, Intl downstream blocker 7을 disjoint manifests로 고정하고 complete 88/155/243 exact-result diagnostic과 249-file token ownership audit을 함께 실행한다.
 - 다른 대안 대신 이 방식을 선택한 이유: prefix/aggregate는 future files와 pass-fail swaps를 숨기고 Intl 제외는 non-ISO 책임을 지운다. raw grep은 comments/Strings/regex/template raw와 Duration/ZonedDateTime homonyms를 오분류한다.
 - 장점, 단점 및 영향: direct support, exact blockers, false positives, metadata, call ownership과 sparse blind-spot protection이 한 gate로 연결된다. non-ISO backend나 since/until 구현 시 manifest/result drift가 재감사를 강제한다.
 ```

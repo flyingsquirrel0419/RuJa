@@ -119,10 +119,11 @@
   ordinals 1..190 remain stable; `add` and `subtract` are allocations 191 and
   192, complete installation uses 192 allocations, and immediate prototype
   publication keeps the maximum live-pin preflight at 186. Pinned direct
-  Test262 is **42/42 + 42/42 = 84/84**. Complete ownership is **84 pass / 159
-  exact blockers / 243**: 148 Intl direct and seven Intl downstream files fail
-  at non-ISO calendar construction, while four built-ins downstream files fail
-  at earlier missing `since`/`until`. Exact admission/tooling, focused Rust,
+  Test262 is **42/42 + 42/42 = 84/84**. Complete ownership is now **88 pass /
+  155 exact blockers / 243**: 148 Intl direct and seven Intl downstream files
+  fail at non-ISO calendar construction, while all four built-ins downstream
+  files pass after the later difference implementation. Exact
+  admission/tooling, focused Rust,
   runtime resource tests, all-target/all-feature release Rust including
   Criterion, warnings-denied release Clippy, rustfmt/diff, Python/YAML, live
   tooling **246/246**, corpus-unavailable tooling **246 tests / 5 skips**, and

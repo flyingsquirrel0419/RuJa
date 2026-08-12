@@ -1933,17 +1933,17 @@ jobs:
           cat temporal_plain_date_time_core_result.txt
           grep -q '^RATE=100.0 PASS=105 FAIL=0 SKIP=0 TOTAL=105 RAN=105$' \
             temporal_plain_date_time_core_result.txt
-      - name: Freeze Temporal.PlainDateTime core blockers
+      - name: Require complete Temporal.PlainDateTime core admission
         run: |
           mapfile -t files < <(cat \
             tools/test262_temporal_plain_date_time_core_admission.txt \
-            tools/test262_temporal_plain_date_time_core_blockers.txt | \
+            tools/test262_temporal_plain_date_time_core_downstream_admission.txt | \
             sed -e '/^#/d' -e '/^$/d')
           TEST262="$GITHUB_WORKSPACE/test262" \
             python3 tools/test262_temporal_plain_date_time_core_diagnostic.py \
             "${files[@]}" > temporal_plain_date_time_core_diagnostic.txt 2>&1
           cat temporal_plain_date_time_core_diagnostic.txt
-          grep -q '^RATE=99.1 PASS=105 FAIL=1 SKIP=0 TOTAL=106 RAN=106$' \
+          grep -q '^RATE=100.0 PASS=106 FAIL=0 SKIP=0 TOTAL=106 RAN=106$' \
             temporal_plain_date_time_core_diagnostic.txt
       - name: Require exact Temporal.PlainDateTime serialization admission
         run: |
@@ -2055,19 +2055,19 @@ jobs:
           cat temporal_plain_date_time_arithmetic_result.txt
           grep -q '^RATE=100.0 PASS=84 FAIL=0 SKIP=0 TOTAL=84 RAN=84$' \
             temporal_plain_date_time_arithmetic_result.txt
-      - name: Diagnose complete Temporal.PlainDateTime arithmetic (84/159/243)
+      - name: Diagnose complete Temporal.PlainDateTime arithmetic (88/155/243)
         run: |
           mapfile -t files < <(grep -hEv '^(#|$)' \
             tools/test262_temporal_plain_date_time_arithmetic_admission.txt \
             tools/test262_temporal_plain_date_time_arithmetic_intl_blockers.txt \
-            tools/test262_temporal_plain_date_time_arithmetic_downstream_blockers.txt \
+            tools/test262_temporal_plain_date_time_arithmetic_downstream_admission.txt \
             tools/test262_temporal_plain_date_time_arithmetic_intl_downstream_blockers.txt)
           test "${#files[@]}" -eq 243
           TEST262="$GITHUB_WORKSPACE/test262" \
             python3 tools/test262_temporal_plain_date_time_arithmetic_complete_diagnostic.py \
             "${files[@]}" > temporal_plain_date_time_arithmetic_complete_result.txt 2>&1
           cat temporal_plain_date_time_arithmetic_complete_result.txt
-          grep -q '^RATE=34.6 PASS=84 FAIL=159 SKIP=0 TOTAL=243 RAN=243$' \
+          grep -q '^RATE=36.2 PASS=88 FAIL=155 SKIP=0 TOTAL=243 RAN=243$' \
             temporal_plain_date_time_arithmetic_complete_result.txt
 
   temporal-plain-date-time-round:

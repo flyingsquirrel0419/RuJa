@@ -13,7 +13,8 @@ from test262_temporal_plain_date_time_conversions_admission import (
 
 # [Decision Log]
 # - Purpose and intent: Admit the complete 84-file ISO add/subtract surface
-#   while retaining all 159 known non-ISO and downstream blockers.
+#   while retaining all known non-ISO and downstream blockers and recording
+#   the later datetime-math admission without changing ownership.
 # - Existing implementation and constraints: add/subtract are common method
 #   names, CI uses sparse Test262 checkouts, and Intl files call each method in
 #   large loops that aggregate-only accounting could hide.
@@ -54,8 +55,8 @@ TEMPORAL_PLAIN_DATE_TIME_ARITHMETIC_FILES = _read_manifest(
 TEMPORAL_PLAIN_DATE_TIME_ARITHMETIC_INTL_FILES = _read_manifest(
     "test262_temporal_plain_date_time_arithmetic_intl_blockers.txt"
 )
-TEMPORAL_PLAIN_DATE_TIME_ARITHMETIC_DOWNSTREAM_FILES = _read_manifest(
-    "test262_temporal_plain_date_time_arithmetic_downstream_blockers.txt"
+TEMPORAL_PLAIN_DATE_TIME_ARITHMETIC_DOWNSTREAM_ADMISSION_FILES = _read_manifest(
+    "test262_temporal_plain_date_time_arithmetic_downstream_admission.txt"
 )
 TEMPORAL_PLAIN_DATE_TIME_ARITHMETIC_INTL_DOWNSTREAM_FILES = _read_manifest(
     "test262_temporal_plain_date_time_arithmetic_intl_downstream_blockers.txt"
@@ -63,7 +64,7 @@ TEMPORAL_PLAIN_DATE_TIME_ARITHMETIC_INTL_DOWNSTREAM_FILES = _read_manifest(
 TEMPORAL_PLAIN_DATE_TIME_ARITHMETIC_COMPLETE_FILES = (
     TEMPORAL_PLAIN_DATE_TIME_ARITHMETIC_FILES
     | TEMPORAL_PLAIN_DATE_TIME_ARITHMETIC_INTL_FILES
-    | TEMPORAL_PLAIN_DATE_TIME_ARITHMETIC_DOWNSTREAM_FILES
+    | TEMPORAL_PLAIN_DATE_TIME_ARITHMETIC_DOWNSTREAM_ADMISSION_FILES
     | TEMPORAL_PLAIN_DATE_TIME_ARITHMETIC_INTL_DOWNSTREAM_FILES
 )
 TEMPORAL_PLAIN_DATE_TIME_ADD_FILES = frozenset(
@@ -179,7 +180,7 @@ AUDIT_TREE_ROOTS = (
 AUDIT_TREE_FILES = tuple(
     "test/" + relative
     for relative in sorted(
-        TEMPORAL_PLAIN_DATE_TIME_ARITHMETIC_DOWNSTREAM_FILES
+        TEMPORAL_PLAIN_DATE_TIME_ARITHMETIC_DOWNSTREAM_ADMISSION_FILES
         | TEMPORAL_PLAIN_DATE_TIME_ARITHMETIC_INTL_DOWNSTREAM_FILES
     )
 )
@@ -210,7 +211,7 @@ if (
     or len(TEMPORAL_PLAIN_DATE_TIME_SUBTRACT_FILES) != 42
     or len(TEMPORAL_PLAIN_DATE_TIME_ARITHMETIC_FILES) != 84
     or len(TEMPORAL_PLAIN_DATE_TIME_ARITHMETIC_INTL_FILES) != 148
-    or len(TEMPORAL_PLAIN_DATE_TIME_ARITHMETIC_DOWNSTREAM_FILES) != 4
+    or len(TEMPORAL_PLAIN_DATE_TIME_ARITHMETIC_DOWNSTREAM_ADMISSION_FILES) != 4
     or len(TEMPORAL_PLAIN_DATE_TIME_ARITHMETIC_INTL_DOWNSTREAM_FILES) != 7
     or len(TEMPORAL_PLAIN_DATE_TIME_ARITHMETIC_COMPLETE_FILES) != 243
     or len(TEMPORAL_PLAIN_DATE_TIME_ARITHMETIC_PREIMPLEMENTATION_FALSE_POSITIVES)
@@ -256,7 +257,7 @@ def _category(relative):
         return "PlainDateTime", "direct"
     if relative in TEMPORAL_PLAIN_DATE_TIME_ARITHMETIC_INTL_FILES:
         return "PlainDateTime", "intl"
-    if relative in TEMPORAL_PLAIN_DATE_TIME_ARITHMETIC_DOWNSTREAM_FILES:
+    if relative in TEMPORAL_PLAIN_DATE_TIME_ARITHMETIC_DOWNSTREAM_ADMISSION_FILES:
         return "PlainDateTime", "downstream"
     if relative in TEMPORAL_PLAIN_DATE_TIME_ARITHMETIC_INTL_DOWNSTREAM_FILES:
         return "PlainDateTime", "intl_downstream"

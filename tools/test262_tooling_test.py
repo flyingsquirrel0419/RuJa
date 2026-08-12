@@ -7732,7 +7732,17 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
             existing = frozenset(manifest_entries(manifest.name))
             self.assertTrue(admitted.isdisjoint(existing), manifest.name)
             self.assertTrue(blockers.isdisjoint(existing), manifest.name)
-            self.assertTrue(downstream.isdisjoint(existing), manifest.name)
+            overlap = downstream & existing
+            if (
+                manifest.name
+                == "test262_temporal_plain_date_time_arithmetic_downstream_admission.txt"
+            ):
+                self.assertEqual(
+                    overlap,
+                    {"built-ins/Temporal/PlainDateTime/prototype/until/balance.js"},
+                )
+            else:
+                self.assertFalse(overlap, manifest.name)
 
         test_root = Path(test262_runner.TEST262) / "test"
         corpus_required = "TEST262" in os.environ
@@ -8900,7 +8910,9 @@ alias.call(value, { day: 5 });
         admission = temporal_plain_date_time_arithmetic_admission
         direct = admission.TEMPORAL_PLAIN_DATE_TIME_ARITHMETIC_FILES
         intl = admission.TEMPORAL_PLAIN_DATE_TIME_ARITHMETIC_INTL_FILES
-        downstream = admission.TEMPORAL_PLAIN_DATE_TIME_ARITHMETIC_DOWNSTREAM_FILES
+        downstream_admission = (
+            admission.TEMPORAL_PLAIN_DATE_TIME_ARITHMETIC_DOWNSTREAM_ADMISSION_FILES
+        )
         intl_downstream = (
             admission.TEMPORAL_PLAIN_DATE_TIME_ARITHMETIC_INTL_DOWNSTREAM_FILES
         )
@@ -8911,15 +8923,18 @@ alias.call(value, { day: 5 });
                 len(admission.TEMPORAL_PLAIN_DATE_TIME_SUBTRACT_FILES),
                 len(direct),
                 len(intl),
-                len(downstream),
+                len(downstream_admission),
                 len(intl_downstream),
                 len(complete),
             ),
             (42, 42, 84, 148, 4, 7, 243),
         )
-        self.assertEqual(complete, direct | intl | downstream | intl_downstream)
+        self.assertEqual(
+            complete,
+            direct | intl | downstream_admission | intl_downstream,
+        )
         self.assertFalse(direct & intl)
-        self.assertFalse(direct & downstream)
+        self.assertFalse(direct & downstream_admission)
         self.assertFalse(direct & intl_downstream)
         self.assertEqual(
             admission.TEMPORAL_PLAIN_DATE_TIME_ARITHMETIC_PREIMPLEMENTATION_FALSE_POSITIVES,
@@ -8950,7 +8965,7 @@ alias.call(value, { day: 5 });
         manifest_names = (
             "test262_temporal_plain_date_time_arithmetic_admission.txt",
             "test262_temporal_plain_date_time_arithmetic_intl_blockers.txt",
-            "test262_temporal_plain_date_time_arithmetic_downstream_blockers.txt",
+            "test262_temporal_plain_date_time_arithmetic_downstream_admission.txt",
             "test262_temporal_plain_date_time_arithmetic_intl_downstream_blockers.txt",
         )
         manifest_sets = []
@@ -8963,7 +8978,10 @@ alias.call(value, { day: 5 });
             self.assertEqual(entries, tuple(sorted(entries)), name)
             self.assertEqual(len(entries), len(set(entries)), name)
             manifest_sets.append(frozenset(entries))
-        self.assertEqual(tuple(manifest_sets), (direct, intl, downstream, intl_downstream))
+        self.assertEqual(
+            tuple(manifest_sets),
+            (direct, intl, downstream_admission, intl_downstream),
+        )
         for index, current in enumerate(manifest_sets):
             for other in manifest_sets[index + 1 :]:
                 self.assertFalse(current & other)
@@ -9149,14 +9167,10 @@ value["add"]({ days: 1 });
         calendar_error = (
             "RangeError: Invalid Temporal calendar identifier (at line 1)"
         )
-        missing_error = "TypeError: undefined is not a function (at line 2)"
-
         def result(path):
             relative = diagnostic._relative(path)
-            if relative in diagnostic.DIRECT:
+            if relative in diagnostic.DIRECT or relative in diagnostic.DOWNSTREAM_ADMISSION:
                 return "pass", ("", "")
-            if relative in diagnostic.DOWNSTREAM:
-                return "fail", (missing_error, missing_error)
             return "fail", (calendar_error, calendar_error)
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -9181,7 +9195,10 @@ value["add"]({ days: 1 });
                             diagnostic.verify_expected_results(invalid)
                 def wrong_error(path):
                     relative = diagnostic._relative(path)
-                    if relative in diagnostic.DIRECT:
+                    if (
+                        relative in diagnostic.DIRECT
+                        or relative in diagnostic.DOWNSTREAM_ADMISSION
+                    ):
                         return "pass", ("", "")
                     return "fail", ("TypeError: wrong", "TypeError: wrong")
 

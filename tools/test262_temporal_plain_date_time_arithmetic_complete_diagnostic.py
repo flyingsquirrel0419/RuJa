@@ -8,7 +8,7 @@ import sys
 import test262_runner
 from test262_temporal_plain_date_time_arithmetic_admission import (
     TEMPORAL_PLAIN_DATE_TIME_ARITHMETIC_COMPLETE_FILES,
-    TEMPORAL_PLAIN_DATE_TIME_ARITHMETIC_DOWNSTREAM_FILES,
+    TEMPORAL_PLAIN_DATE_TIME_ARITHMETIC_DOWNSTREAM_ADMISSION_FILES,
     TEMPORAL_PLAIN_DATE_TIME_ARITHMETIC_FILES,
     audit_corpus,
 )
@@ -16,10 +16,9 @@ from test262_temporal_plain_date_time_arithmetic_admission import (
 
 SURFACE = TEMPORAL_PLAIN_DATE_TIME_ARITHMETIC_COMPLETE_FILES
 DIRECT = TEMPORAL_PLAIN_DATE_TIME_ARITHMETIC_FILES
-DOWNSTREAM = TEMPORAL_PLAIN_DATE_TIME_ARITHMETIC_DOWNSTREAM_FILES
+DOWNSTREAM_ADMISSION = TEMPORAL_PLAIN_DATE_TIME_ARITHMETIC_DOWNSTREAM_ADMISSION_FILES
 _SHARED_SHOULD_SKIP = test262_runner.should_skip
 _CALENDAR_ERROR = "RangeError: Invalid Temporal calendar identifier"
-_MISSING_METHOD_ERROR = "TypeError: undefined is not a function"
 
 
 def _relative(path):
@@ -79,14 +78,17 @@ def verify_expected_results(arguments):
         path: _run_with_diagnostics(test_root / path) for path in sorted(SURFACE)
     }
     actual = {path: result[0] for path, result in diagnostics.items()}
-    expected = {path: "pass" if path in DIRECT else "fail" for path in SURFACE}
+    expected = {
+        path: "pass" if path in DIRECT or path in DOWNSTREAM_ADMISSION else "fail"
+        for path in SURFACE
+    }
     if actual != expected:
         raise RuntimeError(f"complete PlainDateTime arithmetic results drifted: {actual}")
     wrong_errors = {}
     for path, (status, messages) in diagnostics.items():
         if status == "pass":
             continue
-        expected_error = _MISSING_METHOD_ERROR if path in DOWNSTREAM else _CALENDAR_ERROR
+        expected_error = _CALENDAR_ERROR
         if not messages or any(_normalize(message) != expected_error for message in messages):
             wrong_errors[path] = messages
     if wrong_errors:
