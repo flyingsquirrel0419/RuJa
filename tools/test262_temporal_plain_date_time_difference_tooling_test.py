@@ -18,7 +18,7 @@ class PlainDateTimeDifferenceToolingTests(unittest.TestCase):
     def test_manifests_are_exact_disjoint_and_shared(self):
         surfaces = (
             admission.TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_DIRECT_FILES,
-            admission.TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_DIRECT_BLOCKERS,
+            admission.TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_DIRECT_TRANSITIONS,
             admission.TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_DOWNSTREAM_FILES,
             admission.TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_INTL_BLOCKERS,
             admission.TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_HOMONYMS,
@@ -28,7 +28,7 @@ class PlainDateTimeDifferenceToolingTests(unittest.TestCase):
             for right in surfaces[index + 1 :]:
                 self.assertTrue(left.isdisjoint(right))
         self.assertEqual(
-            len(admission.TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_FILES), 192
+            len(admission.TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_FILES), 194
         )
         self.assertEqual(
             len(admission.TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_COMPLETE_FILES),
@@ -107,10 +107,7 @@ class PlainDateTimeDifferenceToolingTests(unittest.TestCase):
                         test262_runner.should_skip({"features": list(expected)}, path),
                         test262_analyze.should_skip({"features": list(expected)}, path),
                     )
-                outside = (
-                    admission.TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_DIRECT_BLOCKERS
-                    | admission.TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_INTL_BLOCKERS
-                )
+                outside = admission.TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_INTL_BLOCKERS
                 for relative in outside:
                     path = root / "test" / relative
                     self.assertFalse(
@@ -166,7 +163,7 @@ const sinceAlias = value["since"];
                     patch.object(direct.test262_runner, "run_test", return_value="pass"),
                 ):
                     direct.verify_expected_results(direct_arguments)
-                    with self.assertRaisesRegex(RuntimeError, "191-file direct surface"):
+                    with self.assertRaisesRegex(RuntimeError, "193-file direct surface"):
                         direct.verify_expected_results(direct_arguments[:-1])
                 with (
                     patch.object(direct, "audit_corpus"),
@@ -181,11 +178,7 @@ const sinceAlias = value["since"];
                     relative = path.relative_to(root / "test").as_posix()
                     if relative in complete.SUPPORTED:
                         return "pass", ("", "")
-                    error = (
-                        complete._MISSING_DURATION_ERROR
-                        if relative in complete.DIRECT_BLOCKERS
-                        else complete._CALENDAR_ERROR
-                    )
+                    error = complete._CALENDAR_ERROR
                     return "fail", (
                         error + " (at line 100)",
                         error + " (at line 101)",
@@ -231,11 +224,11 @@ const sinceAlias = value["since"];
                 def wrong_error(path):
                     status, messages = expected_result(path)
                     relative = path.relative_to(root / "test").as_posix()
-                    if relative == min(complete.DIRECT_BLOCKERS):
+                    if relative == min(complete.INTL_BLOCKERS):
                         messages = tuple(
                             message.replace(
-                                complete._MISSING_DURATION_ERROR,
-                                "TypeError: different dependency",
+                                complete._CALENDAR_ERROR,
+                                "RangeError: different calendar dependency",
                             )
                             for message in messages
                         )
@@ -253,7 +246,7 @@ const sinceAlias = value["since"];
                 def wrong_location(path):
                     status, messages = expected_result(path)
                     relative = path.relative_to(root / "test").as_posix()
-                    if relative == min(complete.DIRECT_BLOCKERS):
+                    if relative == min(complete.INTL_BLOCKERS):
                         messages = tuple(
                             message.replace("line 100", "line 102")
                             for message in messages

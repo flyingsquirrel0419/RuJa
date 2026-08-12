@@ -1,0 +1,4 @@
+# Exact Intl402 Duration.compare blockers: named IANA/DST or second-resolution offsets.
+intl402/Temporal/Duration/compare/relativeto-hour.js
+intl402/Temporal/Duration/compare/relativeto-sub-minute-offset.js
+intl402/Temporal/Duration/compare/twenty-five-hour-day.js

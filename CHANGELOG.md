@@ -4,6 +4,36 @@
 
 ### Changed
 
+- Added Realm-local, non-constructable `Temporal.Duration.prototype.add`
+  (length 1) and static `Temporal.Duration.compare` (length 2). `add` performs
+  exact checked i128 day/time arithmetic, balances to the largest input unit,
+  publishes valid Float64-backed internal fields, and rejects calendar units
+  only after complete `other` conversion. `compare` converts both durations,
+  observes and converts `options.relativeTo` before its identical-slot fast
+  path, compares regular day/time values exactly, and supports calendar units
+  relative to ISO PlainDate or fixed-offset ZonedDateTime records. Existing
+  ordinals 1..196 remain stable; the methods are allocations 197 and 198 and
+  complete Temporal installation requires exactly 198 allocations.
+
+  Pinned Test262 direct execution is **84/84**: 34 `add` and 50 `compare`
+  files. Two PlainDateTime difference prerequisites now pass, while three
+  Intl402 named-IANA/DST or second-resolution-offset files and five later
+  Duration/Instant/ZonedDateTime method callers remain exact blockers. The
+  complete forced boundary is **86 pass / 8 fail / 94**. Its transition also
+  changes PlainDateTime difference from **191/2/193** direct and
+  **192/119/311** complete to **193/193** and **194/117/311**. Sorted exact
+  manifests, all 94 files' metadata digest, runner/analyzer parity, absent-
+  method false positives, results, normalized blocker errors, future/outside
+  paths, and transition identity fail closed.
+
+  [Decision Log]
+  - 목적과 의도: Duration add/compare의 exact arithmetic, observation order, Realm/resource 계약을 구현하고 PlainDateTime difference의 마지막 두 direct prerequisites를 실제 passing 상태로 전환한다.
+  - 기존 구현 및 제약 조건: shared Duration conversion, ISO date-add와 relativeTo parsing은 있었지만 두 public methods가 없었다. named-IANA transition data, historical second-resolution offsets와 later difference methods는 아직 없다.
+  - 검토한 주요 대안: Float64 직접 합산, public total/add 조합, broad Duration directory admission, 또는 checked i128 hidden-record 연산과 exact ownership을 검토했다.
+  - 선택한 방식: add는 calendar units를 complete conversion 뒤 fail-closed하고 day/time을 i128 nanoseconds로 합산·balance한다. compare는 ordered conversions/options 뒤 plain/fixed-offset relative records에 ISO date-add를 적용하며 exact manifests와 metadata/result/error contracts만 admission한다.
+  - 다른 대안 대신 이 방식을 선택한 이유: Float64 합산은 큰 정수 precision을 잃고 public 조합은 mutable methods와 Realm을 관찰한다. broad admission은 absent-method TypeError false positives와 named-zone/later-method blockers를 지원으로 오계상한다.
+  - 장점, 단점 및 영향: direct 84/84, released downstream 2개, exact 3 Intl 및 5 downstream blockers, stable 197/198 allocations가 고정된다. Duration calendar-unit add, named IANA/DST, Instant/ZonedDateTime difference는 후속 단위다.
+
 - Added Realm-local, non-constructable, length-1
   `Temporal.PlainDateTime.prototype.until` and `since` over one hidden-record
   ISO difference pipeline. Both brand before converting `other`, compare
@@ -16,13 +46,12 @@
   internal Duration fields are supported. Existing ordinals 1..194 remain
   stable; `until` and `since` are allocations 195 and 196, complete
   installation uses exactly 196 allocations with 186 maximum live pins.
-  Pinned direct Test262 is **191 pass / 2 exact prerequisite blockers / 193**:
-  both `float64-representable-integer.js` variants pass their difference,
-  field, and serialization assertions before reaching the separately missing
-  `Duration.prototype.add` / `Temporal.Duration.compare`. The true downstream
+  Pinned direct Test262 is now **193/193** after both
+  `float64-representable-integer.js` variants transitioned from exact
+  Duration add/compare prerequisites to passing files. The true downstream
   `datetime-math.js` passes **1/1**; 117 Intl402 files remain exact earlier
-  non-ISO calendar blockers. Forced executable ownership is therefore **192
-  pass / 119 fail / 311**, with 11 homonym files separately excluded by the
+  non-ISO calendar blockers. Forced executable ownership is therefore **194
+  pass / 117 fail / 311**, with 11 homonym files separately excluded by the
   full candidate audit. Its older PlainDateTime core complement is now an
   exact downstream admission instead of a stale blocker assertion. Runtime
   tests cover method shape and Realm, hidden

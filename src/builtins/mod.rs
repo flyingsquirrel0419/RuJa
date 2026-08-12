@@ -8250,6 +8250,30 @@ pub(crate) fn install_temporal_namespace_in_env(
                     .lock()
                     .insert(PropertyKey::from("since"), data_prop(plain_date_time_since));
             });
+        let duration_add = Value::Object(vm.new_native_function_in_env_with_gc_retry(
+            "add",
+            temporal_duration_add,
+            1,
+            env,
+        )?);
+        vm.heap.with_obj(duration_prototype_index.0, |object| {
+            object
+                .props()
+                .lock()
+                .insert(PropertyKey::from("add"), data_prop(duration_add));
+        });
+        let duration_compare = Value::Object(vm.new_native_function_in_env_with_gc_retry(
+            "compare",
+            temporal_duration_compare,
+            2,
+            env,
+        )?);
+        vm.heap.with_obj(duration_constructor_index.0, |object| {
+            object
+                .props()
+                .lock()
+                .insert(PropertyKey::from("compare"), data_prop(duration_compare));
+        });
 
         vm.realm_temporal_instant_constructors
             .insert(env.0, instant_constructor);
@@ -8636,6 +8660,70 @@ fn temporal_duration_from(
     _this: Option<Value>,
 ) -> error::Result<Value> {
     let fields = to_temporal_duration_fields(vm, args.first().unwrap_or(&Value::Undefined))?;
+    let realm = vm.native_callee_closure().unwrap_or(vm.global);
+    create_temporal_duration_in_realm(vm, fields, realm)
+}
+
+fn temporal_duration_largest_day_or_time_unit(
+    one: &[i128; 10],
+    two: &[i128; 10],
+) -> TemporalDateTimeDifferenceUnit {
+    for (index, unit) in [
+        TemporalDateTimeDifferenceUnit::Day,
+        TemporalDateTimeDifferenceUnit::Hour,
+        TemporalDateTimeDifferenceUnit::Minute,
+        TemporalDateTimeDifferenceUnit::Second,
+        TemporalDateTimeDifferenceUnit::Millisecond,
+        TemporalDateTimeDifferenceUnit::Microsecond,
+        TemporalDateTimeDifferenceUnit::Nanosecond,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        if one[index + 3] != 0 || two[index + 3] != 0 {
+            return unit;
+        }
+    }
+    TemporalDateTimeDifferenceUnit::Nanosecond
+}
+
+fn temporal_duration_day_and_time_nanoseconds(values: &[i128; 10]) -> error::Result<i128> {
+    values[3]
+        .checked_mul(TEMPORAL_DURATION_DAY_NANOSECONDS)
+        .and_then(|value| value.checked_add(values[4].checked_mul(3_600_000_000_000)?))
+        .and_then(|value| value.checked_add(values[5].checked_mul(60_000_000_000)?))
+        .and_then(|value| value.checked_add(values[6].checked_mul(1_000_000_000)?))
+        .and_then(|value| value.checked_add(values[7].checked_mul(1_000_000)?))
+        .and_then(|value| value.checked_add(values[8].checked_mul(1_000)?))
+        .and_then(|value| value.checked_add(values[9]))
+        .ok_or_else(|| Error::range("Temporal.Duration total is out of range"))
+}
+
+fn temporal_duration_add(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let receiver = temporal_duration_slots(vm, this)?;
+    let other = args.first().cloned().unwrap_or(Value::Undefined);
+    vm.try_reserve_value_roots(std::slice::from_ref(&other))?;
+    let pin_count = vm.pin(&other);
+    let result = (|| {
+        let other = to_temporal_duration_fields(vm, &other)?;
+        let receiver = temporal_duration_integer_values(receiver)?;
+        let other = temporal_duration_integer_values(other)?;
+        if receiver[..3].iter().any(|value| *value != 0)
+            || other[..3].iter().any(|value| *value != 0)
+        {
+            return Err(Error::range(
+                "Temporal.Duration.prototype.add does not accept calendar units",
+            ));
+        }
+        let largest_unit = temporal_duration_largest_day_or_time_unit(&receiver, &other);
+        let total = temporal_duration_day_and_time_nanoseconds(&receiver)?
+            .checked_add(temporal_duration_day_and_time_nanoseconds(&other)?)
+            .ok_or_else(|| Error::range("Temporal.Duration result is out of range"))?;
+        let values = temporal_balance_regular_difference(total, largest_unit)?;
+        temporal_duration_fields_from_internal_values(values)
+    })();
+    vm.unpin_many(pin_count);
+    let fields = result?;
     let realm = vm.native_callee_closure().unwrap_or(vm.global);
     create_temporal_duration_in_realm(vm, fields, realm)
 }
@@ -9286,15 +9374,11 @@ fn temporal_duration_total_calendar_unit(
         .ok_or_else(|| Error::range("Temporal total is out of range"))
 }
 
-fn temporal_duration_total_with_relative_to(
+fn temporal_duration_relative_nanoseconds(
     fields: TemporalDurationFields,
-    unit: TemporalDurationTotalUnit,
-    relative_to: TemporalDurationRelativeTo,
-) -> error::Result<f64> {
+    relative_to: &TemporalDurationRelativeTo,
+) -> error::Result<(TemporalPlainDateFields, i128)> {
     let values = temporal_duration_integer_values(fields)?;
-    if values.iter().all(|value| *value == 0) {
-        return Ok(0.0);
-    }
     let (date, zoned_epoch_nanoseconds, plain_relative) = match relative_to {
         TemporalDurationRelativeTo::Plain {
             date,
@@ -9303,7 +9387,7 @@ fn temporal_duration_total_with_relative_to(
             if calendar_identifier.as_ref() != "iso8601" {
                 return Err(Error::range("Non-ISO Temporal calendars are not available"));
             }
-            (date, None, true)
+            (*date, None, true)
         }
         TemporalDurationRelativeTo::Zoned {
             epoch_nanoseconds,
@@ -9344,7 +9428,9 @@ fn temporal_duration_total_with_relative_to(
         return Err(Error::range("Temporal relative date-time is out of range"));
     }
     let end_day = temporal_duration_iso_date_add(date, values[0], values[1], values[2], values[3])?;
-    let time_nanoseconds = temporal_duration_time_nanoseconds(fields)?;
+    let time_nanoseconds = temporal_duration_day_and_time_nanoseconds(&[
+        0, 0, 0, 0, values[4], values[5], values[6], values[7], values[8], values[9],
+    ])?;
     let destination_nanoseconds = end_day
         .checked_mul(TEMPORAL_DURATION_DAY_NANOSECONDS)
         .and_then(|value| value.checked_add(time_nanoseconds))
@@ -9377,6 +9463,97 @@ fn temporal_duration_total_with_relative_to(
             return Err(Error::range("Temporal target epoch is out of range"));
         }
     }
+    Ok((date, total_nanoseconds))
+}
+
+fn temporal_duration_compare_relative_nanoseconds(
+    fields: TemporalDurationFields,
+    relative_to: &TemporalDurationRelativeTo,
+) -> error::Result<i128> {
+    let values = temporal_duration_integer_values(fields)?;
+    let (date, zoned_epoch_nanoseconds) = match relative_to {
+        TemporalDurationRelativeTo::Plain {
+            date,
+            calendar_identifier,
+        } => {
+            if calendar_identifier.as_ref() != "iso8601" {
+                return Err(Error::range("Non-ISO Temporal calendars are not available"));
+            }
+            (*date, None)
+        }
+        TemporalDurationRelativeTo::Zoned {
+            epoch_nanoseconds,
+            time_zone,
+            calendar_identifier,
+        } => {
+            if calendar_identifier.as_ref() != "iso8601" {
+                return Err(Error::range("Non-ISO Temporal calendars are not available"));
+            }
+            if matches!(time_zone.kind, TemporalTimeZoneKind::Named(_)) {
+                return Err(Error::range("Named Temporal time zones are not available"));
+            }
+            (
+                temporal_zoned_date_time_plain_date_fields(epoch_nanoseconds, time_zone)?,
+                Some(epoch_nanoseconds),
+            )
+        }
+    };
+    let start_day = temporal::days_from_civil(
+        i128::from(date.year),
+        i128::from(date.month),
+        i128::from(date.day),
+    )
+    .ok_or_else(|| Error::internal("Invalid Temporal relative date"))?;
+    let calendar_end_day =
+        temporal_duration_iso_date_add(date, values[0], values[1], values[2], 0)?;
+    let calendar_nanoseconds = calendar_end_day
+        .checked_sub(start_day)
+        .and_then(|days| days.checked_mul(TEMPORAL_DURATION_DAY_NANOSECONDS))
+        .ok_or_else(|| Error::range("Temporal duration comparison is out of range"))?;
+    let regular_nanoseconds = temporal_duration_day_and_time_nanoseconds(&[
+        0, 0, 0, values[3], values[4], values[5], values[6], values[7], values[8], values[9],
+    ])?;
+    let total_nanoseconds = calendar_nanoseconds
+        .checked_add(regular_nanoseconds)
+        .ok_or_else(|| Error::range("Temporal duration comparison is out of range"))?;
+    const MAXIMUM_TIME_DURATION_NANOSECONDS: i128 = (1_i128 << 53) * 1_000_000_000;
+    if total_nanoseconds
+        .checked_abs()
+        .is_none_or(|value| value > MAXIMUM_TIME_DURATION_NANOSECONDS)
+    {
+        return Err(Error::range("Temporal duration comparison is out of range"));
+    }
+    if let Some(epoch_nanoseconds) = zoned_epoch_nanoseconds {
+        let target = epoch_nanoseconds.as_ref() + BigInt::from(total_nanoseconds);
+        if target.abs() > temporal_instant_limit_nanoseconds() {
+            return Err(Error::range("Temporal target epoch is out of range"));
+        }
+    }
+    Ok(total_nanoseconds)
+}
+
+fn temporal_duration_total_with_relative_to(
+    fields: TemporalDurationFields,
+    unit: TemporalDurationTotalUnit,
+    relative_to: TemporalDurationRelativeTo,
+) -> error::Result<f64> {
+    let values = temporal_duration_integer_values(fields)?;
+    if values.iter().all(|value| *value == 0) {
+        return Ok(0.0);
+    }
+    let (date, total_nanoseconds) = temporal_duration_relative_nanoseconds(fields, &relative_to)?;
+    let start_day = temporal::days_from_civil(
+        i128::from(date.year),
+        i128::from(date.month),
+        i128::from(date.day),
+    )
+    .ok_or_else(|| Error::internal("Invalid Temporal relative date"))?;
+    let start_nanoseconds = start_day
+        .checked_mul(TEMPORAL_DURATION_DAY_NANOSECONDS)
+        .ok_or_else(|| Error::range("Temporal relative date is out of range"))?;
+    let destination_nanoseconds = start_nanoseconds
+        .checked_add(total_nanoseconds)
+        .ok_or_else(|| Error::range("Temporal destination is out of range"))?;
     if matches!(
         unit,
         TemporalDurationTotalUnit::Year | TemporalDurationTotalUnit::Month
@@ -9392,6 +9569,66 @@ fn temporal_duration_total_with_relative_to(
     Ratio::new(BigInt::from(total_nanoseconds), BigInt::from(divisor))
         .to_f64()
         .ok_or_else(|| Error::range("Temporal total is out of range"))
+}
+
+fn temporal_duration_compare(
+    vm: &mut Vm,
+    args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    let one = args.first().cloned().unwrap_or(Value::Undefined);
+    let two = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let options = args.get(2).cloned().unwrap_or(Value::Undefined);
+    vm.try_reserve_value_roots(&[one.clone(), two.clone(), options.clone()])?;
+    let pin_count = vm.pin_many(&[one.clone(), two.clone(), options.clone()]);
+    let result = (|| {
+        let one = to_temporal_duration_fields(vm, &one)?;
+        let two = to_temporal_duration_fields(vm, &two)?;
+        if !options.is_undefined() && !matches!(options, Value::Object(_)) {
+            return Err(Error::type_err(
+                "Temporal.Duration.compare options must be an object",
+            ));
+        }
+        let relative_to = if options.is_undefined() {
+            None
+        } else {
+            let value = vm.get_property(&options, "relativeTo")?;
+            temporal_with_rooted_value(vm, value, |vm, value| {
+                temporal_duration_relative_to(vm, value)
+            })?
+        };
+        let one_values = temporal_duration_integer_values(one)?;
+        let two_values = temporal_duration_integer_values(two)?;
+        if one_values == two_values {
+            return Ok(Value::Number(0.0));
+        }
+        let has_calendar_units = one_values[..3].iter().any(|value| *value != 0)
+            || two_values[..3].iter().any(|value| *value != 0);
+        let zoned_day_units = matches!(relative_to, Some(TemporalDurationRelativeTo::Zoned { .. }))
+            && (one_values[3] != 0 || two_values[3] != 0);
+        let (one_total, two_total) = if !has_calendar_units && !zoned_day_units {
+            (
+                temporal_duration_day_and_time_nanoseconds(&one_values)?,
+                temporal_duration_day_and_time_nanoseconds(&two_values)?,
+            )
+        } else if let Some(relative_to) = relative_to.as_ref() {
+            (
+                temporal_duration_compare_relative_nanoseconds(one, relative_to)?,
+                temporal_duration_compare_relative_nanoseconds(two, relative_to)?,
+            )
+        } else {
+            return Err(Error::range(
+                "Temporal.Duration calendar units require relativeTo",
+            ));
+        };
+        Ok(Value::Number(match one_total.cmp(&two_total) {
+            std::cmp::Ordering::Less => -1.0,
+            std::cmp::Ordering::Equal => 0.0,
+            std::cmp::Ordering::Greater => 1.0,
+        }))
+    })();
+    vm.unpin_many(pin_count);
+    result
 }
 
 fn temporal_duration_total_without_relative_to(

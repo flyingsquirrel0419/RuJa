@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Force and identity-check 191 admitted PlainDateTime until/since tests."""
+"""Force and identity-check 193 admitted PlainDateTime until/since tests."""
 
 from pathlib import Path
 import sys
@@ -7,11 +7,15 @@ import sys
 import test262_runner
 from test262_temporal_plain_date_time_difference_admission import (
     TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_DIRECT_FILES,
+    TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_DIRECT_TRANSITIONS,
     audit_corpus,
 )
 
 
-SURFACE = TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_DIRECT_FILES
+SURFACE = (
+    TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_DIRECT_FILES
+    | TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_DIRECT_TRANSITIONS
+)
 _SHARED_SHOULD_SKIP = test262_runner.should_skip
 
 
@@ -40,14 +44,14 @@ def verify_expected_results(arguments):
     relative_arguments = [_relative(test_root / path) for path in arguments]
     requested = set(relative_arguments)
     if (
-        len(arguments) != 191
+        len(arguments) != 193
         or None in requested
         or len(requested) != len(arguments)
         or requested != SURFACE
     ):
         raise RuntimeError(
             "PlainDateTime difference diagnostic requires the exact frozen "
-            "191-file direct surface"
+            "193-file direct surface"
         )
     audit_corpus(test262_runner.TEST262, test262_runner.parse_meta)
     actual = {

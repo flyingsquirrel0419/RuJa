@@ -12,7 +12,7 @@ from test262_temporal_plain_date_time_conversions_admission import (
 
 
 # [Decision Log]
-# - Purpose and intent: admit the 191 independently supported ISO direct files
+# - Purpose and intent: admit all 193 supported ISO direct files
 #   and one true downstream caller while retaining every known dependency and
 #   non-ISO blocker.
 # - Existing implementation and constraints: `until` and `since` are common
@@ -53,8 +53,8 @@ def _read_manifest(name):
 TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_DIRECT_FILES = _read_manifest(
     "test262_temporal_plain_date_time_difference_direct.txt"
 )
-TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_DIRECT_BLOCKERS = _read_manifest(
-    "test262_temporal_plain_date_time_difference_direct_blockers.txt"
+TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_DIRECT_TRANSITIONS = _read_manifest(
+    "test262_temporal_plain_date_time_difference_direct_transitions.txt"
 )
 TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_DOWNSTREAM_FILES = _read_manifest(
     "test262_temporal_plain_date_time_difference_downstream.txt"
@@ -67,11 +67,11 @@ TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_HOMONYMS = _read_manifest(
 )
 TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_FILES = (
     TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_DIRECT_FILES
+    | TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_DIRECT_TRANSITIONS
     | TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_DOWNSTREAM_FILES
 )
 TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_COMPLETE_FILES = (
     TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_FILES
-    | TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_DIRECT_BLOCKERS
     | TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_INTL_BLOCKERS
 )
 TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_PREIMPLEMENTATION_FALSE_POSITIVES = frozenset(
@@ -166,13 +166,13 @@ _EXPECTED_CANDIDATE_DIGEST = (
 _EXPECTED_OWNERSHIP_ROWS = 328
 _EXPECTED_OWNERSHIP_TOTALS = {
     "direct": (260, 0, 251, 0, 215, 0, 206, 0),
-    "direct_blocker": (1, 0, 1, 0, 1, 0, 1, 0),
+    "direct_transition": (1, 0, 1, 0, 1, 0, 1, 0),
     "intl": (328, 0, 328, 0, 325, 0, 325, 0),
     "downstream": (1, 0, 1, 0, 2, 0, 2, 0),
     "homonym": (28, 0, 28, 0, 30, 0, 30, 0),
 }
 _EXPECTED_OWNERSHIP_DIGEST = (
-    "be355901eff11b462a9d8cdb0c68745377d67b6b88af89312dcbb97648cfcf13"
+    "b9086a888da6effcdb92a18f563a9cdcb657e568a574e646023c53592e17672b"
 )
 _EXPECTED_METADATA_DIGEST = (
     "3f826152e2e7ac81d3ec575a8dc399fa2b5e81c9968f331e5f252f5a925dd467"
@@ -185,11 +185,11 @@ _EXPECTED_COMPUTED_AUDIT_DIGEST = (
 
 if (
     len(TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_DIRECT_FILES) != 191
-    or len(TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_DIRECT_BLOCKERS) != 2
+    or len(TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_DIRECT_TRANSITIONS) != 2
     or len(TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_DOWNSTREAM_FILES) != 1
     or len(TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_INTL_BLOCKERS) != 117
     or len(TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_HOMONYMS) != 11
-    or len(TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_FILES) != 192
+    or len(TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_FILES) != 194
     or len(TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_COMPLETE_FILES) != 311
     or len(TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_METADATA) != 311
     or set(TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_METADATA)
@@ -265,8 +265,8 @@ def _candidate_digest(candidates):
 def _category(relative):
     if relative in TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_DIRECT_FILES:
         return "PlainDateTime", "direct"
-    if relative in TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_DIRECT_BLOCKERS:
-        return "PlainDateTime", "direct_blocker"
+    if relative in TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_DIRECT_TRANSITIONS:
+        return "PlainDateTime", "direct_transition"
     if relative in TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_INTL_BLOCKERS:
         return "PlainDateTime", "intl"
     if relative in TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_DOWNSTREAM_FILES:
@@ -552,7 +552,7 @@ def audit_corpus(corpus_root, parse_meta):
         )
     if live_direct != (
         TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_DIRECT_FILES
-        | TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_DIRECT_BLOCKERS
+        | TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_DIRECT_TRANSITIONS
     ):
         raise RuntimeError("PlainDateTime difference direct directories drifted")
     if live_intl != TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_INTL_BLOCKERS:

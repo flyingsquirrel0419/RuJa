@@ -1914,11 +1914,11 @@ fn temporal_namespace_installation_rolls_back_last_boundary_on_default_stack() {
     let baseline_registries = realm_registry_counts(&vm);
     let global = vm.global;
 
-    vm.set_max_heap_objects(Some(baseline_live + 195));
+    vm.set_max_heap_objects(Some(baseline_live + 197));
     let object_proto = vm.object_proto.clone();
     let error =
         crate::builtins::install_temporal_namespace_in_env(&mut vm, global, None, object_proto)
-            .expect_err("allocation 196 must fail on the ordinary test stack");
+            .expect_err("allocation 198 must fail on the ordinary test stack");
     vm.set_max_heap_objects(None);
 
     assert_eq!(error.kind, crate::error::ErrorKind::Range);
@@ -1930,6 +1930,38 @@ fn temporal_namespace_installation_rolls_back_last_boundary_on_default_stack() {
     assert_eq!(vm.heap.live_count(), baseline_live);
 }
 
+#[test]
+fn temporal_namespace_installation_restores_roots_after_duration_add_and_compare_failures() {
+    for (capacity, expected_allocation) in [(196, 197), (197, 198)] {
+        let mut vm = Vm::new().expect("failed to initialize VM");
+        vm.gc();
+        let original = vm.get_global("Temporal");
+        let baseline_pins = vm.gc_pins.len();
+        let baseline_live = vm.heap.live_count();
+        let baseline_registries = realm_registry_counts(&vm);
+        let global = vm.global;
+        let object_proto = vm.object_proto.clone();
+        vm.set_max_heap_objects(Some(baseline_live + capacity));
+
+        let error =
+            crate::builtins::install_temporal_namespace_in_env(&mut vm, global, None, object_proto)
+                .expect_err("appended Duration method allocation must hit the cap");
+        vm.set_max_heap_objects(None);
+
+        assert_eq!(error.kind, crate::error::ErrorKind::Range);
+        assert_eq!(error.message, "heap limit exceeded");
+        assert_eq!(vm.gc_pins.len(), baseline_pins);
+        assert_eq!(vm.get_global("Temporal"), original);
+        assert_eq!(realm_registry_counts(&vm), baseline_registries);
+        vm.gc();
+        assert_eq!(
+            vm.heap.live_count(),
+            baseline_live,
+            "allocation {expected_allocation} rollback must be collectible"
+        );
+    }
+}
+
 fn temporal_namespace_installation_covers_every_allocation_boundary_inner() {
     let mut vm = Vm::new().expect("failed to initialize VM");
     vm.gc();
@@ -1938,9 +1970,9 @@ fn temporal_namespace_installation_covers_every_allocation_boundary_inner() {
     let baseline_live = vm.heap.live_count();
     let global = vm.global;
 
-    // Allocations 18 through 196 cover the method/accessor batches, namespace
+    // Allocations 18 through 198 cover the method/accessor batches, namespace
     // objects, and appended PlainDate/PlainDateTime methods.
-    for extra_capacity in 17..196 {
+    for extra_capacity in 17..198 {
         vm.set_max_heap_objects(Some(baseline_live + extra_capacity));
         let object_proto = vm.object_proto.clone();
         let result =
@@ -1961,16 +1993,16 @@ fn temporal_namespace_installation_covers_every_allocation_boundary_inner() {
         );
     }
 
-    vm.set_max_heap_objects(Some(baseline_live + 196));
+    vm.set_max_heap_objects(Some(baseline_live + 198));
     let object_proto = vm.object_proto.clone();
     let temporal =
         crate::builtins::install_temporal_namespace_in_env(&mut vm, global, None, object_proto)
-            .expect("exact 196-object capacity must install the complete namespace");
+            .expect("exact 198-object capacity must install the complete namespace");
     vm.set_max_heap_objects(None);
     assert_eq!(vm.gc_pins.len(), baseline_pins);
     assert_eq!(vm.get_global("Temporal"), temporal);
     assert_eq!(
-        vm.run("typeof Temporal.Duration.from === 'function' && typeof Temporal.Duration.prototype.with === 'function' && typeof Temporal.Duration.prototype.abs === 'function' && typeof Temporal.Duration.prototype.negated === 'function' && typeof Temporal.Duration.prototype.total === 'function' && typeof Temporal.Duration.prototype.toString === 'function' && typeof Temporal.Duration.prototype.toJSON === 'function' && typeof Temporal.Duration.prototype.valueOf === 'function' && typeof Temporal.PlainDate === 'function' && typeof Temporal.PlainDate.from === 'function' && typeof Temporal.PlainDate.compare === 'function' && typeof Temporal.PlainDate.prototype.equals === 'function' && typeof Temporal.PlainDate.prototype.toPlainDateTime === 'function' && typeof Temporal.PlainDate.prototype.toPlainMonthDay === 'function' && typeof Temporal.PlainDate.prototype.toPlainYearMonth === 'function' && typeof Temporal.PlainDate.prototype.withCalendar === 'function' && typeof Temporal.PlainDate.prototype.toString === 'function' && typeof Temporal.PlainDate.prototype.toJSON === 'function' && typeof Temporal.PlainMonthDay === 'function' && typeof Temporal.PlainMonthDay.prototype.with === 'function' && typeof Temporal.PlainMonthDay.prototype.toString === 'function' && typeof Temporal.PlainMonthDay.prototype.toJSON === 'function' && typeof Temporal.PlainMonthDay.prototype.toPlainDate === 'function' && typeof Temporal.PlainMonthDay.prototype.equals === 'function' && typeof Temporal.PlainMonthDay.prototype.valueOf === 'function' && typeof Temporal.PlainYearMonth === 'function' && typeof Temporal.PlainYearMonth.compare === 'function' && typeof Temporal.PlainYearMonth.prototype.with === 'function' && typeof Temporal.PlainYearMonth.prototype.add === 'function' && typeof Temporal.PlainYearMonth.prototype.subtract === 'function' && typeof Temporal.PlainYearMonth.prototype.equals === 'function' && typeof Temporal.PlainYearMonth.prototype.toString === 'function' && typeof Temporal.PlainYearMonth.prototype.toJSON === 'function' && typeof Temporal.PlainYearMonth.prototype.toPlainDate === 'function' && typeof Temporal.PlainYearMonth.prototype.valueOf === 'function' && typeof Temporal.PlainTime === 'function' && typeof Temporal.PlainTime.from === 'function' && typeof Temporal.PlainTime.compare === 'function' && typeof Temporal.PlainTime.prototype.equals === 'function' && typeof Temporal.PlainTime.prototype.toString === 'function' && typeof Temporal.PlainTime.prototype.toJSON === 'function' && typeof Temporal.PlainTime.prototype.round === 'function' && typeof Temporal.PlainTime.prototype.with === 'function' && typeof Temporal.PlainTime.prototype.add === 'function' && typeof Temporal.PlainTime.prototype.subtract === 'function' && typeof Temporal.PlainTime.prototype.valueOf === 'function' && typeof Temporal.PlainDateTime.compare === 'function' && typeof Temporal.PlainDateTime.prototype.equals === 'function' && typeof Temporal.PlainDateTime.prototype.withCalendar === 'function' && typeof Temporal.PlainDateTime.prototype.toString === 'function' && typeof Temporal.PlainDateTime.prototype.toJSON === 'function' && typeof Temporal.PlainDateTime.prototype.toPlainDate === 'function' && typeof Temporal.PlainDateTime.prototype.toPlainTime === 'function' && typeof Temporal.PlainDateTime.prototype.withPlainTime === 'function' && typeof Temporal.PlainDateTime.prototype.add === 'function' && typeof Temporal.PlainDateTime.prototype.subtract === 'function' && typeof Temporal.PlainDateTime.prototype.round === 'function' && typeof Temporal.PlainDateTime.prototype.with === 'function' && typeof Temporal.PlainDateTime.prototype.until === 'function' && typeof Temporal.PlainDateTime.prototype.since")
+        vm.run("typeof Temporal.Duration.from === 'function' && typeof Temporal.Duration.compare === 'function' && typeof Temporal.Duration.prototype.add === 'function' && typeof Temporal.Duration.prototype.with === 'function' && typeof Temporal.Duration.prototype.abs === 'function' && typeof Temporal.Duration.prototype.negated === 'function' && typeof Temporal.Duration.prototype.total === 'function' && typeof Temporal.Duration.prototype.toString === 'function' && typeof Temporal.Duration.prototype.toJSON === 'function' && typeof Temporal.Duration.prototype.valueOf === 'function' && typeof Temporal.PlainDate === 'function' && typeof Temporal.PlainDate.from === 'function' && typeof Temporal.PlainDate.compare === 'function' && typeof Temporal.PlainDate.prototype.equals === 'function' && typeof Temporal.PlainDate.prototype.toPlainDateTime === 'function' && typeof Temporal.PlainDate.prototype.toPlainMonthDay === 'function' && typeof Temporal.PlainDate.prototype.toPlainYearMonth === 'function' && typeof Temporal.PlainDate.prototype.withCalendar === 'function' && typeof Temporal.PlainDate.prototype.toString === 'function' && typeof Temporal.PlainDate.prototype.toJSON === 'function' && typeof Temporal.PlainMonthDay === 'function' && typeof Temporal.PlainMonthDay.prototype.with === 'function' && typeof Temporal.PlainMonthDay.prototype.toString === 'function' && typeof Temporal.PlainMonthDay.prototype.toJSON === 'function' && typeof Temporal.PlainMonthDay.prototype.toPlainDate === 'function' && typeof Temporal.PlainMonthDay.prototype.equals === 'function' && typeof Temporal.PlainMonthDay.prototype.valueOf === 'function' && typeof Temporal.PlainYearMonth === 'function' && typeof Temporal.PlainYearMonth.compare === 'function' && typeof Temporal.PlainYearMonth.prototype.with === 'function' && typeof Temporal.PlainYearMonth.prototype.add === 'function' && typeof Temporal.PlainYearMonth.prototype.subtract === 'function' && typeof Temporal.PlainYearMonth.prototype.equals === 'function' && typeof Temporal.PlainYearMonth.prototype.toString === 'function' && typeof Temporal.PlainYearMonth.prototype.toJSON === 'function' && typeof Temporal.PlainYearMonth.prototype.toPlainDate === 'function' && typeof Temporal.PlainYearMonth.prototype.valueOf === 'function' && typeof Temporal.PlainTime === 'function' && typeof Temporal.PlainTime.from === 'function' && typeof Temporal.PlainTime.compare === 'function' && typeof Temporal.PlainTime.prototype.equals === 'function' && typeof Temporal.PlainTime.prototype.toString === 'function' && typeof Temporal.PlainTime.prototype.toJSON === 'function' && typeof Temporal.PlainTime.prototype.round === 'function' && typeof Temporal.PlainTime.prototype.with === 'function' && typeof Temporal.PlainTime.prototype.add === 'function' && typeof Temporal.PlainTime.prototype.subtract === 'function' && typeof Temporal.PlainTime.prototype.valueOf === 'function' && typeof Temporal.PlainDateTime.compare === 'function' && typeof Temporal.PlainDateTime.prototype.equals === 'function' && typeof Temporal.PlainDateTime.prototype.withCalendar === 'function' && typeof Temporal.PlainDateTime.prototype.toString === 'function' && typeof Temporal.PlainDateTime.prototype.toJSON === 'function' && typeof Temporal.PlainDateTime.prototype.toPlainDate === 'function' && typeof Temporal.PlainDateTime.prototype.toPlainTime === 'function' && typeof Temporal.PlainDateTime.prototype.withPlainTime === 'function' && typeof Temporal.PlainDateTime.prototype.add === 'function' && typeof Temporal.PlainDateTime.prototype.subtract === 'function' && typeof Temporal.PlainDateTime.prototype.round === 'function' && typeof Temporal.PlainDateTime.prototype.with === 'function' && typeof Temporal.PlainDateTime.prototype.until === 'function' && typeof Temporal.PlainDateTime.prototype.since")
             .expect("installed namespace should remain usable"),
         Value::String(Arc::from("function"))
     );
@@ -4122,6 +4154,113 @@ fn temporal_duration_from_roots_observable_input_and_retries_failures() {
         .expect("Duration.from should retry after collection");
     vm.set_max_heap_objects(None);
     assert_eq!(result, Value::Number(2.0));
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+}
+
+#[test]
+fn temporal_duration_add_and_compare_root_observable_inputs_and_retry_resources() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceDurationMathGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("Duration math GC hook should register");
+    vm.run(
+        r#"
+        globalThis.durationMathBase = new Temporal.Duration(0, 0, 0, 1);
+        globalThis.durationMathGets = 0;
+        globalThis.durationMathBag = {
+          get hours() {
+            durationMathGets++;
+            delete globalThis.durationMathBag;
+            forceDurationMathGc();
+            return { valueOf: function () {
+              durationMathGets += 100;
+              forceDurationMathGc();
+              return 2;
+            }};
+          }
+        };
+        globalThis.durationMathOne = {
+          get days() {
+            durationMathGets += 1000;
+            delete globalThis.durationMathOne;
+            forceDurationMathGc();
+            return 2;
+          }
+        };
+        globalThis.durationMathTwo = {
+          get days() {
+            durationMathGets += 10000;
+            delete globalThis.durationMathTwo;
+            forceDurationMathGc();
+            return 3;
+          }
+        };
+        globalThis.durationMathOptions = {
+          get relativeTo() {
+            durationMathGets += 100000;
+            delete globalThis.durationMathOptions;
+            forceDurationMathGc();
+            return { year: 2000, month: 1, day: 1 };
+          }
+        };
+        globalThis.durationMathCompareNoAllocationOptions = { relativeTo: '2000-01-01' };
+        globalThis.durationMathExactCapBag = { days: 1 };
+        "#,
+    )
+    .expect("Duration math fixtures should initialize");
+    vm.gc();
+    let baseline_pins = vm.gc_pins.len();
+    let baseline_live = vm.heap.live_count();
+
+    assert_eq!(
+        vm.run("durationMathBase.add(durationMathBag).hours + '|' + durationMathGets;")
+            .expect("Duration.add input must survive getter and coercion GC"),
+        Value::String(Arc::from("2|101"))
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    assert_eq!(
+        vm.run("Temporal.Duration.compare(durationMathOne, durationMathTwo, durationMathOptions) + '|' + durationMathGets;")
+            .expect("Duration.compare inputs and relativeTo must survive GC"),
+        Value::String(Arc::from("-1|111101"))
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    vm.fail_next_gc_pin_reservation = true;
+    let error = vm
+        .run("durationMathBase.add(durationMathBag);")
+        .expect_err("Duration.add input-root preflight must remain fallible");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    vm.gc();
+    let add_live = vm.heap.live_count();
+    vm.set_max_heap_objects(Some(add_live));
+    let error = vm
+        .run("durationMathBase.add(durationMathExactCapBag);")
+        .expect_err("Duration.add result allocation must obey the exact heap cap");
+    vm.set_max_heap_objects(None);
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(error.message, "heap limit exceeded");
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.heap.live_count(), add_live);
+
+    vm.gc();
+    let compare_live = vm.heap.live_count();
+    vm.set_max_heap_objects(Some(compare_live));
+    assert_eq!(
+        vm.run("Temporal.Duration.compare(durationMathBase, durationMathBase, durationMathCompareNoAllocationOptions);")
+            .expect("Duration.compare successful result must allocate no GC object"),
+        Value::Number(0.0)
+    );
+    vm.set_max_heap_objects(None);
+    assert_eq!(vm.heap.live_count(), compare_live);
     assert_eq!(vm.gc_pins.len(), baseline_pins);
 }
 

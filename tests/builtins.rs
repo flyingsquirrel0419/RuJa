@@ -25832,6 +25832,63 @@ fn temporal_duration_constructor_and_getters_honor_function_realms() {
 }
 
 #[test]
+fn temporal_duration_add_and_compare_use_exact_math_order_and_method_realms() {
+    assert_eq!(
+        run(r#"
+            var balanced = new Temporal.Duration(0, 0, 0, 1, 23, 59, 59, 999, 999, 999)
+              .add({ nanoseconds: 1 });
+            var oneMonth = new Temporal.Duration(0, 1);
+            var days30 = new Temporal.Duration(0, 0, 0, 30);
+            var identical = new Temporal.Duration(1, 2, 3, 4);
+            [
+              balanced.days, balanced.hours, balanced.minutes, balanced.seconds,
+              balanced.milliseconds, balanced.microseconds, balanced.nanoseconds,
+              Temporal.Duration.compare(oneMonth, days30, { relativeTo: '2018-04-01' }),
+              Temporal.Duration.compare(oneMonth, days30, { relativeTo: '2018-03-01' }),
+              Temporal.Duration.compare(oneMonth, days30, { relativeTo: '2018-02-01' }),
+              Temporal.Duration.compare(
+                { months: 1, days: 100000000 },
+                { days: 100000031 },
+                { relativeTo: '2000-01-01' }
+              ),
+              Temporal.Duration.compare(identical, new Temporal.Duration(1, 2, 3, 4))
+            ].join('|');
+        "#),
+        Value::String(Arc::from("2|0|0|0|0|0|0|0|1|-1|0|0"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var add = other.Temporal.Duration.prototype.add;
+            var compare = other.Temporal.Duration.compare;
+            var local = new Temporal.Duration(0, 0, 0, 1);
+            var result = add.call(local, { hours: 24 });
+            var brandRealm = false;
+            try { add.call({}, { hours: 1 }); } catch (error) {
+              brandRealm = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            var addConstructible = true;
+            var compareConstructible = true;
+            try { Reflect.construct(add, [], function () {}); } catch (error) {
+              addConstructible = false;
+            }
+            try { Reflect.construct(compare, [], function () {}); } catch (error) {
+              compareConstructible = false;
+            }
+            [
+              Object.getPrototypeOf(result) === other.Temporal.Duration.prototype,
+              compare({ days: 1 }, { hours: 24 }),
+              brandRealm,
+              add.length, compare.length,
+              addConstructible, compareConstructible
+            ].join('|');
+        "#),
+        Value::String(Arc::from("true|0|true|1|2|false|false"))
+    );
+}
+
+#[test]
 fn temporal_plain_month_day_and_year_month_use_distinct_hidden_iso_slots() {
     assert_eq!(
         run(r#"

@@ -9,7 +9,6 @@ import sys
 import test262_runner
 from test262_temporal_plain_date_time_difference_admission import (
     TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_COMPLETE_FILES,
-    TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_DIRECT_BLOCKERS,
     TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_FILES,
     TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_INTL_BLOCKERS,
     audit_corpus,
@@ -18,13 +17,11 @@ from test262_temporal_plain_date_time_difference_admission import (
 
 SURFACE = TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_COMPLETE_FILES
 SUPPORTED = TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_FILES
-DIRECT_BLOCKERS = TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_DIRECT_BLOCKERS
 INTL_BLOCKERS = TEMPORAL_PLAIN_DATE_TIME_DIFFERENCE_INTL_BLOCKERS
 _SHARED_SHOULD_SKIP = test262_runner.should_skip
 _CALENDAR_ERROR = "RangeError: Invalid Temporal calendar identifier"
-_MISSING_DURATION_ERROR = "TypeError: undefined is not a function"
 _EXPECTED_FAILURE_DIAGNOSTIC_DIGEST = (
-    "bf83d0c7a93f0d5c606ca3f4bb1406f565755eac7eece7d863300ceac67e6d82"
+    "f4406234409249960b5897f70f58ec591677ec2188fa7774d7a281e356d50eca"
 )
 
 
@@ -104,9 +101,7 @@ def verify_expected_results(arguments):
     for path, (status, messages) in diagnostics.items():
         if status == "pass":
             continue
-        expected_error = (
-            _MISSING_DURATION_ERROR if path in DIRECT_BLOCKERS else _CALENDAR_ERROR
-        )
+        expected_error = _CALENDAR_ERROR
         if not messages or any(
             _normalize(message) != expected_error for message in messages
         ):

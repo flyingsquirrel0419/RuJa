@@ -1241,6 +1241,65 @@ jobs:
           grep -q '^RATE=100.0 PASS=78 FAIL=0 SKIP=0 TOTAL=78 RAN=78$' \
             temporal_duration_total_diagnostic.txt
 
+  temporal-duration-math:
+    needs: [build, setup]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download RuJa binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ruja-release
+          path: target/release/
+      - run: chmod +x target/release/ruja
+      - name: Checkout pinned Temporal.Duration math tests
+        uses: actions/checkout@v4
+        with:
+          repository: tc39/test262
+          ref: ${{ env.TEST262_REV }}
+          path: test262
+          sparse-checkout: |
+            harness
+            test/built-ins/Temporal/Duration/prototype/add
+            test/built-ins/Temporal/Duration/compare
+            test/built-ins/Temporal/Duration/prototype/subtract/float64-representable-integer.js
+            test/built-ins/Temporal/Instant/prototype/since/float64-representable-integer.js
+            test/built-ins/Temporal/Instant/prototype/until/float64-representable-integer.js
+            test/built-ins/Temporal/PlainDateTime/prototype/since/float64-representable-integer.js
+            test/built-ins/Temporal/PlainDateTime/prototype/until/float64-representable-integer.js
+            test/built-ins/Temporal/ZonedDateTime/prototype/since/float64-representable-integer.js
+            test/built-ins/Temporal/ZonedDateTime/prototype/until/float64-representable-integer.js
+            test/intl402/Temporal/Duration/compare
+      - name: Verify Temporal.Duration add/compare tooling
+        run: >-
+          TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
+          test262_temporal_duration_math_tooling_test -v
+        working-directory: tools
+      - name: Require exact Temporal.Duration add/compare (84/84)
+        run: |
+          mapfile -t files < <(grep -hEv '^(#|$)' \
+            tools/test262_temporal_duration_math_admission.txt)
+          test "${#files[@]}" -eq 84
+          TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
+            "${files[@]}" > temporal_duration_math_result.txt 2>&1
+          cat temporal_duration_math_result.txt
+          grep -q '^RATE=100.0 PASS=84 FAIL=0 SKIP=0 TOTAL=84 RAN=84$' \
+            temporal_duration_math_result.txt
+      - name: Diagnose complete Temporal.Duration math (86/8/94)
+        run: |
+          mapfile -t files < <(grep -hEv '^(#|$)' \
+            tools/test262_temporal_duration_math_admission.txt \
+            tools/test262_temporal_duration_math_intl_blockers.txt \
+            tools/test262_temporal_duration_math_downstream_admission.txt \
+            tools/test262_temporal_duration_math_downstream_blockers.txt)
+          test "${#files[@]}" -eq 94
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_duration_math_diagnostic.py \
+            "${files[@]}" > temporal_duration_math_diagnostic.txt 2>&1
+          cat temporal_duration_math_diagnostic.txt
+          grep -q '^RATE=91.5 PASS=86 FAIL=8 SKIP=0 TOTAL=94 RAN=94$' \
+            temporal_duration_math_diagnostic.txt
+
   temporal-calendar-siblings-core:
     needs: [build, setup]
     runs-on: ubuntu-latest
@@ -2193,22 +2252,23 @@ jobs:
         run: >-
           TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
           test262_temporal_plain_date_time_difference_tooling_test -v
-      - name: Require exact Temporal.PlainDateTime difference (191/191)
+      - name: Require exact Temporal.PlainDateTime difference (193/193)
         run: |
           mapfile -t files < <(grep -hEv '^(#|$)' \
-            tools/test262_temporal_plain_date_time_difference_direct.txt)
-          test "${#files[@]}" -eq 191
+            tools/test262_temporal_plain_date_time_difference_direct.txt \
+            tools/test262_temporal_plain_date_time_difference_direct_transitions.txt)
+          test "${#files[@]}" -eq 193
           TEST262="$GITHUB_WORKSPACE/test262" \
             python3 tools/test262_temporal_plain_date_time_difference_diagnostic.py \
             "${files[@]}" > temporal_plain_date_time_difference_result.txt 2>&1
           cat temporal_plain_date_time_difference_result.txt
-          grep -q '^RATE=100.0 PASS=191 FAIL=0 SKIP=0 TOTAL=191 RAN=191$' \
+          grep -q '^RATE=100.0 PASS=193 FAIL=0 SKIP=0 TOTAL=193 RAN=193$' \
             temporal_plain_date_time_difference_result.txt
-      - name: Diagnose complete Temporal.PlainDateTime difference (192/119/311)
+      - name: Diagnose complete Temporal.PlainDateTime difference (194/117/311)
         run: |
           mapfile -t files < <(grep -hEv '^(#|$)' \
             tools/test262_temporal_plain_date_time_difference_direct.txt \
-            tools/test262_temporal_plain_date_time_difference_direct_blockers.txt \
+            tools/test262_temporal_plain_date_time_difference_direct_transitions.txt \
             tools/test262_temporal_plain_date_time_difference_downstream.txt \
             tools/test262_temporal_plain_date_time_difference_intl_blockers.txt)
           test "${#files[@]}" -eq 311
@@ -2216,7 +2276,7 @@ jobs:
             python3 tools/test262_temporal_plain_date_time_difference_complete_diagnostic.py \
             "${files[@]}" > temporal_plain_date_time_difference_complete_result.txt 2>&1
           cat temporal_plain_date_time_difference_complete_result.txt
-          grep -q '^RATE=61.7 PASS=192 FAIL=119 SKIP=0 TOTAL=311 RAN=311$' \
+          grep -q '^RATE=62.4 PASS=194 FAIL=117 SKIP=0 TOTAL=311 RAN=311$' \
             temporal_plain_date_time_difference_complete_result.txt
 
   temporal-plain-date-time-from:

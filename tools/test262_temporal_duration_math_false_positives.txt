@@ -1,0 +1,5 @@
+# Absent-method TypeError false positives before implementation: 4.
+built-ins/Temporal/Duration/compare/options-wrong-type.js
+built-ins/Temporal/Duration/compare/relativeto-propertybag-invalid.js
+built-ins/Temporal/Duration/prototype/add/argument-invalid-property.js
+built-ins/Temporal/Duration/prototype/add/argument-singular-properties.js

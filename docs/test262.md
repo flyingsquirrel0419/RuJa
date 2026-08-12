@@ -15700,12 +15700,10 @@ complete installation uses 187 allocations and 184 maximum live pins.
 At pinned Test262 revision
 `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the paired built-ins direct
 surface contains **193 files**: 98 `until` and 95 `since`. Forced execution
-passes **191** intended method files. The two
-`float64-representable-integer.js` files pass their large-field and exact
-Duration serialization assertions, then fail only when they call the
-separately unavailable `Duration.prototype.add` and
-`Temporal.Duration.compare`; they remain exact prerequisite blockers rather
-than admitted false greens. Before implementation, eight expected-error files
+now passes **193/193**. The two `float64-representable-integer.js` files have
+transitioned from exact Duration add/compare prerequisites to passing direct
+files and retain their large-field and exact Duration serialization checks.
+Before implementation, eight expected-error files
 passed accidentally because the absent target method threw TypeError. They
 remain inside the exact direct denominator and now exercise their intended
 conversion or options error.
@@ -15718,7 +15716,7 @@ file to execute instead of retaining a stale skip assertion. The Intl402
 companion contains 117 files, all blocked before the
 difference call by non-ISO calendar construction with the exact earlier
 `RangeError: Invalid Temporal calendar identifier`. Executable forced
-ownership is therefore **192 pass / 119 fail / 311**. A complete candidate
+ownership is therefore **194 pass / 117 fail / 311**. A complete candidate
 audit additionally classifies 11 PlainDate, PlainTime, and ZonedDateTime
 homonym files outside this method ownership instead of silently counting
 their `.until` or `.since` calls.
@@ -15738,7 +15736,49 @@ observable GC, root preflight, exact heap-cap retry, and installer boundaries
 - 목적과 의도: paired PlainDateTime difference의 direct denominator, true downstream, Intl non-ISO prerequisites와 homonyms를 재현 가능한 exact ownership으로 분리한다.
 - 기존 구현 및 제약 조건: broad Temporal gate는 310 direct/Intl files를 숨겼고 absent method TypeError가 direct 여덟 파일을 거짓 통과시켰다. 두 large-field files는 intended assertions 뒤 Duration add/compare에 의존한다.
 - 검토한 주요 대안: 두 directory prefix admission, aggregate pass count, prerequisite 두 파일 제외, exact direct/blocker/downstream manifests와 full-corpus token ownership을 검토했다.
-- 선택한 방식: 193 direct paths를 고정하되 191 intended pass와 2 exact later blockers로 분류한다. downstream 1개는 pass로 강제하고 Intl 117개는 exact non-ISO failure로 유지하며 homonyms는 candidate audit에서 명시적으로 제외한다.
+- 선택한 방식: 193 direct paths를 고정하고 Duration add/compare의 두 prerequisite transition도 pass로 강제한다. downstream 1개는 pass로 강제하고 Intl 117개는 exact non-ISO failure로 유지하며 homonyms는 candidate audit에서 명시적으로 제외한다.
 - 다른 대안 대신 이 방식을 선택한 이유: prefix와 aggregate-only 검사는 future/wrong-error drift를 숨긴다. prerequisite 제외는 difference 자체가 이미 통과한 Float64 assertions를 누락하고 direct-only accounting은 실제 datetime-math caller를 숨긴다.
-- 장점, 단점 및 영향: 191/2/193 direct, 1/1 downstream, 0/117 Intl 및 11 homonym 경계가 고정된다. Duration add/compare와 non-ISO calendar가 구현되면 blocker files를 intended final assertions까지 재분류해야 한다.
+- 장점, 단점 및 영향: 193/193 direct, 1/1 downstream, 0/117 Intl 및 11 homonym 경계가 고정된다. non-ISO calendar가 구현되면 Intl blocker files를 intended final assertions까지 재분류해야 한다.
+```
+
+## Temporal Duration add and compare
+
+At pinned Test262 revision
+`9e61c12835c5e4a3bdba93850427e6742c4f64c4`, all 34 built-ins
+`Duration.prototype.add` files and all 50 built-ins `Temporal.Duration.compare`
+files pass, giving exact direct **84/84**. Four expected-error files that
+passed before implementation because the target method was absent remain in
+the direct denominator and now reach their intended conversion or validation
+error. The two former PlainDateTime difference prerequisites also pass, so
+the admitted runtime surface is **86 files**.
+
+The complete ownership boundary is **86 pass / 8 fail / 94**. Three Intl402
+`compare` files remain exact named-IANA/DST or historical second-resolution
+offset blockers. Five downstream files reach separately missing
+`Duration.prototype.subtract`, Instant `since`/`until`, or ZonedDateTime
+`since`/`until`. These are not counted as add/compare support. Exact sorted
+manifests, cardinalities, live metadata digest, runner/analyzer feature
+removal parity, exact arguments/results, normalized blocker errors,
+future/outside rejection, and the two-file PlainDateTime transition identity
+are local and CI contracts.
+
+Runtime `add` brands before argument work, completely converts `other`, then
+rejects nonzero years/months/weeks because relative calendar addition is not
+yet available. Day/time fields are summed in checked i128 nanoseconds and
+balanced to the largest input day-or-time unit before a fresh method-Realm
+Duration is allocated. `compare` converts `one`, then `two`, then validates
+options and observes `relativeTo`; only afterward may identical slots return
+zero. Plain and fixed-offset relative records support calendar units through
+ISO date addition. Named-IANA transitions and DST-length days remain
+fail-closed behind the three Intl blockers. Installer ordinals are 197/198;
+complete installation uses exactly 198 allocations.
+
+```text
+[Decision Log]
+- 목적과 의도: Duration add/compare의 direct, released downstream, Intl 및 later-method 경계를 exact accounting으로 고정한다.
+- 기존 구현 및 제약 조건: Duration conversion과 ISO relative arithmetic은 재사용 가능했지만 named-IANA transition backend와 several downstream difference methods는 없다. absent method TypeError가 네 파일을 거짓 통과시켰다.
+- 검토한 주요 대안: broad feature gate 제거, directory prefix admission, Float64 arithmetic, public Temporal method composition, exact hidden-record implementation과 ownership 분리를 검토했다.
+- 선택한 방식: direct 84개와 released PlainDateTime 2개만 admit한다. Intl 3개와 later-method 5개는 exact errors로 유지하고 metadata/result/error/transition drift를 fail closed한다.
+- 다른 대안 대신 이 방식을 선택한 이유: broad/prefix admission은 unsupported named-zone과 missing methods를 과장한다. Float64/public composition은 precision, mutable lookup, Realm 및 observation order를 깨뜨린다.
+- 장점, 단점 및 영향: direct 84/84와 complete 86/8/94가 재현 가능하며 PlainDateTime difference는 193/193 및 194/117/311로 전환된다. calendar-unit add와 named-zone compare는 후속 구현이 필요하다.
 ```
